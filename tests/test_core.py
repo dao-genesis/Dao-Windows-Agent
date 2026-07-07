@@ -165,6 +165,16 @@ def test_vision_dry_run_and_grounder_binding():
         raise AssertionError("应拒绝非法 op")
 
 
+def test_search_verbs_pure_chinese_queries():
+    """纯中文查询（本项目主语言）须能命中动词：CJK 单字+二元词元化。"""
+    reg = build_default_registry()
+    assert reg.search_verbs("在记事本里写文字")[0]["verb"] == "type_text"
+    assert reg.search_verbs("读取记事本内容")[0]["verb"] == "read_text"
+    hits = reg.search_verbs("画布上画一笔")
+    assert hits[0]["app_id"] == "mspaint" and hits[0]["verb"] == "stroke"
+    assert reg.search_verbs("选择铅笔工具")[0]["verb"] == "pick_tool"
+
+
 def test_uia_build_plan_rejects_bad_op():
     from core.adapter.uia_desktop import UiaDesktopAdapter
     from core.profiles.builtin import notepad

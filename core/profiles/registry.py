@@ -12,10 +12,21 @@ from core.adapter.base import AppAdapter
 from core.profiles.schema import AppProfile
 
 _WORD = re.compile(r"[a-z0-9]+")
+_CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
 def _tokens(text: str) -> set[str]:
-    return set(_WORD.findall(text.lower()))
+    """词元化：拉丁词 + CJK 字（unigram）+ CJK 相邻二元（bigram）。
+
+    中文无空格分词，故对汉字取单字 + 相邻二字组合——兼顾召回(单字)与精度(二字)，
+    使纯中文查询（本项目主语言）也能命中动词，无需外部分词器（守纯 stdlib 底座）。
+    """
+    low = text.lower()
+    toks: set[str] = set(_WORD.findall(low))
+    cjk = _CJK.findall(low)
+    toks.update(cjk)
+    toks.update(a + b for a, b in zip(cjk, cjk[1:]))
+    return toks
 
 
 class ProfileRegistry:
