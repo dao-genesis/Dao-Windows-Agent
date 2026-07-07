@@ -208,16 +208,32 @@ def test_win_desktop_name_sanitize_and_availability():
             win_desktop.launch_on_desktop("dao_x", "notepad.exe")
         with pytest.raises(RuntimeError):
             win_desktop.enum_windows("dao_x")
+        # 新增的消息级/取图基石在非 Windows 上同样占位报错（引导退回 dry-run）
+        for fn in (win_desktop.list_children, win_desktop.find_edit_control,
+                   win_desktop.send_chars, win_desktop.capture_window):
+            with pytest.raises(RuntimeError):
+                fn(0) if fn is not win_desktop.send_chars else fn(0, "x")
+
+
+def test_win_desktop_edit_classes_present():
+    """编辑区类名表须含 Win11 现代记事本(RichEditD2DPT)与经典 Edit（消息级往返标靶）。"""
+    from core.adapter import win_desktop
+
+    assert "RichEditD2DPT" in win_desktop._EDIT_CLASSES
+    assert "Edit" in win_desktop._EDIT_CLASSES
 
 
 def test_uia_win_driver_unavailable_off_windows():
-    """级别② 实机 driver 在非 Windows/无隔离桌面能力时 available()==False、make_driver()==None。"""
+    """级别② 实机 driver 在非 Windows/无隔离桌面能力时 available()==False、make_driver()==None。
+
+    本源之路已改为纯 ctypes 消息级：available() 只取决于是否 Windows（无 pywinauto 依赖）。
+    """
     import sys
 
     from core.adapter import uia_win
 
+    assert uia_win.available() == (sys.platform == "win32")
     if sys.platform != "win32":
-        assert uia_win.available() is False
         assert uia_win.make_driver() is None
 
 
