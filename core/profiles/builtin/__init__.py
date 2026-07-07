@@ -11,8 +11,9 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
                            vision_grounder: Optional[Callable[[str, dict], Any]] = None) -> ProfileRegistry:
     """构建内置画像注册表。
 
-    级别② 的 uia_driver：未显式传入时，尝试自动探测 guest 内实机 driver（Windows+pywinauto）；
-    探测不到（如 Linux/CI）则为 None → 级别② 适配器进入 dry-run，纯逻辑仍可单测。
+    级别② 的 uia_driver：未显式传入时，尝试自动探测 guest 内实机 driver（纯 ctypes 消息级，
+    只需 Windows，无第三方依赖）；探测不到（如 Linux/CI）则为 None → 级别② 适配器进入
+    dry-run，纯逻辑仍可单测。
     """
     if uia_driver is None:
         try:
