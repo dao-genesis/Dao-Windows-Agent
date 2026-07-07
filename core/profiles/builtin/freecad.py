@@ -38,6 +38,38 @@ def _export_step(adapter, instance, fcstd: str, out: str = "out.step", **_):
     return _run_macro(adapter, instance, script=script)
 
 
+def _export_stl(adapter, instance, fcstd: str, out: str = "out.stl", **_):
+    script = (
+        "import FreeCAD, Mesh\n"
+        f"doc = FreeCAD.open(r'{fcstd}')\n"
+        "objs = [o for o in doc.Objects if hasattr(o, 'Shape')]\n"
+        f"Mesh.export(objs, r'{out}')\n"
+        "print('exported', len(objs), 'objects')\n"
+    )
+    return _run_macro(adapter, instance, script=script)
+
+
+def _run_ops(adapter, instance, ops=None, **_):
+    """执行 freecad_backend.run_ops 风格的算子序列（需 freecad_backend 在 PYTHONPATH）。
+
+    ops 例：[{"op":"make_box","id":"b","L":20,"W":10,"H":5},
+             {"op":"export_stl","shape":"b","path":"out.stl"}]
+    """
+    import json as _json
+    if not ops:
+        return ActionResult.bad("需提供 ops 列表")
+    cmd_path = os.path.join(instance.workdir, "_ops.json")
+    with open(cmd_path, "w", encoding="utf-8") as fh:
+        _json.dump({"ops": ops}, fh, ensure_ascii=True)
+    script = (
+        "import json\n"
+        "from freecad_backend import run_ops\n"
+        f"_c = json.load(open(r'{cmd_path}', encoding='utf-8'))\n"
+        "print(json.dumps(run_ops(_c.get('ops', [])), ensure_ascii=True))\n"
+    )
+    return _run_macro(adapter, instance, script=script)
+
+
 PROFILE = AppProfile(
     app_id="freecad",
     display_name="FreeCAD (3D 参数化建模)",
@@ -54,8 +86,12 @@ PROFILE = AppProfile(
         Verb("version", "查询 FreeCAD 版本", handler=_version),
         Verb("run_macro", "执行 FreeCAD Python 宏（内联 script 或 macro_path）",
              {"script": "内联 Python", "macro_path": "宏文件路径"}, handler=_run_macro),
+        Verb("run_ops", "执行算子序列(make_box/export_stl 等，freecad_backend 风格)",
+             {"ops": "算子列表(JSON)"}, handler=_run_ops, aliases=("ops",)),
         Verb("export_step", "打开 .FCStd 并导出 STEP",
-             {"fcstd": ".FCStd 路径", "out": "输出 .step"}, handler=_export_step),
+             {"fcstd": ".FCStd 路径", "out": "输出 .step"}, handler=_export_step, aliases=("step",)),
+        Verb("export_stl", "打开 .FCStd 并导出 STL 网格",
+             {"fcstd": ".FCStd 路径", "out": "输出 .stl"}, handler=_export_stl, aliases=("stl",)),
     ],
 )
 _ADAPTER = SubprocessApiAdapter
