@@ -56,7 +56,7 @@ jobs:
           ignore_file=".github/ci-syntax-ignore.txt"
           [ -f "$ignore_file" ] || { echo "no quarantine file"; exit 0; }
           echo "## Quarantined (pre-existing, content lost at commit)" >> "$GITHUB_STEP_SUMMARY"
-          grep -vE '^\s*(#|$)' "$ignore_file" | while IFS= read -r f; do
+          { grep -vE '^\s*(#|$)' "$ignore_file" || true; } | while IFS= read -r f; do
             [ -n "$f" ] || continue
             echo "- \`$f\`" >> "$GITHUB_STEP_SUMMARY"
             python -m py_compile "$f" 2>>"$GITHUB_STEP_SUMMARY" || true
