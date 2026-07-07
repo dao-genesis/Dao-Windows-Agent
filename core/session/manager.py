@@ -54,6 +54,7 @@ class SessionManager:
         if adapter is None:
             return ActionResult.bad(f"无此应用画像: {app_id}（可用: {self.registry.app_ids()}）")
         app_workdir = os.path.join(sess.workdir, app_id)
+        kwargs.setdefault("session_id", session_id)
         inst = adapter.launch(app_workdir, **kwargs)
         sess.instances[app_id] = inst
         self._adapters[f"{session_id}:{app_id}"] = adapter
