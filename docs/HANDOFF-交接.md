@@ -15,9 +15,21 @@
 | PR#8 | 级别② pywinauto driver + bridge 自动绑定 + coldstart 装依赖 | ✅ |
 | PR#9 | 级别③ 视觉 grounding 适配器 + mspaint 标靶 | ✅ |
 | PR#10 | 动词检索纯中文查询（CJK 单字+二元词元化） | ✅ |
-| 本 PR | 桥改 SYSTEM+开机任务（抗 RDP 注销）+ 本交接文档 | ⬅️ |
+| PR#11 | 桥改 SYSTEM+开机任务（抗 RDP 注销）+ 本交接文档 | ✅ |
+| PR#12 | **真·隔离桌面基石 `win_desktop.py`**（CreateProcessW+SetThreadDesktop），修复级别② 隔离完全落空的致命 bug | ⬅️ |
 
-离线自检：`python3 -m pytest tests -q` → **18 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
+离线自检：`python3 -m pytest tests -q` → **21 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
+
+### PR#12 的本源修复（务必理解，别退回老路）
+
+1. 老 `uia_win.py` 用 `subprocess.STARTUPINFO().lpDesktop = desk` 起进程 —— **Python 的
+   `subprocess.STARTUPINFO` 根本没有 `lpDesktop` 字段**，赋值被静默忽略，进程照样落在
+   用户可见默认桌面，"单账号类多 RDP 隔离"完全落空。唯一正解：`CreateProcessW` +
+   `STARTUPINFOW.lpDesktop`（见 `core/adapter/win_desktop.py::launch_on_desktop`）。
+2. 驱动线程必须 `SetThreadDesktop(hdesk)` 绑到目标隔离桌面，否则 pywinauto/UIA 只枚举
+   默认桌面，隔离桌面上的窗口根本找不到（见 `win_desktop.attached()` 上下文管理器）。
+3. 独立桌面对象(HDESK)各有自己的输入/焦点上下文 → 隔离桌面上的操作天然不打扰用户
+   可见桌面，这就是不建账号、不装 RDPWrap、零配置达到多 RDP 会话隔离效果的技术真身。
 
 ## 二、真机 live 验证跑到哪了（宿主 Linux VM 上的 QEMU Win11 guest）
 
@@ -64,11 +76,13 @@
 
 ## 五、下一步（按优先级）
 
-1. 重跑管理员全局重装 pywinauto（二·卡点），验证级别② 真机 round-trip：
-   notepad `type_text("…") → read_text` 读回一致（bridge 响应无 `dry_run`）。
-2. 级别③ 真机取证：mspaint `open → observe`（截图落盘）；grounder 仍是注入契约，
+1. **验证 PR#12 隔离真身（真机）**：冷启动重建 guest 后，同一账号内并行开 N 个隔离桌面
+   （`win_desktop.ensure_desktop("dao_vm1_notepad")` / `..._vm2_...`），各起一份 notepad，
+   证明「N 窗口 = N 互不干扰实例、都不出现在用户可见默认桌面」。
+2. 修 pywinauto DLL（二·卡点）：firstlogon 已带 `--no-user` 全局装；冷启动重建即应正常
+   import。验证级别② round-trip：notepad `type_text("…") → read_text` 读回一致（无 `dry_run`）。
+3. 级别③ 真机取证：mspaint `open → observe`（截图落盘）；grounder 仍是注入契约，
    接视觉模型属后续工程。
-3. 给现存 guest 重注册 SYSTEM 桥任务（或干脆冷启动重建 ~25min 一次性带齐一切）。
 4. 长线：IddCx 虚拟显示器（级别② GPU 软件离屏）、vsix 插件端收编（参照 devin-remote）。
 
 *道法自然 · 无为而无不为*
