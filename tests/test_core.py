@@ -37,7 +37,7 @@ def _fake_registry(tmp_verb_handler):
 
 def test_registry_builtin_loads():
     reg = build_default_registry()
-    assert set(reg.app_ids()) == {"kicad", "freecad", "jlceda"}
+    assert {"kicad", "freecad", "jlceda", "notepad"} <= set(reg.app_ids())
     for app_id in reg.app_ids():
         assert reg.describe_app(app_id)["verbs"], app_id
 
@@ -98,6 +98,39 @@ def test_session_lifecycle_and_isolation(tmp_path):
     assert mgr.destroy("vm_a").ok
     assert "vm_a" not in mgr.list() and "vm_b" in mgr.list()
     assert mgr.invoke("vm_b", "fake", "echo", msg="x").ok
+
+
+def test_uia_desktop_dry_run_builds_plan():
+    """级别②：无 driver 时返回结构化 UIA 动作计划，且每会话独立桌面隔离。"""
+    reg = build_default_registry()
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-uia")
+    mgr.create("vm_np1")
+    mgr.create("vm_np2")
+    assert mgr.open_app("vm_np1", "notepad").ok
+    assert mgr.open_app("vm_np2", "notepad").ok
+
+    r = mgr.invoke("vm_np1", "notepad", "type_text", text="道法自然")
+    assert r.ok and r.value["dry_run"]
+    assert r.value["desktop"] == "dao_vm_np1_notepad"
+    steps = r.value["plan"]["steps"]
+    assert steps[-1]["op"] == "set_value" and steps[-1]["text"] == "道法自然"
+
+    # 两会话桌面名不同 → 隔离并行
+    r2 = mgr.invoke("vm_np2", "notepad", "read_text")
+    assert r2.value["desktop"] == "dao_vm_np2_notepad"
+
+
+def test_uia_build_plan_rejects_bad_op():
+    from core.adapter.uia_desktop import UiaDesktopAdapter
+    from core.profiles.builtin import notepad
+
+    adapter = UiaDesktopAdapter(notepad.PROFILE)
+    try:
+        adapter.build_plan("x", [{"op": "teleport"}])
+    except ValueError as e:
+        assert "非法 UIA op" in str(e)
+    else:
+        raise AssertionError("应拒绝非法 op")
 
 
 def test_cdp_dry_run_builds_js():

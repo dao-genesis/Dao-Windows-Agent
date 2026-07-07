@@ -14,7 +14,7 @@ def _svc(tmp_path):
 def test_dispatch_health_and_apps(tmp_path):
     svc = _svc(tmp_path)
     status, obj = svc.dispatch("GET", "/api/health")
-    assert status == 200 and obj["ok"] and set(obj["apps"]) == {"kicad", "freecad", "jlceda"}
+    assert status == 200 and obj["ok"] and {"kicad", "freecad", "jlceda", "notepad"} <= set(obj["apps"])
     status, obj = svc.dispatch("GET", "/api/apps")
     assert status == 200 and "kicad" in obj["apps"]
 
