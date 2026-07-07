@@ -137,6 +137,34 @@ def test_uia_driver_binding_executes_plan():
     assert seen["desktop"] == "dao_vm_d_notepad"
 
 
+def test_vision_dry_run_and_grounder_binding():
+    """级别③：dry-run 产出视觉计划；注入 grounder 后交其执行；非法 op 拒绝。"""
+    reg = build_default_registry()
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-vis")
+    mgr.create("vm_v")
+    assert mgr.open_app("vm_v", "mspaint").ok
+    r = mgr.invoke("vm_v", "mspaint", "pick_tool", tool="铅笔")
+    assert r.ok and r.value["dry_run"] and r.value["desktop"] == "dao_vm_v_mspaint"
+    assert r.value["plan"]["steps"][-1]["op"] == "click_hint"
+    assert "铅笔" in r.value["plan"]["steps"][-1]["target_hint"]
+
+    reg2 = build_default_registry(vision_grounder=lambda d, p: {"ran": p["verb"], "on": d})
+    mgr2 = SessionManager(reg2, root="/tmp/dao-win/test-vis2")
+    mgr2.create("vm_v2")
+    mgr2.open_app("vm_v2", "mspaint")
+    r2 = mgr2.invoke("vm_v2", "mspaint", "observe")
+    assert r2.ok and r2.value == {"ran": "observe", "on": "dao_vm_v2_mspaint"}
+
+    from core.adapter.vision import VisionAdapter
+    from core.profiles.builtin import mspaint
+    try:
+        VisionAdapter(mspaint.PROFILE).build_plan("x", [{"op": "teleport"}])
+    except ValueError as e:
+        assert "非法 vision op" in str(e)
+    else:
+        raise AssertionError("应拒绝非法 op")
+
+
 def test_uia_build_plan_rejects_bad_op():
     from core.adapter.uia_desktop import UiaDesktopAdapter
     from core.profiles.builtin import notepad
