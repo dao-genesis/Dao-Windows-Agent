@@ -188,6 +188,47 @@ def test_uia_build_plan_rejects_bad_op():
         raise AssertionError("应拒绝非法 op")
 
 
+def test_win_desktop_name_sanitize_and_availability():
+    """隔离桌面基石：名称规整去非法字符；非 Windows 平台 available()==False 且调用即报错。"""
+    import sys
+
+    from core.adapter import win_desktop
+
+    # 桌面名不得含反斜杠/空格等（Win32 对象名约束）
+    assert win_desktop.sanitize_name(r"dao\vm 1\notepad") == "dao_vm_1_notepad"
+    assert win_desktop.sanitize_name("") == "dao_desktop"
+    assert len(win_desktop.sanitize_name("x" * 300)) <= 96
+
+    assert win_desktop.available() == (sys.platform == "win32")
+    if sys.platform != "win32":
+        # 非 Windows：占位实现调用即明确报错（引导上层退回 dry-run），import 无副作用
+        import pytest
+
+        with pytest.raises(RuntimeError):
+            win_desktop.launch_on_desktop("dao_x", "notepad.exe")
+        with pytest.raises(RuntimeError):
+            win_desktop.enum_windows("dao_x")
+
+
+def test_uia_win_driver_unavailable_off_windows():
+    """级别② 实机 driver 在非 Windows/无隔离桌面能力时 available()==False、make_driver()==None。"""
+    import sys
+
+    from core.adapter import uia_win
+
+    if sys.platform != "win32":
+        assert uia_win.available() is False
+        assert uia_win.make_driver() is None
+
+
+def test_uia_win_quote_helper():
+    from core.adapter.uia_win import _quote
+
+    assert _quote("notepad.exe") == "notepad.exe"
+    assert _quote(r"C:\Program Files\x.exe") == r'"C:\Program Files\x.exe"'
+    assert _quote('"already quoted"') == '"already quoted"'
+
+
 def test_cdp_dry_run_builds_js():
     reg = build_default_registry()
     mgr = SessionManager(reg, root="/tmp/dao-win/test-cdp")
