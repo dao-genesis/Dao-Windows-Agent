@@ -44,7 +44,8 @@ if ($src -and $py) {
   Copy-Item -Recurse -Force "$src\core"   "$dst\core"
   $token = if ($env:DAO_WIN_TOKEN) { $env:DAO_WIN_TOKEN } else { 'dao-win-lab' }
   # 级别② 实机 driver 依赖（装不上不阻断：bridge 自动退回 dry-run）
-  try { & $py -m pip install --quiet pywinauto; Log "pywinauto installed (level2 driver live)" } catch { Log "pywinauto skipped: $_" }
+  # 必须装到全局 site-packages（user-site 的 pywin32 DLL 不落位，import 必败）
+  try { & $py -m pip install --quiet --no-user pywinauto; Log "pywinauto installed (level2 driver live)" } catch { Log "pywinauto skipped: $_" }
   New-NetFirewallRule -DisplayName 'DaoBridge9920' -Direction Inbound -Protocol TCP -LocalPort 9920 -Action Allow -ErrorAction SilentlyContinue | Out-Null
   # 登录自启：无界面常驻，绑 0.0.0.0:9920（宿主 hostfwd 19920→9920 可达）
   $start = "$dst\start-bridge.ps1"
@@ -53,10 +54,11 @@ if ($src -and $py) {
 Set-Location '$dst'
 & '$py' -m bridge.server --host 0.0.0.0 --port 9920
 "@ | Set-Content -Encoding UTF8 $start
-  $action  = New-ScheduledTaskAction -Execute $py -Argument "-m bridge.server --host 0.0.0.0 --port 9920" -WorkingDirectory $dst
-  $trigger = New-ScheduledTaskTrigger -AtLogOn
-  $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-  $penv    = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest
+  # SYSTEM + 开机触发：桥不依赖交互登录会话，注销/RDP 断连均不掉（会话隔离桌面由桥自行 CreateDesktop）
+  $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`"" -WorkingDirectory $dst
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+  $penv    = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
   Register-ScheduledTask -TaskName 'DaoBridge' -Action $action -Trigger $trigger -Settings $set -Principal $penv -Force | Out-Null
   # 立即拉起一次（本次登录即可用，无需等下次登录）
   Start-Process $py -ArgumentList '-m','bridge.server','--host','0.0.0.0','--port','9920' -WorkingDirectory $dst -WindowStyle Hidden
