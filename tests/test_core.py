@@ -120,6 +120,23 @@ def test_uia_desktop_dry_run_builds_plan():
     assert r2.value["desktop"] == "dao_vm_np2_notepad"
 
 
+def test_uia_driver_binding_executes_plan():
+    """注入 driver 后级别② 不再 dry-run，而是把动作计划交 driver 执行。"""
+    seen = {}
+
+    def fake_driver(desktop, plan):
+        seen["desktop"] = desktop
+        return {"ran": plan["verb"], "steps": len(plan["steps"])}
+
+    reg = build_default_registry(uia_driver=fake_driver)
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-uia-drv")
+    mgr.create("vm_d")
+    mgr.open_app("vm_d", "notepad")
+    r = mgr.invoke("vm_d", "notepad", "type_text", text="行于大道")
+    assert r.ok and r.value == {"ran": "type_text", "steps": 2}
+    assert seen["desktop"] == "dao_vm_d_notepad"
+
+
 def test_uia_build_plan_rejects_bad_op():
     from core.adapter.uia_desktop import UiaDesktopAdapter
     from core.profiles.builtin import notepad
