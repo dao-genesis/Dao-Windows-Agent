@@ -31,9 +31,22 @@ bash coldstart/windows-sim/fetch_media.sh --eval win11
 # 3) 无人值守安装（autounattend.xml 注入：跳过 OOBE、建本地管理员、开 RDP、装 QEMU guest agent）
 bash coldstart/windows-sim/build_image.sh --edition win11 --name winlab
 
-# 4) 启动（headless + VNC/CDP，供 Agent 无头接入）
+# 3.5) 安装阶段启动（三张光盘：安装/应答/virtio；CD 首启按键窗口已自动应答；装完自动关机）
+bash coldstart/windows-sim/run_vm.sh --name winlab --install
+
+# 4) 常态启动（headless + VNC/QMP，供 Agent 无头接入）
 bash coldstart/windows-sim/run_vm.sh --name winlab
 ```
+
+## ✅ 已实机验证（2026-07 · Devin VM · KVM 加速）
+
+上述全链路已在 Devin 自己的 Linux VM 上端到端跑通，零人工：
+
+- ISO：fwlink 直取 Win11 企业评估版（5.1GB ≈ 3 分钟）+ virtio-win
+- 无人值守安装 ≈ 25 分钟到桌面（Build 26100 · 自动分区/跳 OOBE/建号/自动登录）
+- RDP：`127.0.0.1:13389` 认证通过（`xfreerdp /u:dao /p:'Dao@2026!' +auth-only` exit 0）
+- 观测：QMP `screendump`（4444 端口）随时截屏；VNC :0 可视
+- 本地管理员：`dao / Dao@2026!`（见 autounattend/default.xml，仅限本地实验靶机）
 
 ## 通用版本适配（家庭/教育/企业 · Win10/Win11）
 `autounattend/` 下按版本放模板；`build_image.sh --edition` 选择：
