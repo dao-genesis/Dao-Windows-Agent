@@ -14,15 +14,7 @@
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
       publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <!-- virtio 磁盘驱动路径（virtio-win.iso 挂为第三张盘） -->
-      <DriverPaths>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="1" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Path>E:\amd64\w11</Path>
-        </PathAndCredentials>
-        <PathAndCredentials wcm:action="add" wcm:keyValue="2" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Path>E:\viostor\w11\amd64</Path>
-        </PathAndCredentials>
-      </DriverPaths>
+      <!-- 系统盘用 SATA/AHCI + 网卡 e1000（免驱），virtio 驱动留待装机后按需装 -->
       <DiskConfiguration>
         <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
           <DiskID>0</DiskID>

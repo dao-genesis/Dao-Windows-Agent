@@ -37,19 +37,38 @@ args=(qemu-system-x86_64 -name "$name" -machine q35,accel=$ACCEL -cpu host -smp 
   -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE"
   -drive if=pflash,format=raw,unit=1,file="$VARS"
   "${TPM_ARGS[@]}"
-  -device virtio-net,netdev=n0 -netdev user,id=n0,hostfwd=tcp::13389-:3389,hostfwd=tcp::19920-:9920
-  -drive file="$DISK",if=virtio,format=qcow2,cache=writeback
+  -device e1000,netdev=n0 -netdev user,id=n0,hostfwd=tcp::13389-:3389,hostfwd=tcp::19920-:9920
+  -drive file="$DISK",if=ide,format=qcow2,cache=writeback
   -vga std -display vnc=:$vnc -qmp tcp:127.0.0.1:4444,server,nowait
   -device virtio-serial -chardev socket,path="$IMAGES/${name}-qga.sock",server=on,wait=off,id=qga0
   -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0)
 
 if [ "$install" = "1" ]; then
   ISO_INSTALL="$MEDIA/$(ls "$MEDIA" | grep -E '^win(10|11).*\.iso$' | head -1)"
-  args+=(-cdrom "$ISO_INSTALL"
-    -drive file="$IMAGES/${name}-unattend.iso",media=cdrom,index=2
-    -drive file="$MEDIA/virtio-win.iso",media=cdrom,index=3
+  args+=(-drive file="$ISO_INSTALL",media=cdrom
+    -drive file="$IMAGES/${name}-unattend.iso",media=cdrom
+    -drive file="$MEDIA/virtio-win.iso",media=cdrom
     -boot d)
   echo "== 无人值守安装启动（VNC :$vnc）：安装完成后自动关机 =="
+  # UEFI CD 首启有「Press any key」窗口：后台经 QMP 连发回车 30s，免人工。
+  ( sleep 3; python3 - <<'PYEOF'
+import socket, json, time
+for _ in range(30):
+    try:
+        s = socket.create_connection(("127.0.0.1", 4444), timeout=2); break
+    except OSError:
+        time.sleep(1)
+else:
+    raise SystemExit
+s.recv(4096)
+s.sendall(b'{"execute":"qmp_capabilities"}\n'); s.recv(4096)
+for _ in range(60):
+    s.sendall(json.dumps({"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "ret"}]}}).encode() + b"\n")
+    try: s.recv(4096)
+    except OSError: break
+    time.sleep(0.5)
+PYEOF
+  ) &
 fi
 
 echo "转发: RDP 127.0.0.1:13389 → guest:3389 ; 机控桥 127.0.0.1:19920 → guest:9920 ; VNC :$vnc ; QMP 127.0.0.1:4444"
