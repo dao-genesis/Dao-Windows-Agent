@@ -48,6 +48,23 @@ bash coldstart/windows-sim/run_vm.sh --name winlab
 - 观测：QMP `screendump`（4444 端口）随时截屏；VNC :0 可视
 - 本地管理员：`dao / Dao@2026!`（见 autounattend/default.xml，仅限本地实验靶机）
 
+## ✅ 机控桥 guest 内实机验证（2026-07 · 同上环境）
+
+bridge/ + core/（纯 stdlib）部署进 Win11 guest（Python 3.12.10），宿主经 hostfwd `127.0.0.1:19920 → guest:9920` 全链路打通：
+
+```
+GET  /api/health        → {"ok": true, "apps": ["freecad","jlceda","kicad"], ...}
+GET  /api/apps (Bearer) → {"apps": ["freecad","jlceda","kicad"]}
+POST /api/search_verbs  → kicad/export_pos 等命中（Jaccard 检索）
+POST /api/session.create→ {"session_id": "vm_82118d18", ...}
+无 token                → 401（鉴权生效）
+```
+
+坑与解法（已折进 firstlogon.ps1，装机即自动落地，无需手工 RDP）：
+- bridge 依赖 `core.*`：两个包须一起带入 guest（build_image.sh 已随应答盘打包）
+- Windows 防火墙默认拦 9920 入站：需 `New-NetFirewallRule`（管理员）放行
+- 常驻：计划任务 `DaoBridge`（AtLogOn·Highest）自启，宿主重启 VM 后桥自动可用
+
 ## 通用版本适配（家庭/教育/企业 · Win10/Win11）
 `autounattend/` 下按版本放模板；`build_image.sh --edition` 选择：
 | edition | 说明 |

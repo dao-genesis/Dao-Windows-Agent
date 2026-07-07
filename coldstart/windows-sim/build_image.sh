@@ -26,10 +26,19 @@ DISK="$IMAGES/${name}.qcow2"
 echo "== 创建磁盘 $DISK ($size) =="
 qemu-img create -f qcow2 "$DISK" "$size" >/dev/null
 
-# 把 autounattend.xml 打成一张小 ISO（Windows 安装器自动读取根目录 autounattend.xml）
+# 把 autounattend.xml 打成一张小 ISO（Windows 安装器自动读取根目录 autounattend.xml）。
+# 同时把机控桥（bridge/ + core/·纯 stdlib）随盘带入 guest，供 firstlogon 落地自启。
 AUTO_ISO="$IMAGES/${name}-unattend.iso"
 tmp="$(mktemp -d)"; cp "$UNATTEND_XML" "$tmp/autounattend.xml"
 cp "$HERE/scripts/firstlogon.ps1" "$tmp/firstlogon.ps1" 2>/dev/null || true
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+for pkg in bridge core; do
+  if [ -d "$REPO_ROOT/$pkg" ]; then
+    rsync -a --exclude '__pycache__' "$REPO_ROOT/$pkg" "$tmp/" 2>/dev/null \
+      || cp -r "$REPO_ROOT/$pkg" "$tmp/$pkg"
+    find "$tmp/$pkg" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  fi
+done
 genisoimage -quiet -J -r -o "$AUTO_ISO" "$tmp"; rm -rf "$tmp"
 
 cat <<EOF
