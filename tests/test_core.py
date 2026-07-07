@@ -1,0 +1,97 @@
+"""通用应用适配层核心单测（级别① 纯逻辑，无需真机/GUI）。"""
+from __future__ import annotations
+
+from core.adapter.base import ActionResult, AppAdapter, Instance
+from core.agent.rule import build_system_prompt
+from core.profiles.builtin import build_default_registry
+from core.profiles.schema import AppProfile, AutomationLevel, Verb
+from core.session.manager import SessionManager
+
+
+def _fake_registry(tmp_verb_handler):
+    from core.profiles.registry import ProfileRegistry
+
+    class FakeAdapter(AppAdapter):
+        level = AutomationLevel.API
+
+        def launch(self, workdir, **kw):
+            return Instance(app_id=self.profile.app_id, workdir=workdir)
+
+        def invoke(self, instance, verb, **params):
+            v = self.profile.verb(verb)
+            if v is None:
+                return ActionResult.bad("unknown verb")
+            return ActionResult.good(v.handler(instance, **params))
+
+        def shutdown(self, instance):
+            instance.alive = False
+
+    prof = AppProfile(
+        app_id="fake", display_name="Fake", level=AutomationLevel.API,
+        verbs=[Verb("echo", "回显", {"msg": "文本"}, handler=tmp_verb_handler)],
+    )
+    reg = ProfileRegistry()
+    reg.register(prof, lambda p: FakeAdapter(p))
+    return reg
+
+
+def test_registry_builtin_loads():
+    reg = build_default_registry()
+    assert set(reg.app_ids()) == {"kicad", "freecad", "jlceda"}
+    for app_id in reg.app_ids():
+        assert reg.describe_app(app_id)["verbs"], app_id
+
+
+def test_search_verbs_finds_gerber():
+    reg = build_default_registry()
+    hits = reg.search_verbs("导出 gerber 制造文件")
+    apps = {h["app_id"] for h in hits}
+    assert "kicad" in apps or "jlceda" in apps
+    assert hits[0]["score"] > 0
+
+
+def test_profile_validation_rejects_dupes():
+    from core.profiles.registry import ProfileRegistry
+    bad = AppProfile(app_id="x", display_name="X", level=AutomationLevel.API,
+                     verbs=[Verb("a", "", handler=lambda *a, **k: 1),
+                            Verb("b", "", aliases=("a",), handler=lambda *a, **k: 1)])
+    try:
+        ProfileRegistry().register(bad, lambda p: None)
+        assert False, "应因动词名冲突报错"
+    except ValueError as e:
+        assert "冲突" in str(e)
+
+
+def test_session_lifecycle_and_isolation(tmp_path):
+    reg = _fake_registry(lambda instance, msg="hi": f"{instance.app_id}:{msg}")
+    mgr = SessionManager(reg, root=str(tmp_path))
+    s1 = mgr.create("vm_a")
+    s2 = mgr.create("vm_b")
+    assert set(mgr.list()) == {"vm_a", "vm_b"}
+    assert mgr.open_app("vm_a", "fake").ok
+    assert mgr.open_app("vm_b", "fake").ok
+    # 两会话工作目录隔离
+    assert s1.instances["fake"].workdir != s2.instances["fake"].workdir
+    r = mgr.invoke("vm_a", "fake", "echo", msg="道")
+    assert r.ok and r.value == "fake:道"
+    # 未打开的软件应报错
+    assert not mgr.invoke("vm_a", "nope", "echo").ok
+    # 销毁隔离：销毁 a 不影响 b
+    assert mgr.destroy("vm_a").ok
+    assert "vm_a" not in mgr.list() and "vm_b" in mgr.list()
+    assert mgr.invoke("vm_b", "fake", "echo", msg="x").ok
+
+
+def test_cdp_dry_run_builds_js():
+    reg = build_default_registry()
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-cdp")
+    mgr.create("vm_c")
+    mgr.open_app("vm_c", "jlceda")
+    r = mgr.invoke("vm_c", "jlceda", "api_namespaces")
+    assert r.ok and "_EXTAPI_ROOT_" in r.value["js"]
+
+
+def test_system_prompt_includes_open_apps():
+    reg = build_default_registry()
+    prompt = build_system_prompt(reg, ["kicad", "jlceda"])
+    assert "KiCad" in prompt and "嘉立创EDA" in prompt and "无为而无不为" in prompt

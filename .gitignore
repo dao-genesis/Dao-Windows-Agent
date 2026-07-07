@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# 冷启动介质与镜像（大文件，不入库）
+coldstart/windows-sim/media/
+coldstart/windows-sim/images/
+*.iso
+*.qcow2
+*.fd
