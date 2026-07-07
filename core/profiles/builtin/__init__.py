@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from core.profiles.builtin import freecad, jlceda, kicad, notepad
+from core.profiles.builtin import freecad, jlceda, kicad, mspaint, notepad
 from core.profiles.registry import ProfileRegistry
 
 
-def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = None) -> ProfileRegistry:
+def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = None,
+                           vision_grounder: Optional[Callable[[str, dict], Any]] = None) -> ProfileRegistry:
     """构建内置画像注册表。
 
     级别② 的 uia_driver：未显式传入时，尝试自动探测 guest 内实机 driver（Windows+pywinauto）；
@@ -25,4 +26,5 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
     reg.register(freecad.PROFILE, lambda p: freecad._ADAPTER(p))
     reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p))
     reg.register(notepad.PROFILE, lambda p: notepad._ADAPTER(p, driver=uia_driver))
+    reg.register(mspaint.PROFILE, lambda p: mspaint._ADAPTER(p, grounder=vision_grounder))
     return reg
