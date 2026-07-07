@@ -70,6 +70,48 @@ def _run_ops(adapter, instance, ops=None, **_):
     return _run_macro(adapter, instance, script=script)
 
 
+def _export_iges(adapter, instance, fcstd: str, out: str = "out.iges", **_):
+    script = (
+        "import FreeCAD, Part\n"
+        f"doc = FreeCAD.open(r'{fcstd}')\n"
+        "objs = [o for o in doc.Objects if hasattr(o, 'Shape')]\n"
+        f"Part.export(objs, r'{out}')\n"
+        "print('exported', len(objs), 'objects')\n"
+    )
+    return _run_macro(adapter, instance, script=script)
+
+
+def _export_brep(adapter, instance, fcstd: str, out: str = "out.brep", **_):
+    script = (
+        "import FreeCAD\n"
+        f"doc = FreeCAD.open(r'{fcstd}')\n"
+        "objs = [o for o in doc.Objects if hasattr(o, 'Shape')]\n"
+        "import Part\n"
+        "shape = Part.makeCompound([o.Shape for o in objs])\n"
+        f"shape.exportBrep(r'{out}')\n"
+        "print('exported compound of', len(objs), 'objects')\n"
+    )
+    return _run_macro(adapter, instance, script=script)
+
+
+def _inspect_doc(adapter, instance, fcstd: str, **_):
+    """列出 .FCStd 文档对象树（名称/类型/包围盒），供 agent 感知模型结构。"""
+    script = (
+        "import json, FreeCAD\n"
+        f"doc = FreeCAD.open(r'{fcstd}')\n"
+        "items = []\n"
+        "for o in doc.Objects:\n"
+        "    it = {'name': o.Name, 'label': o.Label, 'type': o.TypeId}\n"
+        "    if hasattr(o, 'Shape') and o.Shape and not o.Shape.isNull():\n"
+        "        bb = o.Shape.BoundBox\n"
+        "        it['bbox'] = [bb.XLength, bb.YLength, bb.ZLength]\n"
+        "        it['volume'] = o.Shape.Volume\n"
+        "    items.append(it)\n"
+        "print(json.dumps(items, ensure_ascii=True))\n"
+    )
+    return _run_macro(adapter, instance, script=script)
+
+
 PROFILE = AppProfile(
     app_id="freecad",
     display_name="FreeCAD (3D 参数化建模)",
@@ -92,6 +134,12 @@ PROFILE = AppProfile(
              {"fcstd": ".FCStd 路径", "out": "输出 .step"}, handler=_export_step, aliases=("step",)),
         Verb("export_stl", "打开 .FCStd 并导出 STL 网格",
              {"fcstd": ".FCStd 路径", "out": "输出 .stl"}, handler=_export_stl, aliases=("stl",)),
+        Verb("export_iges", "打开 .FCStd 并导出 IGES",
+             {"fcstd": ".FCStd 路径", "out": "输出 .iges"}, handler=_export_iges, aliases=("iges",)),
+        Verb("export_brep", "打开 .FCStd 并导出 BREP(OCCT 原生)",
+             {"fcstd": ".FCStd 路径", "out": "输出 .brep"}, handler=_export_brep, aliases=("brep",)),
+        Verb("inspect_doc", "感知 .FCStd 对象树(名称/类型/包围盒/体积, JSON)",
+             {"fcstd": ".FCStd 路径"}, handler=_inspect_doc, aliases=("tree", "inspect")),
     ],
 )
 _ADAPTER = SubprocessApiAdapter

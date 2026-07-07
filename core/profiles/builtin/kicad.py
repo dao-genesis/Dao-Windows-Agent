@@ -5,6 +5,9 @@ KiCad 提供 kicad-cli 与 pcbnew Python API，全流程无需 GUI → 天然隔
 """
 from __future__ import annotations
 
+import os
+
+from core.adapter.base import ActionResult
 from core.adapter.subprocess_api import SubprocessApiAdapter
 from core.profiles.schema import AppProfile, AutomationLevel, Verb
 
@@ -38,6 +41,41 @@ def _run_drc(adapter, instance, pcb: str, out: str = "drc.json", **_):
     return adapter.run_cli(["kicad-cli", "pcb", "drc", "--format", "json", "-o", out, pcb], instance)
 
 
+def _export_bom(adapter, instance, sch: str, out: str = "bom.csv", **_):
+    return adapter.run_cli(["kicad-cli", "sch", "export", "bom", "-o", out, sch], instance)
+
+
+def _export_netlist(adapter, instance, sch: str, out: str = "netlist.net", fmt: str = "kicadsexpr", **_):
+    return adapter.run_cli(["kicad-cli", "sch", "export", "netlist",
+                            "--format", fmt, "-o", out, sch], instance)
+
+
+def _export_sch_pdf(adapter, instance, sch: str, out: str = "schematic.pdf", **_):
+    return adapter.run_cli(["kicad-cli", "sch", "export", "pdf", "-o", out, sch], instance)
+
+
+def _export_pcb_svg(adapter, instance, pcb: str, out: str = "board.svg",
+                    layers: str = "F.Cu,B.Cu,Edge.Cuts", **_):
+    return adapter.run_cli(["kicad-cli", "pcb", "export", "svg",
+                            "--layers", layers, "-o", out, pcb], instance)
+
+
+def _pcb_python(adapter, instance, script: str = "", macro_path: str = "", **_):
+    """无头执行任意 pcbnew Python 脚本（解锁 kicad-cli 未覆盖的板级操作）。
+
+    收编自 pcb_brain/kicad_native.py 的 pcbnew 直驱思路——载 board、改 net/track、
+    跑原生 DRC、导 DSN/收 SES 等皆可写进 script。需 guest 内 KiCad 自带 Python 可用。
+    """
+    if not macro_path:
+        if not script:
+            return ActionResult.bad("需提供 script 或 macro_path")
+        macro_path = os.path.join(instance.workdir, "_pcbnew.py")
+        with open(macro_path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+    # KiCad 自带解释器：Windows 装机后 kicad-cli 同目录的 python；退回系统 python 也可（已装 pcbnew）
+    return adapter.run_cli(["python", macro_path], instance, timeout=180)
+
+
 PROFILE = AppProfile(
     app_id="kicad",
     display_name="KiCad (PCB 设计)",
@@ -68,6 +106,19 @@ PROFILE = AppProfile(
              handler=_render_3d, aliases=("render",)),
         Verb("run_drc", "运行设计规则检查(DRC)，产出 JSON 报告",
              {"pcb": ".kicad_pcb 路径", "out": "报告路径"}, handler=_run_drc, aliases=("drc",)),
+        Verb("export_bom", "从 .kicad_sch 导出物料清单(BOM CSV)",
+             {"sch": ".kicad_sch 路径", "out": "输出 .csv"}, handler=_export_bom, aliases=("bom",)),
+        Verb("export_netlist", "从 .kicad_sch 导出网表(netlist)",
+             {"sch": ".kicad_sch 路径", "out": "输出文件", "fmt": "kicadsexpr/spice/…"},
+             handler=_export_netlist, aliases=("netlist",)),
+        Verb("export_sch_pdf", "把原理图 .kicad_sch 出图为 PDF",
+             {"sch": ".kicad_sch 路径", "out": "输出 .pdf"}, handler=_export_sch_pdf, aliases=("sch_pdf",)),
+        Verb("export_pcb_svg", "把 PCB 指定层导出为 SVG 矢量图",
+             {"pcb": ".kicad_pcb 路径", "out": "输出 .svg", "layers": "层清单(逗号分隔)"},
+             handler=_export_pcb_svg, aliases=("svg",)),
+        Verb("pcb_python", "无头执行任意 pcbnew Python 脚本(改 net/track、原生 DRC、DSN/SES 往返等)",
+             {"script": "内联 pcbnew Python", "macro_path": "脚本文件路径"},
+             handler=_pcb_python, aliases=("pcbnew", "script")),
     ],
 )
 _ADAPTER = SubprocessApiAdapter

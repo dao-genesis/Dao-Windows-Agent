@@ -42,6 +42,24 @@ def test_registry_builtin_loads():
         assert reg.describe_app(app_id)["verbs"], app_id
 
 
+def test_deepened_profile_verbs_present():
+    reg = build_default_registry()
+    kicad = {v["name"] for v in reg.describe_app("kicad")["verbs"]}
+    assert {"export_bom", "export_netlist", "export_sch_pdf",
+            "export_pcb_svg", "pcb_python"} <= kicad
+    freecad = {v["name"] for v in reg.describe_app("freecad")["verbs"]}
+    assert {"export_iges", "export_brep", "inspect_doc"} <= freecad
+
+
+def test_search_verbs_finds_deepened_verbs():
+    reg = build_default_registry()
+    assert reg.search_verbs("导出 BOM 物料清单")[0]["verb"] == "export_bom"
+    hits = reg.search_verbs("pcbnew python script")
+    assert hits and hits[0]["app_id"] == "kicad" and hits[0]["verb"] == "pcb_python"
+    hits = reg.search_verbs("inspect model tree")
+    assert hits and hits[0]["verb"] == "inspect_doc"
+
+
 def test_search_verbs_finds_gerber():
     reg = build_default_registry()
     hits = reg.search_verbs("导出 gerber 制造文件")
