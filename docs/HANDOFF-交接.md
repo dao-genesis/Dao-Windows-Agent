@@ -224,3 +224,23 @@ round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌
 - guacd 折进容器编排（docker-compose 或 K8s sidecar）
 
 *道法自然 · 无为而无不为*
+
+## 十一、路线A 阶段一真机全绿（本轮实证 · v0.2.2）
+
+**guest VSCode 面板端到端全链路真机验收（全部 PASS，含录屏）：**
+- 面板 `DAO 桌面`（v0.2.2）连接 → `已连接 ●`，Guacamole canvas 内渲染一路**独立** RDP 桌面。
+- 键鼠双向直操：canvas 内开始菜单/记事本/cmd 全可用，键入文本落入面板会话。
+- **多会话并行实证**：canvas 内 `qwinsta` → `console(ID1)` 与 `rdp-tcp#0(ID2)` 同为 `dao`、同时 Active，互不劫持（道并行而不相悖）。
+- 稳定性：70s+ 空闲不掉线；`断开→连接` 重连**回到同一会话**（cmd 历史原样保留）。
+
+**本轮致命修复（commit 8dd550f）：**
+1. webview 内联脚本在模板字面量里写 `/^text\//` 正则 —— `\/` 被模板转义吞成 `/`，整段脚本 SyntaxError 报废（doConnect 未定义→连接按钮无效）。改 `indexOf('text/')`；`build.sh` 增加渲染后 `vm.Script` 编译自检，此类坑打包即拦截。
+2. `desktop/tunnel/server.js` 监听地址软编码（`DAO_GUAC_BIND=0.0.0.0`）—— guest 经 slirp `10.0.2.2` 回连宿主隧道必需。
+
+**真机踩坑（务必传承）：**
+- **宿主 `/dev/kvm` 无权限时 run_vm.sh 静默回退 TCG** —— Win11 在 TCG(`-cpu max`) 下反复 `SYSTEM_THREAD_EXCEPTION_NOT_HANDLED` 蓝屏循环（软件模拟指令失真），像"磁盘损坏"实则不是。正解：`sudo setfacl -m u:$USER:rw /dev/kvm`（或入 kvm 组）后重启 VM，KVM 下 ~45s 稳定进桌面。
+- 宿主经 VNC 快打字会丢 shift 字符（`Visual`→`isual`），非面板 bug；面板内键入无此问题。
+
+**遗留（下一 Agent）：** 剪贴板双向透传回归、多 IDE 窗口=多路 RDP 并行实测、断线自动重连（指数退避已写，待真机回归）、git push 403 解封后推 PR。
+
+*道法自然 · 无为而无不为*
