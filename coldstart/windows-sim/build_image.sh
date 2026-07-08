@@ -39,6 +39,13 @@ for pkg in bridge core; do
     find "$tmp/$pkg" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   fi
 done
+# IDE 前端 .vsix 一并带入（firstlogon 装 VSCode 后离线安装；缺则现打，打不出不阻断）
+VSIX="$(ls "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
+if [ -z "$VSIX" ] && command -v node >/dev/null 2>&1; then
+  bash "$REPO_ROOT/ide/vscode/build.sh" >/dev/null 2>&1 || true
+  VSIX="$(ls "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
+fi
+[ -n "$VSIX" ] && cp "$VSIX" "$tmp/" && echo "已捆入 IDE 插件: $(basename "$VSIX")"
 genisoimage -quiet -J -r -o "$AUTO_ISO" "$tmp"; rm -rf "$tmp"
 
 cat <<EOF

@@ -18,9 +18,10 @@
 | PR#11 | 桥改 SYSTEM+开机任务（抗 RDP 注销）+ 本交接文档 | ✅ |
 | PR#12 | **真·隔离桌面基石 `win_desktop.py`**（CreateProcessW+SetThreadDesktop），修复级别② 隔离完全落空的致命 bug | ✅ |
 | PR#13 | **消息级本源 driver（纯 ctypes，弃 pywinauto/pywin32）+ 真机 live 全绿** | ✅ |
-| PR#14 | **桥改交互会话(WinSta0)自启 → 经桥 HTTP 端到端隔离 round-trip 全绿**；闭合 SYSTEM(session0) 跨窗口站死结 + 截图路径软编码单测 | ⬅️ |
+| PR#14 | **桥改交互会话(WinSta0)自启 → 经桥 HTTP 端到端隔离 round-trip 全绿**；闭合 SYSTEM(session0) 跨窗口站死结 + 截图路径软编码单测 | ✅ |
+| PR#16 | **VSCode 插件前端（ide/vscode）**：每个 IDE 窗口=隔离会话，自带 runtime 可自启桥；**一键冷启动编排 `coldstart/up.sh`**（幂等断点续跑）；firstlogon 自动装 VSCode+插件 | ⬅️ |
 
-离线自检：`python3 -m pytest tests -q` → **26 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
+离线自检：`python3 -m pytest tests -q` → **31 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
 
 ### PR#12/13 的本源修复（务必理解，别退回老路）
 
@@ -129,6 +130,19 @@
 2. 级别③ 视觉模型接入：`PrintWindow` 取图已落盘，grounder 仍是注入契约，接真实视觉模型
    属后续工程。
 3. mspaint 级别③ 真机取证同法可跑（本轮已验 notepad 截图链路）。
-4. 长线：IddCx 虚拟显示器（级别② GPU 软件离屏）、vsix 插件端收编（参照 devin-remote）。
+4. ~~vsix 插件端收编~~ **✅ 已落地（PR#16，见第七节）**。
+5. 长线：IddCx 虚拟显示器（级别② GPU 软件离屏）。
+
+## 七、PR#16 本轮：IDE 前端 + 冷启动固化
+
+**ide/vscode 插件（把整台 Windows 做进 IDE 的前端落地）**：
+- 激活即为本窗口分配稳定隔离会话 `ide_<hash>`（绑定工作区路径），N 个 IDE 窗口 = N 个互不干扰实例。
+- 面板全部一键按钮（真机 RDP 打字乱码的规避）：级别① system exec/sysinfo/processes、级别② notepad 隔离桌面 round-trip、级别③ PrintWindow 截图、search_verbs。
+- 零配置冷启动：连不上 `daoWin.bridgeUrl`（默认 9920）时，用打包时捆入的 `runtime/`（bridge+core）自启本地桥（9930）。
+- 打包：`bash ide/vscode/build.sh` → `dao-windows-agent-0.1.0.vsix`（纯 stdlib+node 无三方依赖）。
+
+**冷启动固化（针对"前两轮冷启动太慢"痛点）**：
+- `coldstart/up.sh` 一行从零到可用：装 qemu→取介质→建镜像→无人值守装机→常态启动→等桥就绪；每阶段产物落盘即跳过（幂等），`--status`/`--run-only` 可单独用。
+- `build_image.sh` 把 vsix 捆进应答盘；`firstlogon.ps1` 装机即自动装 VSCode（winget 钉 `--source winget` 防 msstore 歧义）+ 离线装插件 —— 冷启动完成即得可用 IDE 前端。
 
 *道法自然 · 无为而无不为*

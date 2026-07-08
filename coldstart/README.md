@@ -18,7 +18,15 @@ bash coldstart/windows-sim/preflight.sh
 ```
 检查 `/dev/kvm`、CPU 虚拟化标志、内存/磁盘、qemu 是否就绪，并给出安装建议。
 
-## 一键落地（幂等）
+## 真·一键（推荐 · 幂等断点续跑）
+```bash
+bash coldstart/up.sh            # 从零到「IDE 即隔离会话」可用：装qemu→取介质→建镜像→装机→常态启动→等桥
+bash coldstart/up.sh --status   # 只看现状（各阶段产物 + 桥探活）
+bash coldstart/up.sh --run-only # 已装机，仅常态启动
+```
+每阶段产物落盘即跳过（不重复下 5GB ISO / 不重装机）；装机末尾 firstlogon 自动落桥 + 装 VSCode + 装 DAO 插件。
+
+## 分步落地（幂等）
 ```bash
 # 1) 装 qemu + 依赖（apt）
 bash coldstart/windows-sim/install_qemu.sh

@@ -1,0 +1,4 @@
+runtime/
+*.vsix
+node_modules/
+media/dao.png
