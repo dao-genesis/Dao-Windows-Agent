@@ -37,9 +37,54 @@ def _fake_registry(tmp_verb_handler):
 
 def test_registry_builtin_loads():
     reg = build_default_registry()
-    assert {"kicad", "freecad", "jlceda", "notepad"} <= set(reg.app_ids())
+    assert {"kicad", "freecad", "jlceda", "notepad", "system"} <= set(reg.app_ids())
     for app_id in reg.app_ids():
         assert reg.describe_app(app_id)["verbs"], app_id
+
+
+def test_system_profile_real_roundtrip(tmp_path):
+    """整机底座（级别①）：exec/文件/列目录/进程/系统信息在本平台真跑真验（Linux/CI 即可）。"""
+    reg = build_default_registry()
+    mgr = SessionManager(reg, root=str(tmp_path))
+    mgr.create("vm_sys")
+    assert mgr.open_app("vm_sys", "system").ok
+
+    # exec：真跑一行 shell，回显可读
+    r = mgr.invoke("vm_sys", "system", "exec", cmd="echo 道法自然")
+    assert r.ok and "道法自然" in r.value["stdout"]
+
+    # 文件往返：写入→读回一致（自动建父目录）
+    fpath = str(tmp_path / "sub" / "dao.txt")
+    assert mgr.invoke("vm_sys", "system", "write_file", path=fpath, content="一生二").ok
+    rr = mgr.invoke("vm_sys", "system", "read_file", path=fpath)
+    assert rr.ok and rr.value["content"] == "一生二" and not rr.value["truncated"]
+
+    # 列目录：至少含刚写的子目录
+    ld = mgr.invoke("vm_sys", "system", "list_dir", path=str(tmp_path))
+    assert ld.ok and any(e["name"] == "sub" and e["is_dir"] for e in ld.value["entries"])
+
+    # 系统信息 + 进程列举
+    si = mgr.invoke("vm_sys", "system", "sysinfo")
+    assert si.ok and si.value["platform"] and si.value["home"]
+    assert mgr.invoke("vm_sys", "system", "processes").ok
+
+    # 环境变量：全量 + 单个
+    assert isinstance(mgr.invoke("vm_sys", "system", "env").value, dict)
+
+
+def test_system_verbs_searchable_and_aliased():
+    """整机动词可经中文/英文检索命中，且别名解析正确。"""
+    reg = build_default_registry()
+    hits = reg.search_verbs("执行命令 shell 运行")
+    assert hits and hits[0]["app_id"] == "system" and hits[0]["verb"] == "exec"
+    prof = reg.describe_app("system")
+    names = {v["name"] for v in prof["verbs"]}
+    assert {"exec", "read_file", "write_file", "list_dir", "processes", "env", "sysinfo"} <= names
+    # 别名解析：cat→read_file、ls→list_dir、run→exec
+    from core.profiles.builtin import system as sysmod
+    assert sysmod.PROFILE.verb("cat").name == "read_file"
+    assert sysmod.PROFILE.verb("ls").name == "list_dir"
+    assert sysmod.PROFILE.verb("run").name == "exec"
 
 
 def test_deepened_profile_verbs_present():
