@@ -73,6 +73,7 @@ Set-Location '$dst'
 #    在任意 Windows 版本上开启并发 RDP + 同一账号多会话，实现"一台机、一个账号、多路独立桌面"。
 #    每个 IDE 窗口 = 一路 RDP 会话，经 Guacamole 送进 IDE 面板 canvas。
 try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $rdpwrapDir = "$env:ProgramFiles\RDP Wrapper"
   if (-not (Test-Path "$rdpwrapDir\rdpwrap.dll")) {
     Log "installing rdpwrap..."
@@ -82,18 +83,46 @@ try {
     # silent install
     Start-Process "$env:TEMP\rdpwrap\install.bat" -Wait -WindowStyle Hidden
     Log "rdpwrap installed"
-    # update rdpwrap.ini for latest Windows builds (community maintained)
-    try {
-      Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini' -OutFile "$rdpwrapDir\rdpwrap.ini"
-      Log "rdpwrap.ini updated (community)"
-    } catch { Log "rdpwrap.ini update skipped: $_" }
   } else {
     Log "rdpwrap already present"
   }
+  # 关键：rdpwrap.ini 必须含当前 termsrv.dll build 的多会话 offset，否则 wrapper 加载但不打补丁，
+  # 表现为"Another user is signed in"、并发被踢（实为单会话）。stock ini 常缺新 build（如 26100.x）段，
+  # 故务必刷成社区维护版，并带重试；成功后必须重启 TermService 让 wrapper 重读 offset 才生效。
+  $tsVer = (Get-Item "$env:SystemRoot\System32\termsrv.dll").VersionInfo.FileVersion
+  $tsSection = '[' + (($tsVer -split ' ')[0]) + ']'
+  $iniPath = "$rdpwrapDir\rdpwrap.ini"
+  $iniOk = $false
+  for ($i = 1; $i -le 3 -and -not $iniOk; $i++) {
+    try {
+      $tmpIni = "$env:TEMP\rdpwrap_community.ini"
+      Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini' -OutFile $tmpIni
+      if ((Select-String -Path $tmpIni -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)) {
+        # 文件被 wrapper 占用，需先停服务再替换
+        Stop-Service TermService -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        Copy-Item $tmpIni $iniPath -Force
+        $iniOk = $true
+        Log "rdpwrap.ini updated (community); contains $tsSection for termsrv $tsVer"
+      } else {
+        Log "rdpwrap.ini community missing $tsSection (attempt $i); retrying"
+      }
+    } catch { Log "rdpwrap.ini update attempt $i failed: $_" }
+    if (-not $iniOk) { Start-Sleep -Seconds 5 }
+  }
+  if (-not $iniOk) { Log "WARN: rdpwrap.ini lacks $tsSection — 多会话可能不生效，需人工更新 offset" }
   # Group Policy: allow multiple sessions per user (do NOT restrict to single session)
   # This enables each IDE window to get its own independent RDP session for the same account.
   Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fSingleSessionPerUser -Value 0
   Log "rdpwrap: fSingleSessionPerUser=0 (multi-session enabled)"
+  # 重启 TermService 让 rdpwrap 依据(新)ini 重新打补丁
+  try {
+    Restart-Service TermService -Force -ErrorAction Stop
+    Log "TermService restarted (rdpwrap offsets reloaded)"
+  } catch {
+    Start-Service TermService -ErrorAction SilentlyContinue
+    Log "TermService start after ini swap: $_"
+  }
 } catch { Log "rdpwrap provisioning failed: $_" }
 
 # 6) VSCode + DAO 插件（把整台 Windows 做进 IDE：每个 IDE 窗口=一个隔离会话）

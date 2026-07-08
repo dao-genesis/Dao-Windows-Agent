@@ -162,7 +162,15 @@ function fetchAccounts(tunnelHttpUrl) {
 function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts) {
   const guacUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"));
   const cspSource = webview.cspSource;
-  const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + cspSource + "; style-src 'unsafe-inline'; connect-src ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; img-src data:;";
+  // 隧道主机由 tunnelHttpUrl 推导（自适应任意环境：本机 127.0.0.1 / 宿主 10.0.2.2 / 局域网 IP / 公网）。
+  let tunnelHost = "127.0.0.1";
+  try { tunnelHost = new URL(tunnelHttpUrl).hostname || tunnelHost; } catch (e) {}
+  const connectSrc = [
+    "ws://" + tunnelHost + ":*", "wss://" + tunnelHost + ":*",
+    "http://" + tunnelHost + ":*", "https://" + tunnelHost + ":*",
+    "ws://127.0.0.1:*", "http://127.0.0.1:*", "ws://localhost:*", "http://localhost:*",
+  ].join(" ");
+  const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + cspSource + "; style-src 'unsafe-inline'; connect-src " + connectSrc + "; img-src data:;";
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspSrc}">
 <style>
@@ -196,6 +204,7 @@ const container = document.getElementById('desktop');
 const statusEl = document.getElementById('status');
 const acctEl = document.getElementById('acct');
 let client = null;
+let connecting = false;
 
 // \u586b\u5145\u8d26\u53f7\u4e0b\u62c9\uff1b\u9009\u4e2d\u672c\u9762\u677f\u7ed1\u5b9a\u8d26\u53f7\uff0c\u5207\u5230\u5176\u4ed6\u8d26\u53f7\u5219\u65b0\u5f00/\u5207\u5230\u90a3\u4e00\u8def\u9762\u677f\u3002
 (function initAccounts(){
@@ -216,6 +225,8 @@ function onAcctChange(){
 function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
 
 async function doConnect() {
+  if (connecting) return;
+  connecting = true;
   doDisconnect();
   setStatus('\u53d6 token...', '#ffcc00');
   const w = container.clientWidth;
@@ -225,22 +236,31 @@ async function doConnect() {
     const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + IDE_SESSION);
     const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
     tokenData = await r.json();
-    if (tokenData.error) { setStatus('\u4ee4\u724c: ' + tokenData.error, '#ff4444'); return; }
-  } catch (e) { setStatus('\u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); return; }
-  const wsUrl = 'ws://127.0.0.1:' + TUNNEL_WS_PORT + '/?token=' + encodeURIComponent(tokenData.token);
+    if (tokenData.error) { setStatus('\u4ee4\u724c: ' + tokenData.error, '#ff4444'); connecting = false; return; }
+  } catch (e) { setStatus('\u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); connecting = false; return; }
+  let wsHost = '127.0.0.1', wsScheme = 'ws';
+  try { const tu = new URL(TUNNEL_HTTP); wsHost = tu.hostname || wsHost; wsScheme = (tu.protocol === 'https:') ? 'wss' : 'ws'; } catch (e) {}
+  const wsUrl = wsScheme + '://' + wsHost + ':' + TUNNEL_WS_PORT + '/?token=' + encodeURIComponent(tokenData.token);
   setStatus('\u5efa\u7acb WS \u96a7\u9053...', '#ffcc00');
   const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
   client = new Guacamole.Client(tunnel);
   const display = client.getDisplay();
-  document.getElementById('overlay').remove();
+  var ov = document.getElementById('overlay'); if (ov) ov.remove();
+  container.innerHTML = '';
   container.appendChild(display.getElement());
-  // \u9f20\u6807
+  // \u9f20\u6807（\u6309\u663e\u793a\u7f29\u653e\u6362\u7b97\u56de\u771f\u5b9e\u5750\u6807）
   const mouse = new Guacamole.Mouse(display.getElement());
-  mouse.onEach(['mousedown','mousemove','mouseup'], function(e) { client.sendMouseState(e.state, true); });
+  mouse.onEach(['mousedown','mousemove','mouseup'], function(e) {
+    if (!client) return;
+    var s = display.getScale() || 1;
+    var st = e.state;
+    if (s !== 1) st = new Guacamole.Mouse.State(st.x / s, st.y / s, st.left, st.middle, st.right, st.up, st.down);
+    client.sendMouseState(st, true);
+  });
   // \u952e\u76d8
   const keyboard = new Guacamole.Keyboard(document);
-  keyboard.onkeydown = function(k) { client.sendKeyEvent(1, k); };
-  keyboard.onkeyup = function(k) { client.sendKeyEvent(0, k); };
+  keyboard.onkeydown = function(k) { if (client) client.sendKeyEvent(1, k); };
+  keyboard.onkeyup = function(k) { if (client) client.sendKeyEvent(0, k); };
   // \u81ea\u9002\u5e94\u7f29\u653e
   display.onresize = function(dw, dh) {
     const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
@@ -253,7 +273,9 @@ async function doConnect() {
     vscodeApi.postMessage({type:'state', state: state});
   };
   client.onerror = function(s) { setStatus('\u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
+  tunnel.onerror = function(s) { setStatus('\u96a7\u9053\u9519\u8bef: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
   client.connect();
+  connecting = false;
 }
 
 function doDisconnect() {
