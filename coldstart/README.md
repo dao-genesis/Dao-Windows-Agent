@@ -85,5 +85,23 @@ POST /api/session.create→ {"session_id": "vm_82118d18", ...}
 
 ## 与本体系的衔接
 Windows VM 起来后，把 `bridge/` 的机控守护进程（复用 devin-remote/vm-replica 骨架）装进去，
-经 REST/MCP 暴露 `exec/file/screenshot/ui_tree/create_desktop/...`，即成为级别②/③ 适配器的落地靶机。
-后续所有隔离桌面/虚拟显示器 PoC 都在此 VM 内进行，无需用户真机。
+经 REST/MCP 暴露 `exec/file/screenshot/ui_tree/create_desktop/...`，作为**控制面/自动化后端**
+（供 Agent 脚本化编排/校验；见 `docs/正本清源-桌面级路由本源.md` 路线 C）。
+
+## 🎯 桌面级路由 · 冷启动待固化（后续 Agent 主干任务）
+
+> 正本清源后，主前端 = **面板内直接呈现整块 Windows 桌面（类多 RDP·路线 A）**。冷启动需在本 VM 内
+> 额外固化以下环节（本轮仅**定调 + 调研**，脚本化实现留待后续 Agent，验证通过后折进 `firstlogon.ps1`/`up.sh`）：
+
+1. **单账号多路 RDP**：guest 内装 `stascorp/rdpwrap`（任意 Win 版本开并发 RDP + 同账号多会话）；
+   组策略"将 RDP 用户限制到单独会话"设为**启用**（否则同用户重连不断新建桌面——已知坑）。
+   企业/教育版直接可用；家庭版靠 rdpwrap 补齐 RDP host。
+2. **Guacamole 隧道**：宿主 Linux 跑 `guacd`（默认 4822）连 guest RDP（经 hostfwd 13389）；
+   或 guest 内自带。前端用 `guacamole-common-js` 在 VSCode Webview 的 `<canvas>` 上渲染 + 键鼠抽象。
+3. **会话映射**：插件把 `ide_<hash>`（工作区哈希）稳定绑定到一路 RDP 会话，首开零点击拉起 + 渲染。
+4. **验证锚点**：两个 IDE 窗口 = 两路独立桌面并行互不干扰；面板内直接鼠键操作真实桌面（非投屏截图流）。
+
+> 注：路线 B（每会话 IddCx 虚拟显示器 + Desktop Duplication 推流）作路线 A 受限时的兜底；
+> 家庭版无组策略时优先靠 rdpwrap；详见正本清源文档第三节路线对比。
+
+后续所有桌面路由/隔离会话 PoC 都在此 VM 内进行，无需用户真机。
