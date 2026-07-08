@@ -17,9 +17,10 @@
 | PR#10 | 动词检索纯中文查询（CJK 单字+二元词元化） | ✅ |
 | PR#11 | 桥改 SYSTEM+开机任务（抗 RDP 注销）+ 本交接文档 | ✅ |
 | PR#12 | **真·隔离桌面基石 `win_desktop.py`**（CreateProcessW+SetThreadDesktop），修复级别② 隔离完全落空的致命 bug | ✅ |
-| PR#13 | **消息级本源 driver（纯 ctypes，弃 pywinauto/pywin32）+ 真机 live 全绿** | ⬅️ |
+| PR#13 | **消息级本源 driver（纯 ctypes，弃 pywinauto/pywin32）+ 真机 live 全绿** | ✅ |
+| PR#14 | **桥改交互会话(WinSta0)自启 → 经桥 HTTP 端到端隔离 round-trip 全绿**；闭合 SYSTEM(session0) 跨窗口站死结 + 截图路径软编码单测 | ⬅️ |
 
-离线自检：`python3 -m pytest tests -q` → **22 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
+离线自检：`python3 -m pytest tests -q` → **26 passed**（级别①②③ 全部 dry-run 可测，Linux 即可）。
 
 ### PR#12/13 的本源修复（务必理解，别退回老路）
 
@@ -88,12 +89,43 @@
 4. pip user-site 的 pywin32 DLL 必坏（见二·卡点）；**冷启动脚本 pip install 建议加 `--no-user`
    或以管理员跑**，下个 Agent 可顺手在 firstlogon.ps1 补上。
 
+## 六、PR#14 本轮闭环（经桥 HTTP 端到端·根因修复）
+
+**根因（跨窗口站死结）**：桥若跑在 **SYSTEM / session 0**（服务窗口站 `Service-0x0`），其
+`CreateDesktop` 建的隔离桌面属 session 0 窗口站；而 `CreateProcessAsUser` 用交互会话用户令牌
+起的进程落在 **交互会话 WinSta0**——两个窗口站互不可见，故 notepad 起来了(`pid` 有)、
+隔离桌面里却 `EnumDesktopWindows` **永远枚举不到**(`found:false`/`编辑控件未定位`)。
+令牌桥接(方案 b)治标不治本。
+
+**正解（方案 a·已落地）**：桥必须与其隔离桌面 **同处一个窗口站** → 让桥跑在**交互会话**。
+把 `DaoBridge` 计划任务从 `SYSTEM/AtStartup/ServiceAccount` 改为
+`当前登录用户/AtLogOn/LogonType Interactive/RunLevel Highest`（见 `firstlogon.ps1`）。
+桥遂在 `SessionId=1·WinSta0` 内 `CreateDesktop`+`CreateProcessW`，隔离桌面窗口即可枚举。
+
+**真机 live 全绿（经桥 HTTP `POST /api/session.*`，纯 IDE 内）**：
+- python `SessionId=1`、`whoami=...\dao`（确认桥在交互会话）。
+- `vmA`：open→type_text→read_text 读回 `道法自然 dao-win e2e OK 20260708`（edit hwnd 命中）。
+- `vmB`：另起一份 notepad 写 `second isolated session VMB 111`；写 vmB 后 **vmA 读回不变** → 双会话互不干扰。
+- 默认桌面（QMP 控制台截屏）里**无任何这两个 notepad** → 零用户可见干扰。
+- `screenshot` 经 `PrintWindow` 跨桌面取到 vmA 隔离桌面 notepad 正文，落 `%TEMP%`（软编码，非 `C:\` 根）。
+
+**Devin Remote 多 RDP 成果的整合结论**：不搬 RDPWrap/多账号/多 RDP 会话那套（用户明令规避其配置负担），
+而是把「N 个互不干扰实例」这一**目标**用**单账号内 N 张 `CreateDesktop` 隔离桌面 + 消息级 I/O**
+达成——同效果、零配置、去中心化。多 RDP 骨架仅作对照，不引入其账号/会话管理复杂度。
+
+**级别① 整机底座真机跑通**：经桥 `system` profile 在 guest 真跑 `sysinfo/exec/write_file/read_file/processes`
+（Win11 26100·PS 5.1·文件往返一致）——对标 Agent 在自己 Linux VM 上的 `exec/file/ls/ps`，
+把整台 Windows 无头、天然隔离地做进 IDE。
+
+**新增单测（26 passed）**：`test_win_desktop_session_aware_launch_surface`（会话自适应起进程接口面）、
+`test_uia_win_screenshot_path_softcoded`（截图目录软编码：默认 `tempfile.gettempdir()`，显式 `dir` 覆盖，绝不硬编码 `C:\` 根）。
+
+**对现存 guest 的热修**：桥跑 SYSTEM 时可零 UAC 自我重构——用其 `system` profile 写 `reconfig.ps1`、
+以独立一次性任务 `schtasks /Run` 拉起（不作桥子进程，杀旧桥不误伤），重注册 `DaoBridge` 为交互任务并 `/Run`。
+
 ## 五、下一步（按优先级）
 
-1. **桥进程应跑在交互会话而非 SYSTEM session 0**：本轮实证 session 0 内 `CreateProcessW`
-   到隔离桌面报 `WinError 5`。落地方案二选一：(a) firstlogon 把桥改为**当前用户登录任务**
-   （AtLogon/交互令牌），或 (b) 桥保持 SYSTEM 但用 `CreateProcessAsUser` + 会话用户令牌
-   （`WTSQueryUserToken`）起隔离桌面进程。当前交互会话内直跑已全绿，收编到桥即完成闭环。
+1. ~~桥进程应跑在交互会话而非 SYSTEM session 0~~ **✅ 已闭合（PR#14，见第六节）**。
 2. 级别③ 视觉模型接入：`PrintWindow` 取图已落盘，grounder 仍是注入契约，接真实视觉模型
    属后续工程。
 3. mspaint 级别③ 真机取证同法可跑（本轮已验 notepad 截图链路）。

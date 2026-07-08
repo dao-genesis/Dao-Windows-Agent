@@ -54,11 +54,13 @@ if ($src -and $py) {
 Set-Location '$dst'
 & '$py' -m bridge.server --host 0.0.0.0 --port 9920
 "@ | Set-Content -Encoding UTF8 $start
-  # SYSTEM + 开机触发：桥不依赖交互登录会话，注销/RDP 断连均不掉（会话隔离桌面由桥自行 CreateDesktop）
+  # 交互会话(登录用户·session>0·WinSta0)自启：桥必须与其 CreateDesktop 出的隔离桌面同处一个
+  # 窗口站，隔离桌面里的窗口才可枚举/消息级输入/PrintWindow。切勿跑 SYSTEM(session0·服务窗口站)——
+  # 那样 CreateProcessAsUser 起的进程落在交互 WinSta0，与 session0 里建的桌面互不可见，窗口永远枚举不到。
   $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`"" -WorkingDirectory $dst
-  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-  $penv    = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $penv    = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
   Register-ScheduledTask -TaskName 'DaoBridge' -Action $action -Trigger $trigger -Settings $set -Principal $penv -Force | Out-Null
   # 立即拉起一次（本次登录即可用，无需等下次登录）
   Start-Process $py -ArgumentList '-m','bridge.server','--host','0.0.0.0','--port','9920' -WorkingDirectory $dst -WindowStyle Hidden
