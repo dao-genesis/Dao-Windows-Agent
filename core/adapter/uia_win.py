@@ -24,10 +24,13 @@ pywin32 的 DLL 注册地狱。只要是 Windows guest，`available()` 即为真
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from typing import Any, Optional
 
 from core.adapter import win_desktop
+from core.adapter.win_desktop import sanitize_name
 
 # 现代/经典编辑区类名（消息级 WM_SETTEXT/WM_GETTEXT 通吃）。
 _EDIT_CLASSES = win_desktop._EDIT_CLASSES if hasattr(win_desktop, "_EDIT_CLASSES") else (
@@ -188,7 +191,9 @@ class _WinMsgDriver:
             self._top = self._await_top(desktop, deadline=time.time() + 3)
         if not self._top:
             return {"screenshot": None, "reason": "无顶层窗口"}
-        path = f"C:\\dao_win\\shot_{int(time.time())}.bmp"
+        # 落盘目录：显式 dir 优先，否则用系统临时目录（非提权交互会话写不了 C:\ 根）。
+        out_dir = step.get("dir") or tempfile.gettempdir()
+        path = os.path.join(out_dir, f"dao_shot_{sanitize_name(desktop)}_{int(time.time())}.bmp")
         try:
             win_desktop.capture_window(self._top, path)
             return {"screenshot": path, "hwnd": self._top}
