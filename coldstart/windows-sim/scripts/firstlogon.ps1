@@ -80,8 +80,14 @@ try {
     $rdpZip = "$env:TEMP\RDPWrap.zip"
     Invoke-WebRequest -Uri 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' -OutFile $rdpZip
     Expand-Archive -Path $rdpZip -DestinationPath "$env:TEMP\rdpwrap" -Force
-    # silent install
-    Start-Process "$env:TEMP\rdpwrap\install.bat" -Wait -WindowStyle Hidden
+    # 静默装：直接调 RDPWInst.exe -i -s（install.bat 末尾有 pause，-Wait 会永久挂起·真机踩坑）。
+    # 无 RDPWInst 则回退 install.bat，但用 cmd /c 并喂空 stdin 让 pause 立即返回。
+    $rdpwinst = Join-Path "$env:TEMP\rdpwrap" 'RDPWInst.exe'
+    if (Test-Path $rdpwinst) {
+      Start-Process $rdpwinst -ArgumentList '-i','-s' -Wait -WindowStyle Hidden
+    } else {
+      Start-Process cmd.exe -ArgumentList '/c','"'+"$env:TEMP\rdpwrap\install.bat"+'" < NUL' -Wait -WindowStyle Hidden
+    }
     Log "rdpwrap installed"
   } else {
     Log "rdpwrap already present"

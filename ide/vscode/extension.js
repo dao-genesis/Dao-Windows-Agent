@@ -276,7 +276,8 @@ async function doConnect() {
   };
   // \u526a\u8d34\u677f\uff1a\u8fdc\u7aef\u2192\u672c\u5730\uff08\u7ecf\u6269\u5c55\u5bbf\u4e3b\u5199 vscode \u526a\u8d34\u677f\uff09
   client.onclipboard = function(stream, mimetype) {
-    if (!/^text\//.test(mimetype)) { try { stream.sendAck('OK', 0); } catch(e) {} return; }
+    // 注意：本段位于模板字面量内，\\/ 会被吞成 /，禁用含斜杠的正则字面量（真机踩坑：SyntaxError 令整段脚本报废）。
+    if (mimetype.indexOf('text/') !== 0) { try { stream.sendAck('OK', 0); } catch(e) {} return; }
     var reader = new Guacamole.StringReader(stream);
     var data = '';
     reader.ontext = function(t) { data += t; };

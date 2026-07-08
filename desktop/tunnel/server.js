@@ -30,6 +30,8 @@ const GuacamoleLite = require("guacamole-lite");
 
 const WS_PORT = parseInt(process.env.DAO_GUAC_WS_PORT || "4823", 10);
 const HTTP_PORT = parseInt(process.env.DAO_GUAC_HTTP_PORT || "4824", 10);
+// 监听地址：默认仅回环（本机 IDE）；跨机/跨 VM（如 QEMU guest 经 10.0.2.2 回连宿主）设 0.0.0.0。
+const BIND = process.env.DAO_GUAC_BIND || "127.0.0.1";
 const GUACD_HOST = process.env.DAO_GUACD_HOST || "127.0.0.1";
 const GUACD_PORT = parseInt(process.env.DAO_GUACD_PORT || "4822", 10);
 
@@ -150,13 +152,13 @@ const httpServer = http.createServer((req, res) => {
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
 });
-httpServer.listen(HTTP_PORT, "127.0.0.1", () => {
-  console.log(`[tunnel] 令牌铸造 HTTP 就绪 http://127.0.0.1:${HTTP_PORT}/token?ide=<hash>`);
+httpServer.listen(HTTP_PORT, BIND, () => {
+  console.log(`[tunnel] 令牌铸造 HTTP 就绪 http://${BIND}:${HTTP_PORT}/token?ide=<hash>`);
 });
 
 // —— guacamole-lite 隧道（浏览器 WS ↔ guacd）——
 const guacServer = new GuacamoleLite(
-  { server: http.createServer().listen(WS_PORT, "127.0.0.1") },
+  { server: http.createServer().listen(WS_PORT, BIND) },
   { host: GUACD_HOST, port: GUACD_PORT },
   {
     crypt: { cypher: CIPHER, key: KEY },

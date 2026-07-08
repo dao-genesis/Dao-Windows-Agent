@@ -27,11 +27,32 @@ except Exception as e:
 PY
 fi
 
+echo "== webview 脚本编译自检（模板字面量转义陷阱：\\/ 会被吞成 /，node --check 直查源码测不出）=="
+node - "$HERE/extension.js" <<'JS'
+const fs = require('fs'), vm = require('vm');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+// 提取 desktopHtml 的模板字面量并按模板语义渲染（占位符以哑值代入），再编译内联 <script>。
+const vscode = { Uri: { joinPath: () => ({}) } };
+const sandbox = { require: (n) => n === 'vscode' ? vscode : require(n), module: { exports: {} }, exports: {}, console };
+vm.runInContext(src + '\nglobalThis.__dh = desktopHtml;', vm.createContext(sandbox));
+const html = sandbox.__dh({ asWebviewUri: () => 'x', cspSource: 'x' }, { extensionUri: {} },
+  'ide_x', null, 'http://127.0.0.1:4824', 4823, [{ name: 'x' }]);
+const m = html.match(/<script>([\s\S]*?)<\/script>/);
+if (!m) { console.error('未找到内联脚本'); process.exit(1); }
+try { new vm.Script(m[1]); console.log('webview 脚本编译通过'); }
+catch (e) { console.error('webview 脚本编译失败:', e.message); process.exit(1); }
+JS
+
 echo "== vsce package =="
-if ! command -v vsce >/dev/null 2>&1; then
-  echo "vsce 未装：npm i -g @vscode/vsce（或 npx @vscode/vsce package）"
-  npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository -o "$HERE/dao-windows-agent-0.1.0.vsix"
+VER="$(node -p "require('$HERE/package.json').version" 2>/dev/null || echo 0.1.0)"
+OUT="$HERE/dao-windows-agent-${VER}.vsix"
+# --base*Url 必给：README 内有相对链接（../../docs/*），缺则 vsce 报错中断（真机踩坑）。
+VSCE_ARGS=(package --no-dependencies --allow-missing-repository \
+  --baseContentUrl https://example.invalid --baseImagesUrl https://example.invalid -o "$OUT")
+if command -v vsce >/dev/null 2>&1; then
+  vsce "${VSCE_ARGS[@]}"
 else
-  vsce package --no-dependencies --allow-missing-repository -o "$HERE/dao-windows-agent-0.1.0.vsix"
+  echo "vsce 未装：改用 npx @vscode/vsce"
+  npx --yes @vscode/vsce "${VSCE_ARGS[@]}"
 fi
-echo "== 完成：$HERE/dao-windows-agent-0.1.0.vsix =="
+echo "== 完成：$OUT =="
