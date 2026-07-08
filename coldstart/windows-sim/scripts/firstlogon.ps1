@@ -69,7 +69,34 @@ Set-Location '$dst'
   Log "bridge deploy skipped (src=$src py=$py)"
 }
 
-# 5) VSCode + DAO 插件（把整台 Windows 做进 IDE：每个 IDE 窗口=一个隔离会话）
+# 5) RDPWrap（路线A 桌面级路由本源：单账号多路并行 RDP 会话）
+#    在任意 Windows 版本上开启并发 RDP + 同一账号多会话，实现"一台机、一个账号、多路独立桌面"。
+#    每个 IDE 窗口 = 一路 RDP 会话，经 Guacamole 送进 IDE 面板 canvas。
+try {
+  $rdpwrapDir = "$env:ProgramFiles\RDP Wrapper"
+  if (-not (Test-Path "$rdpwrapDir\rdpwrap.dll")) {
+    Log "installing rdpwrap..."
+    $rdpZip = "$env:TEMP\RDPWrap.zip"
+    Invoke-WebRequest -Uri 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' -OutFile $rdpZip
+    Expand-Archive -Path $rdpZip -DestinationPath "$env:TEMP\rdpwrap" -Force
+    # silent install
+    Start-Process "$env:TEMP\rdpwrap\install.bat" -Wait -WindowStyle Hidden
+    Log "rdpwrap installed"
+    # update rdpwrap.ini for latest Windows builds (community maintained)
+    try {
+      Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini' -OutFile "$rdpwrapDir\rdpwrap.ini"
+      Log "rdpwrap.ini updated (community)"
+    } catch { Log "rdpwrap.ini update skipped: $_" }
+  } else {
+    Log "rdpwrap already present"
+  }
+  # Group Policy: allow multiple sessions per user (do NOT restrict to single session)
+  # This enables each IDE window to get its own independent RDP session for the same account.
+  Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fSingleSessionPerUser -Value 0
+  Log "rdpwrap: fSingleSessionPerUser=0 (multi-session enabled)"
+} catch { Log "rdpwrap provisioning failed: $_" }
+
+# 6) VSCode + DAO 插件（把整台 Windows 做进 IDE：每个 IDE 窗口=一个隔离会话）
 #    VSCode 经 winget 装；插件用随盘带入的 .vsix 离线安装 —— 冷启动即得可用 IDE 前端。
 try {
   $codeCli = $null

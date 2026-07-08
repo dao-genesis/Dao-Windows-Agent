@@ -191,3 +191,36 @@ round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌
 ④ 多窗口并行 + 输入/剪贴板/多显/DPI/重连打磨。**复用**：`coldstart/`、`bridge/`(转控制面)、`tests/`、profile 机制。
 
 *道法自然 · 无为而无不为*
+
+## 十、路线A 桌面级路由实现（本轮实施）
+
+> 正本清源后的首次全量实现。核心链路：
+> VSCode Webview (guacamole-common-js canvas) → WS 隧道 (guacamole-lite) → guacd (Docker) → RDP → Windows 桌面
+
+**新增文件：**
+- `desktop/tunnel/server.js` — WebSocket↔guacd 隧道 + 令牌铸造 HTTP（guacamole-lite，加密 token 不泄漏 RDP 凭据）
+- `desktop/guacd.sh` — 幂等拉起 guacd Docker 容器
+- `desktop/up_desktop.sh` — 一键拉起路线A 全链路（guacd + tunnel）
+- `desktop/test.html` — 浏览器端到端测试页（统用 guacamole-common-js）
+- `ide/vscode/media/guacamole-common.min.js` — 内嵌 guacamole-common-js 1.5.0（Apache-2.0）
+
+**修改文件：**
+- `ide/vscode/extension.js` — 新增 `daoWin.openDesktop` 命令（主前端桌面路由面板），旧按钮面板降级为 `openPanel`（辅助控制面）
+- `ide/vscode/package.json` — v0.2.0，新增桌面路由配置项（tunnelHttpUrl/tunnelWsPort）
+- `coldstart/windows-sim/scripts/firstlogon.ps1` — 新增第5节 rdpwrap 安装+多会话配置
+
+**链路说明：**
+1. `guacd`（Docker `guacamole/guacd:1.5.5`）监听 4822，把 RDP 协议翻译为 Guacamole 指令流
+2. `desktop/tunnel/server.js` 监听 WS 4823 + HTTP 4824；HTTP `/token?ide=ide_xxx` 铸造加密连接 token（AES-256-CBC），凭据只在服务端；WS 解密 token、连 guacd、双向中继
+3. VSCode Webview 加载 guacamole-common.min.js，创建 `Guacamole.Client` + `WebSocketTunnel`，canvas 渲染桌面，键鼠直操
+4. `ide_<hash>` 映射：每个 IDE 窗口的工作区 SHA1 前8位 = 稳定会话 ID，每次开桌面自动获取该会话对应的加密 token，零点击连接
+5. rdpwrap + `fSingleSessionPerUser=0`：单账号多路 RDP，每个 IDE 窗口获得独立桌面会话
+
+**后续 Agent 待打磨：**
+- 多窗口并行实测双路 RDP 会话并行互不干扰
+- 输入法/剪贴板透传（Guacamole clipboard API）
+- 多显示器/DPI 自适应（resize-method: display-update 已启用）
+- 会话重连/断线恢复
+- guacd 折进容器编排（docker-compose 或 K8s sidecar）
+
+*道法自然 · 无为而无不为*

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>☯ DAO 桌面级路由 · 路线A 端到端测试</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#1a1a1e;color:#e0e0e0;display:flex;flex-direction:column;height:100vh}
+#bar{padding:6px 12px;background:#24242a;display:flex;align-items:center;gap:12px;font-size:13px;border-bottom:1px solid #333}
+#bar button{padding:4px 10px;border:none;border-radius:4px;background:#3c8dbc;color:#fff;cursor:pointer}
+#bar button:hover{background:#5ca9d6}
+#status{flex:1;text-align:right;opacity:.7}
+#desktop-container{flex:1;overflow:hidden;position:relative}
+#desktop-container canvas{position:absolute;top:0;left:0}
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>☯ DAO 桌面路由</b>
+  <label>IDE: <input id="ide" value="ide_test" style="width:100px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px"></label>
+  <label>隧道: <input id="tunnelUrl" value="http://127.0.0.1:4824" style="width:180px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px"></label>
+  <button onclick="connect()">连接桌面</button>
+  <button onclick="disconnect()">断开</button>
+  <span id="status">未连接</span>
+</div>
+<div id="desktop-container"></div>
+
+<script src="../ide/vscode/media/guacamole-common.min.js"></script>
+<script>
+let client = null;
+const container = document.getElementById("desktop-container");
+const statusEl = document.getElementById("status");
+
+function setStatus(t, color) {
+  statusEl.textContent = t;
+  statusEl.style.color = color || "#e0e0e0";
+}
+
+async function connect() {
+  disconnect();
+  const tunnelBase = document.getElementById("tunnelUrl").value.replace(/\/$/, "");
+  const ide = document.getElementById("ide").value || "ide_default";
+
+  setStatus("取 token...", "#ffcc00");
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  let tokenData;
+  try {
+    const r = await fetch(`${tunnelBase}/token?ide=${ide}&width=${w}&height=${h}`);
+    tokenData = await r.json();
+  } catch (e) {
+    setStatus("令牌获取失败: " + e.message, "#ff4444");
+    return;
+  }
+
+  const wsPort = tokenData.ws_port || 4823;
+  const wsUrl = `ws://127.0.0.1:${wsPort}/?token=${encodeURIComponent(tokenData.token)}`;
+
+  setStatus("建立 WS 隧道...", "#ffcc00");
+  const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
+  client = new Guacamole.Client(tunnel);
+
+  // 画面挂到容器
+  const display = client.getDisplay();
+  container.innerHTML = "";
+  container.appendChild(display.getElement());
+
+  // 键鼠
+  const mouse = new Guacamole.Mouse(display.getElement());
+  mouse.onEach(["mousedown", "mousemove", "mouseup"], (e) => {
+    client.sendMouseState(e.state, true);
+  });
+
+  const keyboard = new Guacamole.Keyboard(document);
+  keyboard.onkeydown = (keysym) => client.sendKeyEvent(1, keysym);
+  keyboard.onkeyup = (keysym) => client.sendKeyEvent(0, keysym);
+
+  // 自适应缩放
+  display.onresize = function (w, h) {
+    const scale = Math.min(container.clientWidth / w, container.clientHeight / h, 1);
+    display.scale(scale);
+  };
+
+  client.onstatechange = (state) => {
+    const names = ["空闲", "正在连接...", "等待中...", "已连接 ●", "正在断开...", "已断开"];
+    const colors = ["#999", "#ffcc00", "#ffcc00", "#44ff44", "#ff8800", "#ff4444"];
+    setStatus(names[state] || state, colors[state]);
+  };
+
+  client.onerror = (status) => {
+    setStatus("错误: " + (status.message || status.code || "未知"), "#ff4444");
+  };
+
+  client.connect();
+}
+
+function disconnect() {
+  if (client) {
+    try { client.disconnect(); } catch (e) {}
+    client = null;
+    container.innerHTML = "";
+    setStatus("已断开", "#999");
+  }
+}
+</script>
+</body>
+</html>

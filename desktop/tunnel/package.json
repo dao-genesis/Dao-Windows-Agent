@@ -1,0 +1,14 @@
+{
+  "name": "dao-desktop-tunnel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "☯ 桌面级路由控制面 · 浏览器 WebSocket ↔ guacd 隧道（路线A：把一路真实 RDP 会话送进 IDE 面板的 canvas）。",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "guacamole-lite": "1.2.0"
+  }
+}

@@ -7,3 +7,4 @@ coldstart/windows-sim/images/
 *.iso
 *.qcow2
 *.fd
+node_modules/

@@ -1,8 +1,8 @@
 {
   "name": "dao-windows-agent",
-  "displayName": "DAO Windows Agent · IDE 即虚拟机",
-  "description": "把整台 Windows 做进 IDE：每个 IDE 窗口 = 一个单账号零配置隔离会话（类多RDP效果），经机控桥直达级别①②③。",
-  "version": "0.1.0",
+  "displayName": "DAO Windows Agent · 桌面级路由",
+  "description": "IDE 装上本插件 → 面板里直接就是整台 Windows 桌面本体（类多 RDP）。每个 IDE 窗口 = 一路独立完整的 RDP 会话，canvas 渲染进 Webview，鼠键直操。",
+  "version": "0.2.0",
   "publisher": "dao",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -10,11 +10,12 @@
   "main": "./extension.js",
   "activationEvents": ["onStartupFinished"],
   "capabilities": {
-    "untrustedWorkspaces": { "supported": true, "description": "插件只经 HTTP 调本机机控桥，不读写工作区内容，受限模式下照常可用" }
+    "untrustedWorkspaces": { "supported": true, "description": "插件只经 HTTP/WS 调本机隧道与机控桥，不读写工作区内容，受限模式下照常可用" }
   },
   "contributes": {
     "commands": [
-      { "command": "daoWin.openPanel", "title": "DAO: 打开虚拟机面板（本窗口=隔离会话）" },
+      { "command": "daoWin.openDesktop", "title": "DAO: 打开桌面（本窗口 = 一路 RDP 会话）" },
+      { "command": "daoWin.openPanel", "title": "DAO: 控制面（辅助自动化后端）" },
       { "command": "daoWin.health", "title": "DAO: 桥健康检查" },
       { "command": "daoWin.ensureBridge", "title": "DAO: 连接/自启机控桥" }
     ],
@@ -40,6 +41,16 @@
           "type": "string",
           "default": "python",
           "description": "自启桥所用 Python 解释器（Windows 上通常 python 即可）"
+        },
+        "daoWin.tunnelHttpUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:4824",
+          "description": "桌面路由隧道令牌铸造 HTTP 地址（默认 desktop/tunnel/server.js 启动的服务）"
+        },
+        "daoWin.tunnelWsPort": {
+          "type": "number",
+          "default": 4823,
+          "description": "桌面路由隧道 WebSocket 端口（浏览器 WS ↔ guacd）"
         }
       }
     }
