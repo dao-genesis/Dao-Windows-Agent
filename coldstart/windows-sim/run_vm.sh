@@ -18,8 +18,8 @@ esac; done
 DISK="$IMAGES/${name}.qcow2"
 [ -f "$DISK" ] || { echo "磁盘不存在: $DISK — 先跑 build_image.sh"; exit 1; }
 
-ACCEL="tcg"; [ -r /dev/kvm ] && [ -w /dev/kvm ] && ACCEL="kvm"
-[ "$ACCEL" = "tcg" ] && echo "[WARN] 无 KVM 权限，回退 tcg 软件模拟(慢)。"
+ACCEL="tcg"; CPU="max"; [ -r /dev/kvm ] && [ -w /dev/kvm ] && { ACCEL="kvm"; CPU="host"; }
+[ "$ACCEL" = "tcg" ] && echo "[WARN] 无 KVM 权限，回退 tcg 软件模拟(慢)。可尝试: sudo setfacl -m u:\$USER:rw /dev/kvm"
 
 # UEFI + TPM2（Win11 必需）
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"; [ -f "$OVMF_CODE" ] || OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
@@ -33,7 +33,7 @@ else
   TPM_ARGS=(); echo "[WARN] 无 swtpm，Win11 TPM 检查可能失败(可用 win10 或注册表绕过)。"
 fi
 
-args=(qemu-system-x86_64 -name "$name" -machine q35,accel=$ACCEL -cpu host -smp "$cpus" -m "$ram"
+args=(qemu-system-x86_64 -name "$name" -machine q35,accel=$ACCEL -cpu "$CPU" -smp "$cpus" -m "$ram"
   -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE"
   -drive if=pflash,format=raw,unit=1,file="$VARS"
   "${TPM_ARGS[@]}"
