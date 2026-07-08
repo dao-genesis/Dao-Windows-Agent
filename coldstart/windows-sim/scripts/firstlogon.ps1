@@ -69,4 +69,31 @@ Set-Location '$dst'
   Log "bridge deploy skipped (src=$src py=$py)"
 }
 
+# 5) VSCode + DAO 插件（把整台 Windows 做进 IDE：每个 IDE 窗口=一个隔离会话）
+#    VSCode 经 winget 装；插件用随盘带入的 .vsix 离线安装 —— 冷启动即得可用 IDE 前端。
+try {
+  $codeCli = $null
+  foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
+                   "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
+    if (Test-Path $p) { $codeCli = $p; break }
+  }
+  if (-not $codeCli) {
+    winget install -e --id Microsoft.VisualStudioCode --source winget --silent `
+      --accept-source-agreements --accept-package-agreements --scope machine
+    foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
+                     "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
+      if (Test-Path $p) { $codeCli = $p; break }
+    }
+    Log "vscode installed (winget)"
+  }
+  # 随应答盘带入的 .vsix（build_image.sh 已打包）
+  $vsix = Get-ChildItem 'D:\dao-windows-agent-*.vsix','E:\dao-windows-agent-*.vsix','F:\dao-windows-agent-*.vsix','G:\dao-windows-agent-*.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($codeCli -and $vsix) {
+    & $codeCli --install-extension $vsix.FullName --force
+    Log "dao vscode extension installed: $($vsix.Name)"
+  } else {
+    Log "vscode extension skipped (code=$codeCli vsix=$vsix)"
+  }
+} catch { Log "vscode/extension provisioning failed: $_" }
+
 Log "== Dao first-logon done =="

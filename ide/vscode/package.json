@@ -1,0 +1,47 @@
+{
+  "name": "dao-windows-agent",
+  "displayName": "DAO Windows Agent · IDE 即虚拟机",
+  "description": "把整台 Windows 做进 IDE：每个 IDE 窗口 = 一个单账号零配置隔离会话（类多RDP效果），经机控桥直达级别①②③。",
+  "version": "0.1.0",
+  "publisher": "dao",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "daoWin.openPanel", "title": "DAO: 打开虚拟机面板（本窗口=隔离会话）" },
+      { "command": "daoWin.health", "title": "DAO: 桥健康检查" },
+      { "command": "daoWin.ensureBridge", "title": "DAO: 连接/自启机控桥" }
+    ],
+    "configuration": {
+      "title": "DAO Windows Agent",
+      "properties": {
+        "daoWin.bridgeUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:9920",
+          "description": "机控桥地址（默认连本机已部署桥；连不上且开启自启时，插件用自带 runtime 起本地桥）"
+        },
+        "daoWin.token": {
+          "type": "string",
+          "default": "dao-win-lab",
+          "description": "桥 Bearer token（与桥 --token / DAO_WIN_TOKEN 一致）"
+        },
+        "daoWin.autostart": {
+          "type": "boolean",
+          "default": true,
+          "description": "桥连不上时，是否用插件自带的 Python runtime 自动拉起本地桥（零配置冷启动）"
+        },
+        "daoWin.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "自启桥所用 Python 解释器（Windows 上通常 python 即可）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "bash build.sh"
+  }
+}
