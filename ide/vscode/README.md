@@ -1,6 +1,10 @@
 # DAO Windows Agent · VSCode 前端
 
-把整台 Windows 做进 IDE：**每个 IDE 窗口 = 一个单账号零配置隔离会话**（类多RDP效果，与用户真实桌面并行、互不干扰）。插件不投屏，而是经机控桥（`bridge/` REST）直达级别①②③。
+> **⚠️ 形态已正本清源——先读 [`../../docs/正本清源-桌面级路由本源.md`](../../docs/正本清源-桌面级路由本源.md)。**
+> **最终前端形态**：面板内**直接呈现整块 Windows 桌面本体**（走 RDP/RemoteApp 原生远程桌面协议级、类多 RDP，`guacamole-common-js` canvas 渲染进 Webview），所见即所得、直接鼠键操作真实桌面。
+> **当前本目录的按钮面板 = `legacy-control-panel`（控制面/调试形态，非最终前端）**：经机控桥 `/api/*` 触发级别①②③ 的 headless/UIA 动词，降级为"给 Agent 脚本化编排/校验用的后端控制面"。桌面路由主前端（路线 A）留待后续 Agent 按正本清源文档第五节实现。
+
+把整台 Windows 做进 IDE：**每个 IDE 窗口 = 一路独立完整的 Windows 桌面会话**（≈ 多 RDP 的一路，与用户真实桌面并行、互不干扰）。下述内容描述的是**当前控制面（legacy）**能力。
 
 ## 本源
 - 打开一个 VSCode 窗口，插件即为其分配一个稳定的隔离会话（`ide_<hash>`，绑定工作区路径）。

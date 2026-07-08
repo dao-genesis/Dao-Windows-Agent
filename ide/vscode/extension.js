@@ -207,8 +207,24 @@ async function handlePanelMessage(context, msg) {
     else if (msg.action === "session.list") r = await apiCall(url, token, "GET", "/api/session.list");
     else if (msg.action === "session.create") r = await apiCall(url, token, "POST", "/api/session.create", { session_id: sessionId });
     else if (msg.action === "search_verbs") r = await apiCall(url, token, "POST", "/api/search_verbs", { query: msg.query || "" });
-    else if (msg.action === "session.open_app") r = await apiCall(url, token, "POST", "/api/session.open_app", { session_id: sessionId, app_id: msg.app_id });
-    else if (msg.action === "session.invoke") r = await apiCall(url, token, "POST", "/api/session.invoke", { session_id: sessionId, app_id: msg.app_id, verb: msg.verb, params: msg.params || {} }, 30000);
+    else if (msg.action === "session.open_app") {
+      await apiCall(url, token, "POST", "/api/session.create", { session_id: sessionId });
+      r = await apiCall(url, token, "POST", "/api/session.open_app", { session_id: sessionId, app_id: msg.app_id });
+      // 注册后立即执行 open 动词，真正把窗口起到隔离桌面（system 等无 open 动词的忽略失败）
+      if (r.body && r.body.ok !== false) {
+        const ro = await apiCall(url, token, "POST", "/api/session.invoke", { session_id: sessionId, app_id: msg.app_id, verb: "open", params: {} }, 30000);
+        if (ro.body && ro.body.ok !== false) r = ro;
+      }
+    }
+    else if (msg.action === "session.invoke") {
+      r = await apiCall(url, token, "POST", "/api/session.invoke", { session_id: sessionId, app_id: msg.app_id, verb: msg.verb, params: msg.params || {} }, 30000);
+      // 应用未注册到会话则自动 open_app 后重试一次（免用户手工两步）
+      if (r.body && r.body.ok === false && /open_app/.test(String(r.body.error || ""))) {
+        await apiCall(url, token, "POST", "/api/session.create", { session_id: sessionId });
+        await apiCall(url, token, "POST", "/api/session.open_app", { session_id: sessionId, app_id: msg.app_id });
+        r = await apiCall(url, token, "POST", "/api/session.invoke", { session_id: sessionId, app_id: msg.app_id, verb: msg.verb, params: msg.params || {} }, 30000);
+      }
+    }
     else r = { status: 400, body: { error: "未知动作 " + msg.action } };
     const tag = r.status === 200 ? "✓" : "✗ HTTP " + r.status;
     panel.webview.postMessage({ text: tag + " " + msg.action + " @ " + url + "\n" + JSON.stringify(r.body, null, 2) });
