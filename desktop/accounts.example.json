@@ -1,0 +1,5 @@
+{
+  "_note": "账号注册表样例（真相源）。桥 core/accounts.py 建号时写入 accounts.json；隧道 server.js 读它按账号铸令牌。真实 accounts.json 含明文口令，已 .gitignore，勿入库。",
+  "dao": {"hostname": "127.0.0.1", "port": "13389", "username": "dao", "password": "<PASSWORD>"},
+  "vm01": {"hostname": "127.0.0.1", "port": "13389", "username": "vm01", "password": "<PASSWORD>"}
+}

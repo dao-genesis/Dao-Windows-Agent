@@ -8,3 +8,5 @@ coldstart/windows-sim/images/
 *.qcow2
 *.fd
 node_modules/
+# 账号注册表（含明文 RDP 口令，运行时生成，勿入库；样例见 accounts.example.json）
+desktop/accounts.json

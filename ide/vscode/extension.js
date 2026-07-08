@@ -16,7 +16,7 @@ const fs = require("fs");
 let output;
 let statusItem;
 let panel;           // 旧控制面板（降级为辅助）
-let desktopPanel;    // 桌面路由面板（主前端）
+const desktopPanels = new Map(); // key(账号名或 ide_<hash>) → 桌面路由面板（每账号一路独立桌面）
 let spawnedBridge = null;
 let activeBridgeUrl = null;
 
@@ -138,12 +138,30 @@ function setStatus(text, tooltip) {
   statusItem.tooltip = tooltip || "DAO Windows Agent · 本窗口=隔离会话";
 }
 
+// —— 令牌铸造 HTTP 取账号清单（供 QuickPick / 面板下拉）——
+function fetchAccounts(tunnelHttpUrl) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(tunnelHttpUrl + "/accounts"); } catch (e) { return resolve([]); }
+    const req = http.request({ hostname: u.hostname, port: u.port || 80, path: u.pathname, method: "GET" }, (res) => {
+      let chunks = [];
+      res.on("data", (d) => chunks.push(d));
+      res.on("end", () => {
+        try { resolve((JSON.parse(Buffer.concat(chunks).toString("utf8")) || {}).accounts || []); }
+        catch (e) { resolve([]); }
+      });
+    });
+    req.on("error", () => resolve([]));
+    req.setTimeout(4000, () => { req.destroy(); resolve([]); });
+    req.end();
+  });
+}
+
 // —— 桌面路由面板（主前端：guacamole-common-js canvas → WS 隧道 → guacd → RDP 会话）——
-function desktopHtml(context, sessionId, tunnelHttpUrl, tunnelWsPort) {
-  const guacUri = desktopPanel
-    ? desktopPanel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"))
-    : "";
-  const cspSource = desktopPanel ? desktopPanel.webview.cspSource : "";
+// account 非空=按账号路由（多账号类虚拟机·扩展本源）；否则按 ide_<hash>（向后兼容）。
+function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts) {
+  const guacUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"));
+  const cspSource = webview.cspSource;
   const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + cspSource + "; style-src 'unsafe-inline'; connect-src ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; img-src data:;";
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspSrc}">
@@ -159,7 +177,7 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
 </style></head><body>
 <div id="bar">
   <b>\u2630 DAO \u684c\u9762</b>
-  <span style="opacity:.5">${sessionId}</span>
+  <select id="acct" title="\u8d26\u53f7\uff08\u591a RDP \u4e00\u8def\u4e00\u684c\u9762\uff09" onchange="onAcctChange()"></select>
   <button onclick="doConnect()">\u8fde\u63a5</button>
   <button onclick="doDisconnect()">\u65ad\u5f00</button>
   <button onclick="doFullscreen()">\u2922</button>
@@ -171,10 +189,29 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
 const TUNNEL_HTTP = ${JSON.stringify(tunnelHttpUrl)};
 const TUNNEL_WS_PORT = ${tunnelWsPort};
 const IDE_SESSION = ${JSON.stringify(sessionId)};
+const ACCOUNT = ${JSON.stringify(account)};
+const ACCOUNTS = ${JSON.stringify(accounts || [])};
 const vscodeApi = acquireVsCodeApi();
 const container = document.getElementById('desktop');
 const statusEl = document.getElementById('status');
+const acctEl = document.getElementById('acct');
 let client = null;
+
+// \u586b\u5145\u8d26\u53f7\u4e0b\u62c9\uff1b\u9009\u4e2d\u672c\u9762\u677f\u7ed1\u5b9a\u8d26\u53f7\uff0c\u5207\u5230\u5176\u4ed6\u8d26\u53f7\u5219\u65b0\u5f00/\u5207\u5230\u90a3\u4e00\u8def\u9762\u677f\u3002
+(function initAccounts(){
+  var names = (ACCOUNTS && ACCOUNTS.length) ? ACCOUNTS.map(function(a){return a.name;}) : [];
+  if (ACCOUNT && names.indexOf(ACCOUNT) < 0) names.unshift(ACCOUNT);
+  if (!names.length) { acctEl.style.display='none'; return; }
+  acctEl.innerHTML = names.map(function(n){
+    return '<option value="'+n+'"'+(n===ACCOUNT?' selected':'')+'>'+n+'</option>';
+  }).join('');
+})();
+function onAcctChange(){
+  var sel = acctEl.value;
+  if (sel === ACCOUNT) return;
+  vscodeApi.postMessage({type:'openAccount', account: sel});
+  acctEl.value = ACCOUNT; // \u672c\u9762\u677f\u4ecd\u7ed1\u5b9a\u539f\u8d26\u53f7
+}
 
 function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
 
@@ -185,8 +222,10 @@ async function doConnect() {
   const h = container.clientHeight;
   let tokenData;
   try {
-    const r = await fetch(TUNNEL_HTTP + '/token?ide=' + IDE_SESSION + '&width=' + w + '&height=' + h);
+    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + IDE_SESSION);
+    const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
     tokenData = await r.json();
+    if (tokenData.error) { setStatus('\u4ee4\u724c: ' + tokenData.error, '#ff4444'); return; }
   } catch (e) { setStatus('\u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); return; }
   const wsUrl = 'ws://127.0.0.1:' + TUNNEL_WS_PORT + '/?token=' + encodeURIComponent(tokenData.token);
   setStatus('\u5efa\u7acb WS \u96a7\u9053...', '#ffcc00');
@@ -228,24 +267,78 @@ setTimeout(doConnect, 300);
 </script></body></html>`;
 }
 
-function openDesktop(context) {
+// account 为空=本 IDE 窗口默认会话（ide_<hash>）；非空=指定 Windows 账号一路独立桌面。
+async function openDesktop(context, account) {
   const sessionId = windowSessionId();
   const c = cfg();
-  if (desktopPanel) { desktopPanel.reveal(); return; }
-  desktopPanel = vscode.window.createWebviewPanel(
-    "daoWinDesktop", "DAO \u684c\u9762 \u00b7 " + sessionId, vscode.ViewColumn.Active,
+  const key = account || sessionId;
+  const existing = desktopPanels.get(key);
+  if (existing) { existing.reveal(); return; }
+  const accounts = await fetchAccounts(c.tunnelHttpUrl);
+  const title = account ? ("DAO \u684c\u9762 \u00b7 " + account) : ("DAO \u684c\u9762 \u00b7 " + sessionId);
+  const p = vscode.window.createWebviewPanel(
+    "daoWinDesktop", title, vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media")] }
   );
-  desktopPanel.webview.html = desktopHtml(context, sessionId, c.tunnelHttpUrl, c.tunnelWsPort);
-  desktopPanel.onDidDispose(() => { desktopPanel = null; });
-  desktopPanel.webview.onDidReceiveMessage((msg) => {
+  desktopPanels.set(key, p);
+  p.webview.html = desktopHtml(p.webview, context, sessionId, account || null, c.tunnelHttpUrl, c.tunnelWsPort, accounts);
+  p.onDidDispose(() => { desktopPanels.delete(key); });
+  p.webview.onDidReceiveMessage((msg) => {
     if (msg.type === "state" && msg.state === 3) {
-      setStatus(sessionId + " \u25cf", "\u684c\u9762\u5df2\u8fde " + c.tunnelHttpUrl);
+      setStatus((account || sessionId) + " \u25cf", "\u684c\u9762\u5df2\u8fde " + c.tunnelHttpUrl);
     }
     if (msg.type === "fullscreen") {
       vscode.commands.executeCommand("workbench.action.toggleEditorWidths");
     }
+    if (msg.type === "openAccount" && msg.account) {
+      openDesktop(context, msg.account);
+    }
   });
+}
+
+// 选账号开桌面（QuickPick 列出隧道已知账号 + 手填）
+async function openAccountDesktop(context) {
+  const c = cfg();
+  const accounts = await fetchAccounts(c.tunnelHttpUrl);
+  const items = accounts.map((a) => ({ label: a.name, description: a.hostname + ":" + a.port }));
+  items.push({ label: "$(add) \u5176\u4ed6\u8d26\u53f7\u2026", description: "\u624b\u52a8\u8f93\u5165\u8d26\u53f7\u540d" });
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: "\u9009\u62e9\u8981\u6253\u5f00\u684c\u9762\u7684 Windows \u8d26\u53f7" });
+  if (!pick) return;
+  let account = pick.label;
+  if (pick.label.indexOf("\u5176\u4ed6\u8d26\u53f7") >= 0) {
+    account = await vscode.window.showInputBox({ prompt: "\u8d26\u53f7\u540d", validateInput: (v) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(v || "") ? null : "\u9650\u5b57\u6bcd\u6570\u5b57\u4e0e . _ -\uff0c\u2264 20" });
+    if (!account) return;
+  }
+  openDesktop(context, account);
+}
+
+// 账号管理（在插件内建号/销号，复用桥 /api/account.*）
+async function manageAccount(context, op) {
+  const info = await ensureBridge(context);
+  if (!info) { vscode.window.showErrorMessage("DAO: \u673a\u63a7\u6865\u4e0d\u53ef\u8fbe\uff0c\u65e0\u6cd5\u7ba1\u7406\u8d26\u53f7"); return; }
+  const { url, token } = info;
+  if (op === "list") {
+    const r = await apiCall(url, token, "GET", "/api/account.list");
+    const names = ((r.body && r.body.accounts) || []).map((a) => a.name + (a.session ? " \u25cf" + a.session.state : ""));
+    vscode.window.showInformationMessage("DAO \u8d26\u53f7: " + (names.join(", ") || "\uff08\u65e0\uff09"));
+    return;
+  }
+  if (op === "create") {
+    const name = await vscode.window.showInputBox({ prompt: "\u65b0\u5efa Windows \u8d26\u53f7\u540d", validateInput: (v) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(v || "") ? null : "\u9650\u5b57\u6bcd\u6570\u5b57\u4e0e . _ -\uff0c\u2264 20" });
+    if (!name) return;
+    const r = await apiCall(url, token, "POST", "/api/account.create", { name }, 60000);
+    if (r.body && r.body.ok) { vscode.window.showInformationMessage("DAO \u8d26\u53f7\u5df2\u5efa: " + name + "\uff0c\u53ef\u5728\u300c\u9009\u8d26\u53f7\u5f00\u684c\u9762\u300d\u4e2d\u6253\u5f00"); openDesktop(context, name); }
+    else vscode.window.showErrorMessage("DAO \u5efa\u53f7\u5931\u8d25: " + ((r.body && r.body.error) || r.status));
+    return;
+  }
+  if (op === "destroy") {
+    const r0 = await apiCall(url, token, "GET", "/api/account.list");
+    const names = ((r0.body && r0.body.accounts) || []).map((a) => a.name);
+    const name = await vscode.window.showQuickPick(names, { placeHolder: "\u9009\u62e9\u8981\u9500\u6bc1\u7684\u8d26\u53f7" });
+    if (!name) return;
+    const r = await apiCall(url, token, "POST", "/api/account.destroy", { name }, 60000);
+    vscode.window.showInformationMessage(r.body && r.body.ok ? ("DAO \u8d26\u53f7\u5df2\u9500\u6bc1: " + name) : ("DAO \u9500\u53f7\u5931\u8d25: " + ((r.body && r.body.error) || r.status)));
+  }
 }
 
 // —— 控制面板（旧版按钮面板，降级为辅助自动化后端）——
@@ -367,6 +460,10 @@ async function activate(context) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
+    vscode.commands.registerCommand("daoWin.openAccountDesktop", () => openAccountDesktop(context)),
+    vscode.commands.registerCommand("daoWin.accountCreate", () => manageAccount(context, "create")),
+    vscode.commands.registerCommand("daoWin.accountList", () => manageAccount(context, "list")),
+    vscode.commands.registerCommand("daoWin.accountDestroy", () => manageAccount(context, "destroy")),
     vscode.commands.registerCommand("daoWin.openPanel", () => openPanel(context)),
     vscode.commands.registerCommand("daoWin.health", async () => {
       const info = await ensureBridge(context);
@@ -395,7 +492,8 @@ async function activate(context) {
 
 function deactivate() {
   if (spawnedBridge) { try { spawnedBridge.kill(); } catch (e) {} }
-  if (desktopPanel) { try { desktopPanel.dispose(); } catch (e) {} }
+  for (const p of desktopPanels.values()) { try { p.dispose(); } catch (e) {} }
+  desktopPanels.clear();
 }
 
 module.exports = { activate, deactivate };

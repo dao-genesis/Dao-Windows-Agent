@@ -47,17 +47,37 @@ const DEFAULT_RDP = {
 const SESSIONS_JSON =
   process.env.DAO_SESSIONS_JSON || path.join(__dirname, "..", "sessions.json");
 
+// 账号注册表（桥 core/accounts.py 建号时写入；隧道按账号铸造 token 时读取，同一真相源）。
+const ACCOUNTS_JSON =
+  process.env.DAO_ACCOUNTS_JSON || path.join(__dirname, "..", "accounts.json");
+
+function loadJson(p) {
+  try {
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8")) || {};
+  } catch (e) {
+    console.error(`[tunnel] 解析 ${path.basename(p)} 失败:`, e.message);
+  }
+  return {};
+}
+
+// 账号 → RDP 目标。默认注册表恒含主账号 dao（即冷启动靶机）。
+function accountsRegistry() {
+  const reg = loadJson(ACCOUNTS_JSON);
+  if (!reg[DEFAULT_RDP.username]) {
+    reg[DEFAULT_RDP.username] = Object.assign({}, DEFAULT_RDP);
+  }
+  return reg;
+}
+
+function targetForAccount(account) {
+  const reg = accountsRegistry();
+  return reg[account] ? Object.assign({}, DEFAULT_RDP, reg[account]) : null;
+}
+
 // ide_<hash> → RDP 目标映射。缺省全部落到同一账号（rdpwrap 单账号多路 RDP：
 // 每个 IDE 窗口一路独立会话，互不干扰）。可用 sessions.json 覆盖为不同靶机。
 function targetForIde(ide) {
-  let map = {};
-  try {
-    if (fs.existsSync(SESSIONS_JSON)) {
-      map = JSON.parse(fs.readFileSync(SESSIONS_JSON, "utf8")) || {};
-    }
-  } catch (e) {
-    console.error("[tunnel] sessions.json 解析失败，用默认目标:", e.message);
-  }
+  const map = loadJson(SESSIONS_JSON);
   const t = (map && map[ide]) || {};
   return Object.assign({}, DEFAULT_RDP, t);
 }
@@ -69,9 +89,12 @@ function encryptToken(payload) {
   return crypt.encrypt(payload);
 }
 
-// 为某 IDE 窗口铸造连接 token（RDP 明文凭据封进密文，浏览器只拿密文）。
+// 为某 IDE 窗口 / 某账号铸造连接 token（RDP 明文凭据封进密文，浏览器只拿密文）。
+// opts.account 优先（多账号类虚拟机·扩展本源）；否则按 ide_<hash> 映射（向后兼容）。
 function mintToken(ide, opts) {
-  const rdp = targetForIde(ide);
+  opts = opts || {};
+  const rdp = opts.account ? targetForAccount(opts.account) : targetForIde(ide);
+  if (!rdp) throw new Error(`未知账号: ${opts.account}`);
   const settings = {
     hostname: rdp.hostname,
     port: String(rdp.port),
@@ -97,14 +120,31 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, ws_port: WS_PORT, guacd: `${GUACD_HOST}:${GUACD_PORT}` }));
     return;
   }
+  if (u.pathname === "/accounts") {
+    const reg = accountsRegistry();
+    const accounts = Object.keys(reg).map((name) => ({
+      name,
+      hostname: reg[name].hostname,
+      port: String(reg[name].port),
+    }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, accounts }));
+    return;
+  }
   if (u.pathname === "/token") {
     const ide = u.searchParams.get("ide") || "ide_default";
+    const account = u.searchParams.get("account") || undefined;
     const width = parseInt(u.searchParams.get("width") || "0", 10) || undefined;
     const height = parseInt(u.searchParams.get("height") || "0", 10) || undefined;
     const dpi = parseInt(u.searchParams.get("dpi") || "0", 10) || undefined;
-    const token = mintToken(ide, { width, height, dpi });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ token, ws_port: WS_PORT, ide }));
+    try {
+      const token = mintToken(ide, { account, width, height, dpi });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ token, ws_port: WS_PORT, ide, account: account || null }));
+    } catch (e) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(e.message || e) }));
+    }
     return;
   }
   res.writeHead(404, { "Content-Type": "application/json" });

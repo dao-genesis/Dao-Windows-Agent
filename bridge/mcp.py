@@ -84,6 +84,38 @@ _TOOLS: dict[str, dict] = {
         "required": ["session_id"],
         "handler": lambda a: _SERVICE.session_prompt(a["session_id"]),
     },
+    "account_create": {
+        "description": "创建/幂等更新一个 Windows 本地账号并加入 Remote Desktop Users（多账号类虚拟机·扩展本源）。"
+                       "配合 RDPWrap 单机多会话，每账号一路独立桌面，与主账号并行互不干扰。",
+        "properties": {
+            "name": {"type": "string", "description": "账号名（字母数字与 . _ -，≤20）"},
+            "password": {"type": "string", "description": "可选，缺省用实验默认口令"},
+            "admin": {"type": "boolean", "description": "是否加入 Administrators，默认 false"},
+        },
+        "required": ["name"],
+        "handler": lambda a: _SERVICE.account_create(a["name"], a.get("password"), bool(a.get("admin", False))),
+    },
+    "account_list": {
+        "description": "列出账号（合并注册表 + quser 会话态）。password 永不外泄。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.account_list(),
+    },
+    "account_destroy": {
+        "description": "注销账号所有会话并删除该本地账号（可选删 profile），从注册表摘除。",
+        "properties": {
+            "name": {"type": "string"},
+            "delete_profile": {"type": "boolean", "description": "是否删除用户 profile 目录，默认 true"},
+        },
+        "required": ["name"],
+        "handler": lambda a: _SERVICE.account_destroy(a["name"], bool(a.get("delete_profile", True))),
+    },
+    "account_sessions": {
+        "description": "查看真机当前 RDP/控制台会话（quser 解析）。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.account_sessions(),
+    },
 }
 
 
