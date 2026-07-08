@@ -234,7 +234,9 @@ if _IS_WIN:  # pragma: no cover - 仅 Windows guest 内执行
         任何主体皆可访问，闭合"单账号内 SYSTEM 造桌面、用户令牌用之"的隔离链路。
         对单账号零配置隔离场景无额外风险（本就同一用户上下文）。
         """
-        sd = ctypes.create_string_buffer(20)  # SECURITY_DESCRIPTOR 结构体缓冲
+        # SECURITY_DESCRIPTOR（绝对格式）在 x64 上是 40 字节（4 头 + 4 指针×8），
+        # 20 字节缓冲会被 Initialize/SetDacl 写越界 → 堆损坏 → 后续调用 ERROR_NOACCESS(998)。
+        sd = ctypes.create_string_buffer(64)
         if not _advapi32.InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION):
             raise ctypes.WinError(ctypes.get_last_error())
         # bDaclPresent=True, pDacl=NULL, bDaclDefaulted=False → NULL DACL = 允许所有访问

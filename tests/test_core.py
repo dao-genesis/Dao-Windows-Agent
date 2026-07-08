@@ -290,6 +290,51 @@ def test_uia_win_quote_helper():
     assert _quote('"already quoted"') == '"already quoted"'
 
 
+def test_win_desktop_session_aware_launch_surface():
+    """会话自适应起进程接口齐备：session0(SYSTEM)→用户令牌起隔离桌面进程，否则直起。
+
+    这是"桥须跑在交互会话(WinSta0)"闭环的落地面——两个起进程原语都在，非 Windows 占位报错。
+    """
+    import sys
+
+    from core.adapter import win_desktop
+
+    assert hasattr(win_desktop, "launch_on_desktop")
+    assert hasattr(win_desktop, "launch_on_desktop_as_user")
+    if sys.platform != "win32":
+        import pytest
+
+        with pytest.raises(RuntimeError):
+            win_desktop.launch_on_desktop_as_user("dao_x", "notepad.exe")
+
+
+def test_uia_win_screenshot_path_softcoded(tmp_path, monkeypatch):
+    """截图落盘目录软编码：显式 dir 优先，否则退系统临时目录——绝不硬编码 C:\\ 根。
+
+    非提权交互会话写不了 C:\\ 根；此测直接驱动 _WinMsgDriver._screenshot（跨平台，
+    monkeypatch 掉真窗口取图），校验默认落 tempfile.gettempdir()、显式 dir 覆盖生效。
+    """
+    import tempfile
+
+    from core.adapter import uia_win
+
+    drv = uia_win._WinMsgDriver()
+    drv._top = 1234  # 假顶层窗口 hwnd，跳过 _await_top
+    captured = {}
+    monkeypatch.setattr(uia_win.win_desktop, "capture_window",
+                        lambda hwnd, path: captured.setdefault("path", path) or path)
+
+    # 默认：落系统临时目录，且不以盘符根硬编码
+    r1 = drv._screenshot("dao_vmA_notepad", {})
+    assert r1["screenshot"] and r1["screenshot"].startswith(tempfile.gettempdir())
+    assert not r1["screenshot"].lower().startswith("c:\\dao")
+
+    # 显式 dir 覆盖生效
+    r2 = drv._screenshot("dao_vmA_notepad", {"dir": str(tmp_path)})
+    assert r2["screenshot"].startswith(str(tmp_path))
+    assert r2["screenshot"].endswith(".bmp")
+
+
 def test_cdp_dry_run_builds_js():
     reg = build_default_registry()
     mgr = SessionManager(reg, root="/tmp/dao-win/test-cdp")
