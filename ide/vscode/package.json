@@ -9,6 +9,9 @@
   "categories": ["Other"],
   "main": "./extension.js",
   "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true, "description": "插件只经 HTTP 调本机机控桥，不读写工作区内容，受限模式下照常可用" }
+  },
   "contributes": {
     "commands": [
       { "command": "daoWin.openPanel", "title": "DAO: 打开虚拟机面板（本窗口=隔离会话）" },

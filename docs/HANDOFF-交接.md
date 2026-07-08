@@ -145,4 +145,31 @@
 - `coldstart/up.sh` 一行从零到可用：装 qemu→取介质→建镜像→无人值守装机→常态启动→等桥就绪；每阶段产物落盘即跳过（幂等），`--status`/`--run-only` 可单独用。
 - `build_image.sh` 把 vsix 捆进应答盘；`firstlogon.ps1` 装机即自动装 VSCode（winget 钉 `--source winget` 防 msstore 歧义）+ 离线装插件 —— 冷启动完成即得可用 IDE 前端。
 
+## 八、PR#16 真机全量验收（本轮实证）
+
+**桥 API 全量（宿主经 `127.0.0.1:19920`，17/17 PASS）**：health/apps、级别① system
+sysinfo/exec/write_file/read_file/processes、级别② notepad open→type_text→read_text
+round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌面零 notepad）、session destroy。
+冷启动重启后桥 **30s 自动就绪**（KVM），全套幂等复测通过。
+
+**VSCode 插件 GUI 真机验收（Win11 guest 内实际点击，全绿）**：
+- 激活即状态栏 `DAO ide_<hash> ●`（桥已连+会话已建，零点击冷启动）；点状态栏一键开「DAO 虚拟机面板」。
+- 面板按钮实测：健康检查/已装应用/创建会话/会话列表 ✓；sysinfo（Windows-11-10.0.26100）✓；
+  在隔离桌面开记事本→写入文本→读回一致（`道法自然 DAO IDE 隔离会话 OK`）✓；PrintWindow 截图取证 ✓。
+- 服务端 `session.list` 同步可见 `ide_370de318` —— IDE 窗口=隔离会话闭环实证。
+
+**本轮修复（已入 PR#16）**：
+1. `package.json` 声明 `capabilities.untrustedWorkspaces.supported=true` —— 否则 VSCode
+   受限模式（未信任工作区）直接不激活插件，命令面板搜不到任何 DAO 命令（真机踩坑）。
+2. 面板 `session.invoke` 遇「先 open_app」错误自动 create+open_app 后重试一次；
+   `open_app` 按钮注册后立即执行 `open` 动词真正把窗口起到隔离桌面（原实现只注册不开窗，
+   read_text 报「编辑控件未定位」）。
+3. `run_vm.sh` 加 `-device qemu-xhci -device usb-tablet`（绝对坐标指针）——否则 PS/2
+   相对鼠标经 VNC 漂移，宿主对 guest 的 GUI 点击完全不可靠；QMP `send-key` 打键盘、
+   usb-tablet 打鼠标是驱动 guest GUI 的最稳组合（RDP 打字乱码，弃用）。
+
+**驱动 guest 的正解沉淀**：headless 一律走桥 `system.exec`；GUI 键盘走 QMP
+`send-key`（`/tmp/qmpkey.py` 模式）；GUI 鼠标依赖 usb-tablet 绝对坐标；guest 拉文件走
+`http://10.0.2.2:<port>`（宿主 http.server）。
+
 *道法自然 · 无为而无不为*

@@ -39,6 +39,7 @@ args=(qemu-system-x86_64 -name "$name" -machine q35,accel=$ACCEL -cpu "$CPU" -sm
   "${TPM_ARGS[@]}"
   -device e1000,netdev=n0 -netdev user,id=n0,hostfwd=tcp::13389-:3389,hostfwd=tcp::19920-:9920
   -drive file="$DISK",if=ide,format=qcow2,cache=writeback
+  -device qemu-xhci -device usb-tablet
   -vga std -display vnc=:$vnc -qmp tcp:127.0.0.1:4444,server,nowait
   -device virtio-serial -chardev socket,path="$IMAGES/${name}-qga.sock",server=on,wait=off,id=qga0
   -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0)
