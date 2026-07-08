@@ -1,18 +1,24 @@
 "use strict";
-// DAO Windows Agent · VSCode 前端
-// 本源：每个 IDE 窗口 = 一个单账号零配置隔离会话（类多RDP效果）。
-// 插件不投屏，而是经机控桥（bridge/ REST）直达级别①②③——把整台 Windows 做进 IDE。
+// DAO Windows Agent · VSCode 前端（正本清源·路线A 桌面级路由）
+//
+// 本源：IDE 装上本插件 → 面板里直接就是整台 Windows 的桌面本体。
+// 每个 IDE 窗口 = 一路独立完整的 RDP 会话（类多 RDP 的一路），
+// canvas 渲染进 Webview，鼠键直操，不是投屏截图流。
+//
+// 旧的按钮/文字面板（控制面）降级为辅助自动化后端。
 const vscode = require("vscode");
 const http = require("http");
 const cp = require("child_process");
 const path = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
 
 let output;
 let statusItem;
-let panel;
-let spawnedBridge = null; // 自启的本地桥子进程
-let activeBridgeUrl = null; // 实际连上的桥地址
+let panel;           // 旧控制面板（降级为辅助）
+let desktopPanel;    // 桌面路由面板（主前端）
+let spawnedBridge = null;
+let activeBridgeUrl = null;
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("daoWin");
@@ -21,6 +27,8 @@ function cfg() {
     token: c.get("token") || "",
     autostart: c.get("autostart") !== false,
     pythonPath: c.get("pythonPath") || "python",
+    tunnelHttpUrl: (c.get("tunnelHttpUrl") || "http://127.0.0.1:4824").replace(/\/$/, ""),
+    tunnelWsPort: parseInt(c.get("tunnelWsPort") || "4823", 10),
   };
 }
 
@@ -123,14 +131,123 @@ async function ensureBridge(context) {
 function setStatus(text, tooltip) {
   if (!statusItem) {
     statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    statusItem.command = "daoWin.openPanel";
+    statusItem.command = "daoWin.openDesktop";
     statusItem.show();
   }
   statusItem.text = "$(vm) DAO " + text;
   statusItem.tooltip = tooltip || "DAO Windows Agent · 本窗口=隔离会话";
 }
 
-// —— 面板 webview（一键按钮 + 参数输入，桥的所有 /api 动作全覆盖）——
+// —— 桌面路由面板（主前端：guacamole-common-js canvas → WS 隧道 → guacd → RDP 会话）——
+function desktopHtml(context, sessionId, tunnelHttpUrl, tunnelWsPort) {
+  const guacUri = desktopPanel
+    ? desktopPanel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"))
+    : "";
+  const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + guacUri + "; style-src 'unsafe-inline'; connect-src ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; img-src data:;";
+  return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${cspSrc}">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-font-family);height:100vh;display:flex;flex-direction:column}
+#bar{padding:4px 10px;background:#24242a;display:flex;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid #333;flex-shrink:0}
+#bar button{padding:3px 8px;border:none;border-radius:3px;background:var(--vscode-button-background,#3c8dbc);color:var(--vscode-button-foreground,#fff);cursor:pointer;font-size:11px}
+#status{flex:1;text-align:right;opacity:.7}
+#desktop{flex:1;overflow:hidden;position:relative}
+#desktop>div{position:absolute!important;top:0;left:0}
+#overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;font-size:14px;opacity:.6}
+</style></head><body>
+<div id="bar">
+  <b>\u2630 DAO \u684c\u9762</b>
+  <span style="opacity:.5">${sessionId}</span>
+  <button onclick="doConnect()">\u8fde\u63a5</button>
+  <button onclick="doDisconnect()">\u65ad\u5f00</button>
+  <button onclick="doFullscreen()">\u2922</button>
+  <span id="status">\u672a\u8fde\u63a5</span>
+</div>
+<div id="desktop"><div id="overlay">\u70b9\u51fb\u300c\u8fde\u63a5\u300d\u5373\u53ef\u770b\u5230 Windows \u684c\u9762</div></div>
+<script src="${guacUri}"></script>
+<script>
+const TUNNEL_HTTP = ${JSON.stringify(tunnelHttpUrl)};
+const TUNNEL_WS_PORT = ${tunnelWsPort};
+const IDE_SESSION = ${JSON.stringify(sessionId)};
+const vscodeApi = acquireVsCodeApi();
+const container = document.getElementById('desktop');
+const statusEl = document.getElementById('status');
+let client = null;
+
+function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
+
+async function doConnect() {
+  doDisconnect();
+  setStatus('\u53d6 token...', '#ffcc00');
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  let tokenData;
+  try {
+    const r = await fetch(TUNNEL_HTTP + '/token?ide=' + IDE_SESSION + '&width=' + w + '&height=' + h);
+    tokenData = await r.json();
+  } catch (e) { setStatus('\u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); return; }
+  const wsUrl = 'ws://127.0.0.1:' + TUNNEL_WS_PORT + '/?token=' + encodeURIComponent(tokenData.token);
+  setStatus('\u5efa\u7acb WS \u96a7\u9053...', '#ffcc00');
+  const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
+  client = new Guacamole.Client(tunnel);
+  const display = client.getDisplay();
+  document.getElementById('overlay').remove();
+  container.appendChild(display.getElement());
+  // \u9f20\u6807
+  const mouse = new Guacamole.Mouse(display.getElement());
+  mouse.onEach(['mousedown','mousemove','mouseup'], function(e) { client.sendMouseState(e.state, true); });
+  // \u952e\u76d8
+  const keyboard = new Guacamole.Keyboard(document);
+  keyboard.onkeydown = function(k) { client.sendKeyEvent(1, k); };
+  keyboard.onkeyup = function(k) { client.sendKeyEvent(0, k); };
+  // \u81ea\u9002\u5e94\u7f29\u653e
+  display.onresize = function(dw, dh) {
+    const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
+    display.scale(scale);
+  };
+  client.onstatechange = function(state) {
+    var names = ['\u7a7a\u95f2','\u6b63\u5728\u8fde\u63a5...','\u7b49\u5f85\u4e2d...','\u5df2\u8fde\u63a5 \u25cf','\u6b63\u5728\u65ad\u5f00...','\u5df2\u65ad\u5f00'];
+    var colors = ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'];
+    setStatus(names[state] || state, colors[state]);
+    vscodeApi.postMessage({type:'state', state: state});
+  };
+  client.onerror = function(s) { setStatus('\u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
+  client.connect();
+}
+
+function doDisconnect() {
+  if (client) { try { client.disconnect(); } catch(e) {} client = null; }
+}
+
+function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
+
+// \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u63a5
+setTimeout(doConnect, 300);
+</script></body></html>`;
+}
+
+function openDesktop(context) {
+  const sessionId = windowSessionId();
+  const c = cfg();
+  if (desktopPanel) { desktopPanel.reveal(); return; }
+  desktopPanel = vscode.window.createWebviewPanel(
+    "daoWinDesktop", "DAO \u684c\u9762 \u00b7 " + sessionId, vscode.ViewColumn.Active,
+    { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media")] }
+  );
+  desktopPanel.webview.html = desktopHtml(context, sessionId, c.tunnelHttpUrl, c.tunnelWsPort);
+  desktopPanel.onDidDispose(() => { desktopPanel = null; });
+  desktopPanel.webview.onDidReceiveMessage((msg) => {
+    if (msg.type === "state" && msg.state === 3) {
+      setStatus(sessionId + " \u25cf", "\u684c\u9762\u5df2\u8fde " + c.tunnelHttpUrl);
+    }
+    if (msg.type === "fullscreen") {
+      vscode.commands.executeCommand("workbench.action.toggleEditorWidths");
+    }
+  });
+}
+
+// —— 控制面板（旧版按钮面板，降级为辅助自动化后端）——
 function panelHtml(sessionId) {
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <style>
@@ -236,7 +353,7 @@ async function handlePanelMessage(context, msg) {
 function openPanel(context) {
   const sessionId = windowSessionId();
   if (panel) { panel.reveal(); return; }
-  panel = vscode.window.createWebviewPanel("daoWinPanel", "DAO 虚拟机面板", vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  panel = vscode.window.createWebviewPanel("daoWinPanel", "DAO \u63a7\u5236\u9762", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
   panel.webview.html = panelHtml(sessionId);
   panel.onDidDispose(() => { panel = null; });
   panel.webview.onDidReceiveMessage((msg) => handlePanelMessage(context, msg));
@@ -244,20 +361,21 @@ function openPanel(context) {
 
 async function activate(context) {
   const sessionId = windowSessionId();
-  log("DAO Windows Agent 激活 · 本窗口隔离会话 = " + sessionId);
-  setStatus(sessionId, "点击打开 DAO 虚拟机面板");
+  log("DAO Windows Agent \u6fc0\u6d3b \u00b7 \u672c\u7a97\u53e3 = " + sessionId);
+  setStatus(sessionId, "\u70b9\u51fb\u6253\u5f00 DAO \u684c\u9762");
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
     vscode.commands.registerCommand("daoWin.openPanel", () => openPanel(context)),
     vscode.commands.registerCommand("daoWin.health", async () => {
       const info = await ensureBridge(context);
-      if (!info) { vscode.window.showErrorMessage("DAO: 机控桥不可达"); return; }
+      if (!info) { vscode.window.showErrorMessage("DAO: \u673a\u63a7\u6865\u4e0d\u53ef\u8fbe"); return; }
       const r = await apiCall(info.url, info.token, "GET", "/api/health");
-      vscode.window.showInformationMessage("DAO 桥 " + (r.body && r.body.ok ? "OK @ " + info.url : "异常"));
+      vscode.window.showInformationMessage("DAO \u6865 " + (r.body && r.body.ok ? "OK @ " + info.url : "\u5f02\u5e38"));
     }),
     vscode.commands.registerCommand("daoWin.ensureBridge", async () => {
       const info = await ensureBridge(context);
-      vscode.window.showInformationMessage(info ? "DAO 桥已连: " + info.url : "DAO 桥不可达");
+      vscode.window.showInformationMessage(info ? "DAO \u6865\u5df2\u8fde: " + info.url : "DAO \u6865\u4e0d\u53ef\u8fbe");
     })
   );
 
@@ -266,16 +384,17 @@ async function activate(context) {
   if (info) {
     try {
       await apiCall(info.url, info.token, "POST", "/api/session.create", { session_id: sessionId });
-      setStatus(sessionId + " ●", "桥已连 " + info.url + " · 会话就绪");
-      log("本窗口隔离会话已就绪: " + sessionId);
-    } catch (e) { log("建会话失败: " + e.message); }
+      setStatus(sessionId + " \u25cf", "\u6865\u5df2\u8fde " + info.url + " \u00b7 \u70b9\u51fb\u6253\u5f00\u684c\u9762");
+      log("\u672c\u7a97\u53e3\u9694\u79bb\u4f1a\u8bdd\u5df2\u5c31\u7eea: " + sessionId);
+    } catch (e) { log("\u5efa\u4f1a\u8bdd\u5931\u8d25: " + e.message); }
   } else {
-    setStatus(sessionId + " ○", "桥未连（点击打开面板重试）");
+    setStatus(sessionId + " \u25cb", "\u6865\u672a\u8fde\uff08\u70b9\u51fb\u6253\u5f00\u684c\u9762\u91cd\u8bd5\uff09");
   }
 }
 
 function deactivate() {
   if (spawnedBridge) { try { spawnedBridge.kill(); } catch (e) {} }
+  if (desktopPanel) { try { desktopPanel.dispose(); } catch (e) {} }
 }
 
 module.exports = { activate, deactivate };
