@@ -15,6 +15,10 @@
   "contributes": {
     "commands": [
       { "command": "daoWin.openDesktop", "title": "DAO: 打开桌面（本窗口 = 一路 RDP 会话）" },
+      { "command": "daoWin.openAccountDesktop", "title": "DAO: 选账号开桌面（多账号类虚拟机）" },
+      { "command": "daoWin.accountCreate", "title": "DAO: 新建 Windows 账号" },
+      { "command": "daoWin.accountList", "title": "DAO: 账号列表" },
+      { "command": "daoWin.accountDestroy", "title": "DAO: 销毁 Windows 账号" },
       { "command": "daoWin.openPanel", "title": "DAO: 控制面（辅助自动化后端）" },
       { "command": "daoWin.health", "title": "DAO: 桥健康检查" },
       { "command": "daoWin.ensureBridge", "title": "DAO: 连接/自启机控桥" }

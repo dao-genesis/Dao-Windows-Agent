@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>☯ DAO 多账号类虚拟机 · 每账号一路独立桌面（并行·互不干扰）</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#141418;color:#e0e0e0;display:flex;flex-direction:column;height:100vh}
+#bar{padding:6px 12px;background:#22222a;display:flex;align-items:center;gap:10px;font-size:13px;border-bottom:1px solid #333}
+#bar button{padding:4px 10px;border:none;border-radius:4px;background:#3c8dbc;color:#fff;cursor:pointer}
+#bar button:hover{background:#5ca9d6}
+#bar input{background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px}
+#grid{flex:1;display:flex;gap:2px;background:#000;overflow:hidden}
+.pane{flex:1;display:flex;flex-direction:column;min-width:0}
+.pane .hd{padding:4px 8px;background:#2a2a32;font-size:12px;display:flex;justify-content:space-between}
+.pane .st{opacity:.75}
+.pane .canvas{flex:1;position:relative;overflow:hidden}
+.pane .canvas canvas{position:absolute;top:0;left:0}
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>☯ 多账号类虚拟机</b>
+  <label>隧道: <input id="tunnelUrl" value="http://127.0.0.1:4824" style="width:180px"></label>
+  <button onclick="connectAll()">全部连接</button>
+  <button onclick="disconnectAll()">全部断开</button>
+  <span style="opacity:.6">每账号 = 一路独立完整桌面，经 RDPWrap 单机多会话并行、互不干扰</span>
+</div>
+<div id="grid"></div>
+
+<script src="../ide/vscode/media/guacamole-common.min.js"></script>
+<script>
+const panes = {}; // account -> {client, canvas, statusEl}
+
+function tunnelBase(){ return document.getElementById("tunnelUrl").value.replace(/\/$/, ""); }
+
+function addPane(account){
+  const wrap = document.createElement("div");
+  wrap.className = "pane";
+  wrap.innerHTML =
+    '<div class="hd"><span>账号 <b>'+account+'</b></span><span class="st" id="st-'+account+'">未连接</span></div>'+
+    '<div class="canvas" id="cv-'+account+'"></div>';
+  document.getElementById("grid").appendChild(wrap);
+  panes[account] = { client:null, canvas:document.getElementById("cv-"+account), statusEl:document.getElementById("st-"+account) };
+}
+
+function setStatus(account, t, color){
+  const p = panes[account]; if(!p) return;
+  p.statusEl.textContent = t; p.statusEl.style.color = color || "#e0e0e0";
+}
+
+async function connectOne(account){
+  const p = panes[account];
+  disconnectOne(account);
+  setStatus(account, "取 token...", "#ffcc00");
+  const w = p.canvas.clientWidth, h = p.canvas.clientHeight;
+  let td;
+  try {
+    const r = await fetch(tunnelBase()+"/token?account="+encodeURIComponent(account)+"&width="+w+"&height="+h);
+    td = await r.json();
+    if (td.error) { setStatus(account, "令牌: "+td.error, "#ff4444"); return; }
+  } catch(e){ setStatus(account, "令牌失败: "+e.message, "#ff4444"); return; }
+
+  const wsPort = td.ws_port || 4823;
+  const wsUrl = "ws://127.0.0.1:"+wsPort+"/?token="+encodeURIComponent(td.token);
+  const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
+  const client = new Guacamole.Client(tunnel);
+  p.client = client;
+  const display = client.getDisplay();
+  p.canvas.innerHTML = "";
+  p.canvas.appendChild(display.getElement());
+
+  const mouse = new Guacamole.Mouse(display.getElement());
+  mouse.onEach(["mousedown","mousemove","mouseup"], (e)=> client.sendMouseState(e.state, true));
+  // 键盘绑定到本 pane 容器（点谁操作谁，两路互不串扰）
+  const keyboard = new Guacamole.Keyboard(p.canvas);
+  keyboard.onkeydown = (k)=> client.sendKeyEvent(1,k);
+  keyboard.onkeyup = (k)=> client.sendKeyEvent(0,k);
+
+  display.onresize = function(dw,dh){
+    const scale = Math.min(p.canvas.clientWidth/dw, p.canvas.clientHeight/dh, 1);
+    display.scale(scale);
+  };
+  client.onstatechange = (s)=>{
+    const names=["空闲","连接中...","等待...","已连接 ●","断开中...","已断开"];
+    const colors=["#999","#ffcc00","#ffcc00","#44ff44","#ff8800","#ff4444"];
+    setStatus(account, names[s]||s, colors[s]);
+  };
+  client.onerror = (st)=> setStatus(account, "错误: "+(st.message||st.code||"?"), "#ff4444");
+  client.connect();
+}
+
+function disconnectOne(account){
+  const p = panes[account]; if(!p) return;
+  if (p.client){ try{ p.client.disconnect(); }catch(e){} p.client=null; }
+  p.canvas.innerHTML = "";
+}
+
+async function connectAll(){
+  const r = await fetch(tunnelBase()+"/accounts");
+  const j = await r.json();
+  const names = (j.accounts||[]).map(a=>a.name);
+  document.getElementById("grid").innerHTML = "";
+  for (const k in panes) delete panes[k];
+  names.forEach(addPane);
+  // 逐个连接（错峰，避免同一 guacd 建连拥塞）
+  for (const n of names){ await connectOne(n); await new Promise(r=>setTimeout(r,800)); }
+}
+
+function disconnectAll(){ Object.keys(panes).forEach(disconnectOne); }
+</script>
+</body>
+</html>

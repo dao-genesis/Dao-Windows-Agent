@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from core.accounts import AccountManager
 from core.adapter.base import ActionResult
 from core.agent.rule import build_system_prompt
 from core.profiles.builtin import build_default_registry
@@ -33,9 +34,11 @@ class BridgeService:
         registry: Optional[ProfileRegistry] = None,
         manager: Optional[SessionManager] = None,
         root: str = "/tmp/dao-win/sessions",
+        accounts: Optional[AccountManager] = None,
     ) -> None:
         self.registry = registry or build_default_registry()
         self.manager = manager or SessionManager(self.registry, root=root)
+        self.accounts = accounts or AccountManager()
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -88,6 +91,19 @@ class BridgeService:
         open_apps = sorted(sess.instances) if sess else []
         return {"session_id": session_id, "prompt": build_system_prompt(self.registry, open_apps)}
 
+    # --- 账号（Windows 多账号类虚拟机·扩展本源） ---
+    def account_create(self, name: str, password: Optional[str] = None, admin: bool = False) -> dict:
+        return self.accounts.create(name, password=password, admin=admin)
+
+    def account_list(self) -> dict:
+        return self.accounts.list()
+
+    def account_destroy(self, name: str, delete_profile: bool = True) -> dict:
+        return self.accounts.destroy(name, delete_profile=delete_profile)
+
+    def account_sessions(self) -> dict:
+        return self.accounts.sessions()
+
     # --- REST 路由分发（纯函数，便于单测） ---
     def dispatch(self, method: str, path: str, payload: Optional[dict] = None) -> tuple[int, dict]:
         payload = payload or {}
@@ -123,6 +139,18 @@ class BridgeService:
             if method == "POST" and path == "/api/session.prompt":
                 sid = _require(payload, "session_id")
                 return 200, self.session_prompt(sid)
+            if method == "GET" and path == "/api/account.list":
+                return 200, self.account_list()
+            if method == "GET" and path == "/api/account.sessions":
+                return 200, self.account_sessions()
+            if method == "POST" and path == "/api/account.create":
+                name = _require(payload, "name")
+                return 200, self.account_create(
+                    name, payload.get("password"), bool(payload.get("admin", False)))
+            if method == "POST" and path == "/api/account.destroy":
+                name = _require(payload, "name")
+                return 200, self.account_destroy(
+                    name, bool(payload.get("delete_profile", True)))
         except KeyError as exc:
             return 400, {"error": f"缺少必填参数: {exc.args[0]}"}
         except Exception as exc:  # noqa: BLE001 - 边界统一兜底

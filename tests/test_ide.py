@@ -32,6 +32,28 @@ def test_extension_covers_bridge_api_surface():
     assert '"-m", "bridge.server"' in src
 
 
+def test_extension_multi_account_surface():
+    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
+        m = json.load(fh)
+    cmds = {c["command"] for c in m["contributes"]["commands"]}
+    assert {"daoWin.openAccountDesktop", "daoWin.accountCreate",
+            "daoWin.accountList", "daoWin.accountDestroy"} <= cmds
+    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    # 多账号桌面：面板按 key（账号名/ide）多开、按账号铸令牌、账号管理走桥 /api/account.*
+    assert "desktopPanels" in src and "fetchAccounts" in src
+    assert "account=" in src  # 按账号取 token
+    for endpoint in ("/api/account.create", "/api/account.list", "/api/account.destroy"):
+        assert endpoint in src, f"extension.js 缺账号端点 {endpoint}"
+
+
+def test_tunnel_server_multi_account():
+    with open(os.path.join(REPO, "desktop", "tunnel", "server.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "/accounts" in src and "targetForAccount" in src
+    assert "ACCOUNTS_JSON" in src and "accountsRegistry" in src
+
+
 def test_coldstart_orchestrator_present():
     up = os.path.join(REPO, "coldstart", "up.sh")
     assert os.path.isfile(up)

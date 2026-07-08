@@ -18,6 +18,7 @@ body{font-family:system-ui,sans-serif;background:#1a1a1e;color:#e0e0e0;display:f
 <div id="bar">
   <b>☯ DAO 桌面路由</b>
   <label>IDE: <input id="ide" value="ide_test" style="width:100px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px"></label>
+  <label>账号: <input id="account" placeholder="(空=按IDE)" style="width:90px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px"></label>
   <label>隧道: <input id="tunnelUrl" value="http://127.0.0.1:4824" style="width:180px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px"></label>
   <button onclick="connect()">连接桌面</button>
   <button onclick="disconnect()">断开</button>
@@ -40,14 +41,17 @@ async function connect() {
   disconnect();
   const tunnelBase = document.getElementById("tunnelUrl").value.replace(/\/$/, "");
   const ide = document.getElementById("ide").value || "ide_default";
+  const account = (document.getElementById("account").value || "").trim();
 
   setStatus("取 token...", "#ffcc00");
   const w = container.clientWidth;
   const h = container.clientHeight;
   let tokenData;
   try {
-    const r = await fetch(`${tunnelBase}/token?ide=${ide}&width=${w}&height=${h}`);
+    const q = account ? `account=${encodeURIComponent(account)}` : `ide=${ide}`;
+    const r = await fetch(`${tunnelBase}/token?${q}&width=${w}&height=${h}`);
     tokenData = await r.json();
+    if (tokenData.error) { setStatus("令牌: " + tokenData.error, "#ff4444"); return; }
   } catch (e) {
     setStatus("令牌获取失败: " + e.message, "#ff4444");
     return;
