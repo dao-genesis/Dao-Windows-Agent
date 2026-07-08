@@ -134,13 +134,26 @@ try {
     if (Test-Path $p) { $codeCli = $p; break }
   }
   if (-not $codeCli) {
-    winget install -e --id Microsoft.VisualStudioCode --source winget --silent `
-      --accept-source-agreements --accept-package-agreements --scope machine
+    try { winget install -e --id Microsoft.VisualStudioCode --source winget --silent `
+      --accept-source-agreements --accept-package-agreements --scope machine; Log "vscode installed (winget)" } catch { Log "winget vscode skipped: $_" }
     foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
                      "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
       if (Test-Path $p) { $codeCli = $p; break }
     }
-    Log "vscode installed (winget)"
+  }
+  if (-not $codeCli) {
+    # winget 不可用时离线兜底（Enterprise Eval 镜像常无 winget/msstore）：官网系统级静默安装
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $codeInst = "$env:TEMP\VSCodeSetup.exe"
+      Invoke-WebRequest -UseBasicParsing -Uri 'https://update.code.visualstudio.com/latest/win32-x64/stable' -OutFile $codeInst
+      Start-Process $codeInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
+      foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
+                       "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
+        if (Test-Path $p) { $codeCli = $p; break }
+      }
+      Log "vscode installed (offline)"
+    } catch { Log "offline vscode failed: $_" }
   }
   # 随应答盘带入的 .vsix（build_image.sh 已打包）
   $vsix = Get-ChildItem 'D:\dao-windows-agent-*.vsix','E:\dao-windows-agent-*.vsix','F:\dao-windows-agent-*.vsix','G:\dao-windows-agent-*.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1
