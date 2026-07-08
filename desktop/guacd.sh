@@ -16,9 +16,10 @@ fi
 docker rm -f "$NAME" 2>/dev/null || true
 
 echo "[guacd] 启动 guacamole/guacd:1.5.5 → 127.0.0.1:$PORT"
+# host 网络：guacd 需回连宿主机上的 RDP hostfwd（127.0.0.1:13389→guest:3389）
 docker run -d --name "$NAME" \
-  -p "127.0.0.1:${PORT}:4822" \
+  --network host \
   --restart unless-stopped \
-  guacamole/guacd:1.5.5
+  guacamole/guacd:1.5.5 /opt/guacamole/sbin/guacd -b 127.0.0.1 -l "$PORT" -f
 
 echo "[guacd] 就绪 127.0.0.1:$PORT"
