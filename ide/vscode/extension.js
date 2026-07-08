@@ -143,7 +143,8 @@ function desktopHtml(context, sessionId, tunnelHttpUrl, tunnelWsPort) {
   const guacUri = desktopPanel
     ? desktopPanel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"))
     : "";
-  const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + guacUri + "; style-src 'unsafe-inline'; connect-src ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; img-src data:;";
+  const cspSource = desktopPanel ? desktopPanel.webview.cspSource : "";
+  const cspSrc = "default-src 'none'; script-src 'unsafe-inline' " + cspSource + "; style-src 'unsafe-inline'; connect-src ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; img-src data:;";
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspSrc}">
 <style>
