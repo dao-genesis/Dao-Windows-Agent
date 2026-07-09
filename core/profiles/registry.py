@@ -29,6 +29,56 @@ def _tokens(text: str) -> set[str]:
     return toks
 
 
+# 中英同义桥（板块四·语义检索强化）：查询词元 → 画像侧惯用词元。
+# 画像动词/摘要多为英文动词名 + 中文摘要，纯中文查询靠此桥命中英文动词名，
+# 反向亦然。守纯 stdlib：小而准的领域同义表，不引外部词典/向量库。
+_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "导出": ("export", "output"),
+    "导入": ("import",),
+    "建模": ("model", "modeling", "macro", "step", "stl"),
+    "网格": ("mesh", "stl"),
+    "原理图": ("schematic", "sch"),
+    "制造": ("gerber", "fab", "drill"),
+    "钻孔": ("drill",),
+    "截图": ("screenshot", "capture"),
+    "打开": ("open", "launch", "start"),
+    "关闭": ("close", "quit", "shutdown"),
+    "运行": ("run", "exec"),
+    "执行": ("run", "exec", "invoke"),
+    "检查": ("inspect", "check", "verify"),
+    "版本": ("version",),
+    "文件": ("file",),
+    "读取": ("read", "get"),
+    "写入": ("write", "set"),
+    "搜索": ("search", "find"),
+    "自动化": ("automation",),
+    "智能家居": ("homeassistant", "ha", "smart", "home"),
+    "灯": ("light",),
+    "服务": ("service", "call"),
+    "实体": ("entity", "states", "state"),
+    "浏览器": ("browser", "chrome", "cdp"),
+    "进程": ("process", "proc", "ps"),
+    "窗口": ("window",),
+    "输入": ("type", "input", "key"),
+    "点击": ("click",),
+    "gerber": ("export_gerbers", "fab"),
+    "stl": ("mesh", "export_stl"),
+    "step": ("export_step",),
+    "export": ("导出",),
+    "model": ("建模",),
+}
+
+
+def _expand(tokens: set[str], raw: str) -> set[str]:
+    """按同义桥扩展查询词元（含多字词整词命中，如「智能家居」「原理图」）。"""
+    out = set(tokens)
+    low = raw.lower()
+    for key, vals in _SYNONYMS.items():
+        if key in tokens or (len(key) > 1 and key in low):
+            out.update(vals)
+    return out
+
+
 class ProfileRegistry:
     def __init__(self) -> None:
         self._profiles: dict[str, AppProfile] = {}
@@ -71,8 +121,9 @@ class ProfileRegistry:
         }
 
     def search_verbs(self, query: str, limit: int = 10) -> list[dict]:
-        """跨所有软件的动词语义检索（词元 Jaccard + 子串加权）。"""
+        """跨所有软件的动词语义检索（词元 Jaccard + 中英同义桥 + 动词名/别名直命中加权）。"""
         q = _tokens(query)
+        qx = _expand(q, query)
         results: list[tuple[float, dict]] = []
         for prof in self._profiles.values():
             for v in prof.verbs:
@@ -81,9 +132,12 @@ class ProfileRegistry:
                 if not toks:
                     continue
                 inter = len(q & toks)
+                xinter = len((qx - q) & toks)
                 jacc = inter / len(q | toks) if (q | toks) else 0.0
                 sub = 0.3 if query.lower() in text.lower() else 0.0
-                score = jacc + sub + 0.1 * inter
+                names = {v.name.lower(), *(a.lower() for a in v.aliases)}
+                direct = 0.35 if names & qx else 0.0
+                score = jacc + sub + 0.1 * inter + 0.08 * xinter + direct
                 if score > 0:
                     results.append((score, {
                         "app_id": prof.app_id,
