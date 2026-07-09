@@ -8,7 +8,8 @@ from core.profiles.registry import ProfileRegistry
 
 
 def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = None,
-                           vision_grounder: Optional[Callable[[str, dict], Any]] = None) -> ProfileRegistry:
+                           vision_grounder: Optional[Callable[[str, dict], Any]] = None,
+                           discover_subplugins: bool = False) -> ProfileRegistry:
     """构建内置画像注册表。
 
     级别② 的 uia_driver：未显式传入时，尝试自动探测 guest 内实机 driver（纯 ctypes 消息级，
@@ -29,4 +30,8 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
     reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p))
     reg.register(notepad.PROFILE, lambda p: notepad._ADAPTER(p, driver=uia_driver))
     reg.register(mspaint.PROFILE, lambda p: mspaint._ADAPTER(p, grounder=vision_grounder))
+    if discover_subplugins:
+        # 扫描发现目录，把已安装的领域子插件（外部 VS Code 扩展）自动收编为 @ 工作层。
+        from core.subplugin import register_subplugins
+        register_subplugins(reg)
     return reg
