@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 from core.accounts import AccountManager
 from core.adapter.base import ActionResult
-from core.agent.rule import build_system_prompt
+from core.agent.modes import ModeManager
 from core.dispatch import MentionRouter
 from core.profiles.builtin import build_default_registry
 from core.profiles.registry import ProfileRegistry
@@ -36,6 +36,7 @@ class BridgeService:
         manager: Optional[SessionManager] = None,
         root: str = "/tmp/dao-win/sessions",
         accounts: Optional[AccountManager] = None,
+        modes: Optional[ModeManager] = None,
     ) -> None:
         # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
         # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
@@ -44,6 +45,7 @@ class BridgeService:
         self.manager = manager or SessionManager(self.registry, root=root)
         self.accounts = accounts or AccountManager()
         self.router = MentionRouter(self.registry)
+        self.modes = modes or ModeManager(self.registry)
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -91,10 +93,14 @@ class BridgeService:
         return _result_to_dict(self.manager.destroy(session_id))
 
     def session_prompt(self, session_id: str) -> dict:
-        """返回该会话当前应注入 Agent 的帛书系统提示（含已开软件的 profile 纪律）。"""
+        """返回该会话当前应注入 Agent 的系统提示（模式覆盖 + 帛书纪律 + 已开软件纪律）。"""
         sess = self.manager.sessions.get(session_id)
         open_apps = sorted(sess.instances) if sess else []
-        return {"session_id": session_id, "prompt": build_system_prompt(self.registry, open_apps)}
+        return {
+            "session_id": session_id,
+            "mode": self.modes.current.mode_id,
+            "prompt": self.modes.build_prompt(open_apps),
+        }
 
     # --- 通用适配层 · @ 调度（AI 交互基底：一句自然语言 → 裁定通用层/领域工作层） ---
     def route(self, text: str, verb_limit: int = 5) -> dict:
@@ -108,7 +114,28 @@ class BridgeService:
         }
 
     def capabilities(self) -> dict:
-        return self.router.capability_manifest()
+        manifest = self.router.capability_manifest()
+        scoped = self.modes.capabilities()
+        manifest.update(scoped)
+        return manifest
+
+    # --- 模式切换层（三插件融合的枢纽：提示词覆盖 + 工具面裁剪） ---
+    def mode_list(self) -> dict:
+        return {
+            "modes": [m.describe() for m in self.modes.modes()],
+            "current": self.modes.current.mode_id,
+        }
+
+    def mode_get(self) -> dict:
+        return {"current": self.modes.current.describe(),
+                "allowed_apps": self.modes.allowed_apps()}
+
+    def mode_set(self, mode_id: str) -> dict:
+        try:
+            mode = self.modes.set(mode_id)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"current": mode.describe(), "allowed_apps": self.modes.allowed_apps()}
 
     # --- 账号（Windows 多账号类虚拟机·扩展本源） ---
     def account_create(self, name: str, password: Optional[str] = None, admin: bool = False) -> dict:
@@ -163,6 +190,13 @@ class BridgeService:
                 return 200, self.route(text, int(payload.get("verb_limit", 5)))
             if method == "GET" and path == "/api/capabilities":
                 return 200, self.capabilities()
+            if method == "GET" and path == "/api/mode.list":
+                return 200, self.mode_list()
+            if method == "GET" and path == "/api/mode.get":
+                return 200, self.mode_get()
+            if method == "POST" and path == "/api/mode.set":
+                mode_id = _require(payload, "mode")
+                return 200, self.mode_set(mode_id)
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":
