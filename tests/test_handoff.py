@@ -78,6 +78,23 @@ def test_bridge_project_endpoints():
     assert st == 200 and body["handoff"]["handle"] == "@freecad"
 
 
+def test_active_project_injected_into_session_prompt():
+    svc = _svc()
+    svc.dispatch("POST", "/api/session.create", {"session_id": "s1"})
+    _, before = svc.dispatch("POST", "/api/session.prompt", {"session_id": "s1"})
+    assert "进行中的跨领域工程" not in before["prompt"]
+    svc.dispatch("POST", "/api/project.create", {
+        "project_id": "pj", "goal": "PCB→3D",
+        "stages": [{"app_id": "kicad", "goal": "gerber"}]})
+    _, after = svc.dispatch("POST", "/api/session.prompt", {"session_id": "s1"})
+    assert "进行中的跨领域工程" in after["prompt"]
+    assert "@kicad" in after["prompt"] and "第 1/1 环节" in after["prompt"]
+    # coding 模式（机控面关闭）不注入
+    svc.dispatch("POST", "/api/mode.set", {"mode": "coding"})
+    _, coding = svc.dispatch("POST", "/api/session.prompt", {"session_id": "s1"})
+    assert "进行中的跨领域工程" not in coding["prompt"]
+
+
 def test_search_verbs_semantic_bridge():
     reg = build_default_registry()
     # 纯中文查询经同义桥命中英文动词名

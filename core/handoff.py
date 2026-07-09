@@ -136,6 +136,24 @@ class HandoffFlow:
                     })
         return {"projects": items}
 
+    def active_snippet(self) -> str:
+        """活动工程的交接指引拼成提示词片段（供系统提示注入，Agent 无需另查 API）。"""
+        lines: list[str] = []
+        for item in self.list()["projects"]:
+            if item["status"] != "active":
+                continue
+            st = self.status(item["project_id"])
+            cur, hint = st.get("current"), st.get("handoff") or {}
+            if not cur:
+                continue
+            done = sum(1 for s in st["stages"] if s["status"] == "done")
+            lines.append(
+                f"- 工程 {st['project_id']}（{st.get('goal', '')}）"
+                f"第 {done + 1}/{len(st['stages'])} 环节：{hint.get('summary', '')}")
+        if not lines:
+            return ""
+        return "进行中的跨领域工程（当前环节完工后用 project.advance 交接）：\n" + "\n".join(lines)
+
     # —— 交接指引（拿给 Agent 直接照做）——
     def _handoff_hint(self, stage: dict) -> dict:
         app_id = stage.get("app_id") or ""
