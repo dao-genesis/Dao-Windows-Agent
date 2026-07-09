@@ -5,24 +5,78 @@
   "version": "0.2.2",
   "publisher": "dao",
   "license": "MIT",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "capabilities": {
-    "untrustedWorkspaces": { "supported": true, "description": "插件只经 HTTP/WS 调本机隧道与机控桥，不读写工作区内容，受限模式下照常可用" }
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "插件只经 HTTP/WS 调本机隧道与机控桥，不读写工作区内容，受限模式下照常可用"
+    }
   },
   "contributes": {
     "commands": [
-      { "command": "daoWin.openDesktop", "title": "DAO: 打开桌面（本窗口 = 一路 RDP 会话）" },
-      { "command": "daoWin.openAccountDesktop", "title": "DAO: 选账号开桌面（多账号类虚拟机）" },
-      { "command": "daoWin.accountCreate", "title": "DAO: 新建 Windows 账号" },
-      { "command": "daoWin.accountList", "title": "DAO: 账号列表" },
-      { "command": "daoWin.accountDestroy", "title": "DAO: 销毁 Windows 账号" },
-      { "command": "daoWin.openPanel", "title": "DAO: 控制面（辅助自动化后端）" },
-      { "command": "daoWin.ask", "title": "DAO: AI 交互（@ 调度整机/领域工作层）" },
-      { "command": "daoWin.health", "title": "DAO: 桥健康检查" },
-      { "command": "daoWin.ensureBridge", "title": "DAO: 连接/自启机控桥" }
+      {
+        "command": "daoWin.openDesktop",
+        "title": "DAO: 打开桌面（本窗口 = 一路 RDP 会话）"
+      },
+      {
+        "command": "daoWin.openAccountDesktop",
+        "title": "DAO: 选账号开桌面（多账号类虚拟机）"
+      },
+      {
+        "command": "daoWin.accountCreate",
+        "title": "DAO: 新建 Windows 账号"
+      },
+      {
+        "command": "daoWin.accountList",
+        "title": "DAO: 账号列表"
+      },
+      {
+        "command": "daoWin.accountDestroy",
+        "title": "DAO: 销毁 Windows 账号"
+      },
+      {
+        "command": "daoWin.openPanel",
+        "title": "DAO: 控制面（辅助自动化后端）"
+      },
+      {
+        "command": "daoWin.ask",
+        "title": "DAO: AI 交互（@ 调度整机/领域工作层）"
+      },
+      {
+        "command": "daoWin.health",
+        "title": "DAO: 桥健康检查"
+      },
+      {
+        "command": "daoWin.ensureBridge",
+        "title": "DAO: 连接/自启机控桥"
+      },
+      {
+        "command": "daoWin.cascade.open",
+        "title": "DAO · AI 交互: 聚焦 Cascade 三模式面板"
+      },
+      {
+        "command": "daoWin.cascade.newSession",
+        "title": "DAO · AI 交互: 新建 Cascade 会话",
+        "icon": "$(add)"
+      },
+      {
+        "command": "daoWin.cascade.history",
+        "title": "DAO · AI 交互: Cascade 历史会话",
+        "icon": "$(history)"
+      },
+      {
+        "command": "daoWin.cascade.deepwiki",
+        "title": "DAO · AI 交互: DeepWiki 解释选中符号"
+      }
     ],
     "configuration": {
       "title": "DAO Windows Agent",
@@ -58,6 +112,38 @@
           "description": "桌面路由隧道 WebSocket 端口（浏览器 WS ↔ guacd）"
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "daoWin-cascade",
+          "title": "DAO · AI 交互",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "daoWin-cascade": [
+        {
+          "id": "daoWin.cascade",
+          "name": "Cascade · 三模式",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "daoWin.cascade.newSession",
+          "when": "view == daoWin.cascade",
+          "group": "navigation@1"
+        },
+        {
+          "command": "daoWin.cascade.history",
+          "when": "view == daoWin.cascade",
+          "group": "navigation@2"
+        }
+      ]
     }
   },
   "scripts": {

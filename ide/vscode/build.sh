@@ -12,6 +12,15 @@ cp -r "$REPO/bridge" "$HERE/runtime/bridge"
 cp -r "$REPO/core" "$HERE/runtime/core"
 find "$HERE/runtime" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
+echo "== 二合一装配（可选：DAO_UNIFY_SRCS 给出领域插件目录列表，折入 vendor/ 并合并 contributes）=="
+if [ -n "${DAO_UNIFY_SRCS:-}" ]; then
+  # 例: DAO_UNIFY_SRCS="$HOME/repos/Dao-3D-Modeling-Agent/90-归一_IDE/vscode-dao-freecad $HOME/repos/Dao-PCB-Design-Agent/vscode-dao-kicad"
+  # shellcheck disable=SC2086
+  node "$HERE/unify.js" $DAO_UNIFY_SRCS
+else
+  echo "跳过（未设 DAO_UNIFY_SRCS；纯主体 + AI 基底打包）"
+fi
+
 echo "== 生成 PNG 图标（若缺）=="
 if [ ! -f "$HERE/media/dao.png" ]; then
   python3 - "$HERE/media/dao.png" <<'PY' 2>/dev/null || echo "跳过图标生成（无 PIL）"
