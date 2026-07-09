@@ -2,7 +2,7 @@
   "name": "dao-windows-agent",
   "displayName": "DAO Windows Agent · 桌面级路由",
   "description": "IDE 装上本插件 → 面板里直接就是整台 Windows 桌面本体（类多 RDP）。每个 IDE 窗口 = 一路独立完整的 RDP 会话，canvas 渲染进 Webview，鼠键直操。",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "publisher": "dao",
   "license": "MIT",
   "engines": {
@@ -80,6 +80,14 @@
       {
         "command": "daoWin.cascade.deepwiki",
         "title": "DAO · AI 交互: DeepWiki 解释选中符号"
+      },
+      {
+        "command": "daoWin.proxy.status",
+        "title": "DAO · 提示词引擎: 状态（经藏/模式契约）"
+      },
+      {
+        "command": "daoWin.proxy.preview",
+        "title": "DAO · 提示词引擎: 道化预览（官方 SP → 经文+overlay）"
       }
     ],
     "configuration": {

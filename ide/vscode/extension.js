@@ -742,6 +742,11 @@ async function activate(context) {
     const daoAiBase = require("./dao-ai-base");
     daoAiBase.activateDaoAiBase(context, { ns: "daoWin", log: (m) => log("[dao-ai-base] " + m) });
   } catch (e) { log("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
+  // 提示词隔离替换引擎(dao-proxy-pro · Proxy Pro 同源薄片): 读 ~/.dao/mode.json 契约道化 SP。
+  try {
+    const daoProxyPro = require("./dao-proxy-pro");
+    daoProxyPro.activateDaoProxyPro(context, { ns: "daoWin", log: (m) => log("[dao-proxy-pro] " + m) });
+  } catch (e) { log("[dao-proxy-pro] 引擎激活失败: " + (e && e.stack ? e.stack : e)); }
   // 二合一子模块(FreeCAD / KiCad / 嘉立创EDA / HomeAssistant …): 构建时由 unify.js 折入 vendor/。
   try { await activateVendorModules(context); } catch (e) { log("子模块编排异常: " + (e && e.stack ? e.stack : e)); }
   // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
