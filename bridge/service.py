@@ -16,12 +16,14 @@ MCP 外壳把上述动作包成工具，任意 Agent（Devin/Claude/本插件）
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 from core.accounts import AccountManager
 from core.adapter.base import ActionResult
 from core.agent.modes import ModeManager
 from core.dispatch import MentionRouter
+from core.handoff import HandoffFlow
 from core.profiles.builtin import build_default_registry
 from core.profiles.registry import ProfileRegistry
 from core.session.manager import SessionManager
@@ -46,6 +48,9 @@ class BridgeService:
         self.accounts = accounts or AccountManager()
         self.router = MentionRouter(self.registry)
         self.modes = modes or ModeManager(self.registry)
+        self.handoff = HandoffFlow(
+            self.registry,
+            root=os.path.join(os.path.dirname(os.path.abspath(root)), "projects"))
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -224,6 +229,20 @@ class BridgeService:
             if method == "POST" and path == "/api/mode.set":
                 mode_id = _require(payload, "mode")
                 return 200, self.mode_set(mode_id)
+            if method == "POST" and path == "/api/project.create":
+                pid = _require(payload, "project_id")
+                return 200, self.handoff.create(
+                    pid, str(payload.get("goal") or ""),
+                    payload.get("stages") or [])
+            if method == "POST" and path == "/api/project.advance":
+                pid = _require(payload, "project_id")
+                return 200, self.handoff.advance(
+                    pid, payload.get("artifacts"), str(payload.get("note") or ""))
+            if method == "POST" and path == "/api/project.status":
+                pid = _require(payload, "project_id")
+                return 200, self.handoff.status(pid)
+            if method == "GET" and path == "/api/project.list":
+                return 200, self.handoff.list()
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":
