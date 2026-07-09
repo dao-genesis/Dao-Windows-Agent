@@ -56,6 +56,22 @@ class AppProfile:
     # 来源仓库（可复用资产追溯）
     source_repo: str = ""
     tags: tuple[str, ...] = ()
+    # —— 通用适配层字段（樸散為器：整机通用层 vs 领域专用层，@ 调度）——
+    # layer："universal"=整台 Windows 通用层（默认落点）；"domain"=专用软件工作层（需 @ 唤起）
+    layer: str = "domain"
+    # mention：@ 唤起句柄；为空时退回 app_id。如 @win 唤起整机、@kicad 唤起 PCB 工作层
+    mention: str = ""
+    # origin："builtin"=内置画像；"external"=外部子插件（另一 VS Code 扩展）经 RPC 收编
+    origin: str = "builtin"
+
+    @property
+    def handle(self) -> str:
+        """@ 调度句柄（去掉前导 @，小写）——为空退回 app_id。"""
+        return (self.mention or self.app_id).lstrip("@").lower()
+
+    @property
+    def is_universal(self) -> bool:
+        return self.layer == "universal"
 
     def verb(self, name: str) -> Optional[Verb]:
         for v in self.verbs:

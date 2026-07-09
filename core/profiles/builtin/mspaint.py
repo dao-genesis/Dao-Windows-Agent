@@ -49,6 +49,7 @@ PROFILE = AppProfile(
     file_conventions={"outputs": ["png", "bmp"]},
     source_repo="本仓（级别③ 验证标靶）",
     tags=("gui", "vision", "level3", "标靶"),
+    mention="paint",
     prompt_snippet=(
         "画图走级别③：截图 + 视觉 grounding（无 UIA 兜底）。坐标是最后手段——"
         "每步都以自然语言目标描述(target_hint) 定位，保留可解释性。仅在①②皆不可用时才用本级。"

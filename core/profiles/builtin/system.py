@@ -223,6 +223,8 @@ PROFILE = AppProfile(
     file_conventions={"outputs": ["any"]},
     source_repo="本仓（整机底座；对标 devin-remote 机控桥的 /api/exec·/api/file·/api/ls）",
     tags=("system", "shell", "headless", "level1", "整机"),
+    layer="universal",
+    mention="win",
     prompt_snippet=(
         "整机系统画像是级别①底座：跑命令(exec)、读写文件、列目录、看进程、查环境——"
         "把整台 Windows 当作你自己的机器操作，与用户真实桌面并行、无头、天然隔离。"
