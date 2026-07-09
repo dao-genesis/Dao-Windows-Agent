@@ -41,6 +41,8 @@ status(){
   local h; h=$(curl -s -m3 http://127.0.0.1:19920/api/health -H 'Authorization: Bearer dao-win-lab' 2>/dev/null || true)
   [ -n "$h" ] && echo "  [OK]   桥探活: $h" || echo "  [--]   桥未响应 (127.0.0.1:19920)"
   pgrep -af "qemu-system-x86_64.*$name" >/dev/null && echo "  [OK]   VM 进程在跑" || echo "  [--]   VM 未运行"
+  local gh; gh=$(curl -s -m3 "http://127.0.0.1:${DAO_GUAC_HTTP_PORT:-4824}/health" 2>/dev/null || true)
+  [ -n "$gh" ] && echo "  [OK]   桌面路由隧道: $gh" || echo "  [--]   桌面路由隧道未响应 (guacd/tunnel · desktop/up_desktop.sh)"
 }
 
 run_vm_bg(){
@@ -65,36 +67,52 @@ case "$mode" in
   run) run_vm_bg; exit 0;;
 esac
 
-step "1/5 预检 + 安装 QEMU/KVM（幂等）"
+step "1/6 预检 + 安装 QEMU/KVM（幂等）"
 bash "$WSIM/preflight.sh" || true
 command -v qemu-system-x86_64 >/dev/null 2>&1 || bash "$WSIM/install_qemu.sh"
 
-step "2/5 取 Windows 介质（评估版 ISO + virtio·已存在则跳过）"
+step "2/6 取 Windows 介质（评估版 ISO + virtio·已存在则跳过）"
 if [ -f "$MEDIA/${edition}.iso" ] && [ -f "$MEDIA/virtio-win.iso" ]; then
   echo "介质已就绪，跳过下载。"
 else
   bash "$WSIM/fetch_media.sh" --eval "$edition"
 fi
 
-step "3/5 构建镜像 + 应答盘（捆入 bridge/core + IDE 插件 vsix·已建则跳过)"
+step "3/6 构建镜像 + 应答盘（捆入 bridge/core + IDE 插件 vsix·已建则跳过)"
 if [ -f "$DISK" ]; then
   echo "磁盘镜像已存在，跳过构建。删 $DISK 可强制重建。"
 else
   bash "$WSIM/build_image.sh" --edition "$edition" --name "$name" --ram "$ram" --cpus "$cpus"
 fi
 
-step "4/5 无人值守装机（首次约 25 分钟·装完自动关机·已装则跳过）"
+step "4/6 无人值守装机（首次约 25 分钟·装完自动关机·已装则跳过）"
 if [ -f "$INSTALLED_FLAG" ]; then
   echo "已完成装机（哨兵存在），跳过。删 $INSTALLED_FLAG 可强制重装。"
 else
   echo "启动安装阶段（VNC:0 可观测；装完 autounattend 自动关机）…"
-  bash "$WSIM/run_vm.sh" --name "$name" --install --ram "$ram" --cpus "$cpus" || true
-  # run_vm --install 前台阻塞至 guest 装完自动关机；QEMU 退出即视为装机结束
+  # run_vm --install 前台阻塞至 guest 装完自动关机；仅 QEMU 正常退出(0)才算装机结束。
+  # QEMU 崩溃（如 free(): invalid pointer）会以非零码退出——此时不落哨兵，自动重试。
+  installed=0
+  for attempt in 1 2 3; do
+    if bash "$WSIM/run_vm.sh" --name "$name" --install --ram "$ram" --cpus "$cpus"; then
+      installed=1; break
+    fi
+    echo "[WARN] 安装阶段 QEMU 非正常退出（第 $attempt 次）——重试续装（磁盘保留，装机可断点续行）…"
+    sleep 3
+  done
+  [ "$installed" = "1" ] || { echo "[FATAL] 装机三次均异常退出，不落哨兵。查 VNC:0 或 qemu 版本（当前 $(qemu-system-x86_64 --version | head -1)）。"; exit 1; }
   touch "$INSTALLED_FLAG"
   echo "装机结束，落哨兵 $INSTALLED_FLAG"
 fi
 
-step "5/5 常态启动 + 等桥就绪"
+step "5/6 常态启动 + 等桥就绪"
 run_vm_bg
+
+step "6/6 桌面级路由链路（guacd + WS 隧道 · 路线A · 幂等）"
+if bash "$HERE/../desktop/up_desktop.sh"; then
+  echo "桌面路由链路就绪：guacd ${DAO_GUACD_PORT:-4822} · WS ${DAO_GUAC_WS_PORT:-4823} · 令牌 ${DAO_GUAC_HTTP_PORT:-4824}（RDP 目标 127.0.0.1:13389）"
+else
+  echo "[WARN] 桌面路由链路未拉起（Docker/Node 缺失？）——面板可开但连接不通；可稍后手动 bash desktop/up_desktop.sh"
+fi
 
 hr; echo "☯ 冷启动完成。IDE 即隔离会话：打开 guest 内 VSCode（插件已随盘装好）→ 状态栏 DAO 面板即为本窗口会话。"; hr
