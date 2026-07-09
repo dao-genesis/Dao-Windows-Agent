@@ -69,7 +69,8 @@ def _pcb_python(adapter, instance, script: str = "", macro_path: str = "", **_):
     if not macro_path:
         if not script:
             return ActionResult.bad("需提供 script 或 macro_path")
-        macro_path = os.path.join(instance.workdir, "_pcbnew.py")
+        # 落名不可为 _pcbnew.py / pcbnew.py：脚本目录在 sys.path 首位，会遮蔽 KiCad 原生模块
+        macro_path = os.path.join(instance.workdir, "dao_pcb_macro.py")
         with open(macro_path, "w", encoding="utf-8") as fh:
             fh.write(script)
     # KiCad 自带解释器：Windows 装机后 kicad-cli 同目录的 python；退回系统 python 也可（已装 pcbnew）

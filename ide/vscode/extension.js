@@ -656,6 +656,7 @@ function askHtml(sessionId) {
      const d = m.data; let h = '';
      h += '<div>落点<span class="layer '+d.layer+'">'+(d.layer==='universal'?'整机通用层':'领域工作层')+'</span> 目标: <b>'+(d.targets.join(', ')||'—')+'</b></div>';
      if (d.unresolved && d.unresolved.length) h += '<div class="un">未就绪句柄（子插件未安装）: @'+d.unresolved.join(' @')+'</div>';
+     if (d.blocked_by_mode && d.blocked_by_mode.length) h += '<div class="un">模式 '+(d.mode||'')+' 未开放: '+d.blocked_by_mode.join(', ')+'（先切换模式）</div>';
      (d.verb_hints||[]).forEach(v=>{ h += '<div class="hint" onclick="run(\\''+v.app_id+'\\',\\''+v.verb+'\\')">▶ <b>'+v.verb+'</b> <code>@'+v.app_id+'</code> — '+(v.summary||v.description||'')+'</div>'; });
      if (!(d.verb_hints||[]).length) h += '<div class="hint">（无候选动词，可直接在控制面手动执行）</div>';
      document.getElementById('decision').innerHTML = h;
