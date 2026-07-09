@@ -60,6 +60,10 @@
         "title": "DAO: 连接/自启机控桥"
       },
       {
+        "command": "daoWin.switchMode",
+        "title": "DAO: 切换模式（主/纯编程/Windows全接管/专精领域）"
+      },
+      {
         "command": "daoWin.cascade.open",
         "title": "DAO · AI 交互: 聚焦 Cascade 三模式面板"
       },

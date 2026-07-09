@@ -66,7 +66,7 @@ def test_dispatch_route_universal_and_domain(tmp_path):
     svc = _svc(tmp_path)
     # 无 @ → 整机通用层
     status, d = svc.dispatch("POST", "/api/route", {"text": "列出正在运行的进程"})
-    assert status == 200 and d["layer"] == "universal" and d["targets"] == ["system"]
+    assert status == 200 and d["layer"] == "universal" and d["targets"] == ["browser", "system"]
     # @kicad → 领域工作层，动词候选仅限目标层
     status, d = svc.dispatch("POST", "/api/route", {"text": "@kicad 导出 gerber"})
     assert status == 200 and d["layer"] == "domain" and d["targets"] == ["kicad"]

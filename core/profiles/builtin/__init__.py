@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from core.profiles.builtin import freecad, jlceda, kicad, mspaint, notepad, system
+from core.profiles.builtin import browser, freecad, jlceda, kicad, mspaint, notepad, system
 from core.profiles.registry import ProfileRegistry
 
 
@@ -39,6 +39,7 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
 
     reg = ProfileRegistry()
     reg.register(system.PROFILE, lambda p: system._ADAPTER(p))
+    reg.register(browser.PROFILE, lambda p: browser._ADAPTER(p))
     reg.register(kicad.PROFILE, lambda p: kicad._ADAPTER(p))
     reg.register(freecad.PROFILE, lambda p: freecad._ADAPTER(p))
     reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p))

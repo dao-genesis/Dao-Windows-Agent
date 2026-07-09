@@ -180,6 +180,53 @@ function setStatus(text, tooltip) {
   statusItem.tooltip = tooltip || "DAO Windows Agent · 本窗口=隔离会话";
 }
 
+// —— 模式切换（提示词覆盖 + 工具面裁剪；态经桥持久化到 ~/.dao/mode.json 供同装插件联动）——
+let modeStatusItem;
+function setModeStatus(mode) {
+  if (!modeStatusItem) {
+    modeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    modeStatusItem.command = "daoWin.switchMode";
+    modeStatusItem.show();
+  }
+  modeStatusItem.text = "$(settings-gear) " + (mode && mode.name ? mode.name : "\u6a21\u5f0f");
+  modeStatusItem.tooltip = mode && mode.summary ? mode.summary : "DAO \u6a21\u5f0f\u5207\u6362";
+}
+
+async function switchMode(context) {
+  const info = await ensureBridge(context);
+  if (!info) { vscode.window.showErrorMessage("DAO: \u673a\u63a7\u6865\u4e0d\u53ef\u8fbe\uff0c\u65e0\u6cd5\u5207\u6362\u6a21\u5f0f"); return; }
+  let r;
+  try { r = await apiCall(info.url, info.token, "GET", "/api/mode.list"); } catch (e) {
+    vscode.window.showErrorMessage("DAO: \u53d6\u6a21\u5f0f\u6e05\u5355\u5931\u8d25 " + e.message); return;
+  }
+  const modes = (r.body && r.body.modes) || [];
+  const current = r.body && r.body.current;
+  const items = modes.map((m) => ({
+    label: (m.mode_id === current ? "$(check) " : "") + m.name,
+    description: m.mode_id,
+    detail: m.summary,
+    modeId: m.mode_id,
+  }));
+  const sel = await vscode.window.showQuickPick(items, { placeHolder: "\u5207\u6362 DAO \u6a21\u5f0f\uff08\u63d0\u793a\u8bcd\u8986\u76d6 + \u5de5\u5177\u9762\u88c1\u526a\uff09" });
+  if (!sel || sel.modeId === current) return;
+  try {
+    const res = await apiCall(info.url, info.token, "POST", "/api/mode.set", { mode: sel.modeId });
+    if (res.body && res.body.error) { vscode.window.showErrorMessage("DAO: " + res.body.error); return; }
+    const mode = res.body && res.body.current;
+    setModeStatus(mode);
+    vscode.window.showInformationMessage("DAO \u6a21\u5f0f\u5df2\u5207\u6362: " + (mode ? mode.name : sel.modeId));
+  } catch (e) {
+    vscode.window.showErrorMessage("DAO: \u5207\u6362\u6a21\u5f0f\u5931\u8d25 " + e.message);
+  }
+}
+
+async function refreshModeStatus(context, info) {
+  try {
+    const r = await apiCall(info.url, info.token, "GET", "/api/mode.get");
+    if (r.body && r.body.current) setModeStatus(r.body.current);
+  } catch (e) { /* 桥未就绪时静默，切换命令仍可用 */ }
+}
+
 // —— 令牌铸造 HTTP 取账号清单（供 QuickPick / 面板下拉）——
 function fetchAccounts(tunnelHttpUrl) {
   return new Promise((resolve) => {
@@ -717,7 +764,8 @@ async function activate(context) {
     vscode.commands.registerCommand("daoWin.ensureBridge", async () => {
       const info = await ensureBridge(context);
       vscode.window.showInformationMessage(info ? "DAO \u6865\u5df2\u8fde: " + info.url : "DAO \u6865\u4e0d\u53ef\u8fbe");
-    })
+    }),
+    vscode.commands.registerCommand("daoWin.switchMode", () => switchMode(context))
   );
 
   // 激活即后台连桥并为本窗口建隔离会话（零点击冷启动）
@@ -727,6 +775,7 @@ async function activate(context) {
       await apiCall(info.url, info.token, "POST", "/api/session.create", { session_id: sessionId });
       setStatus(sessionId + " \u25cf", "\u6865\u5df2\u8fde " + info.url + " \u00b7 \u70b9\u51fb\u6253\u5f00\u684c\u9762");
       log("\u672c\u7a97\u53e3\u9694\u79bb\u4f1a\u8bdd\u5df2\u5c31\u7eea: " + sessionId);
+      refreshModeStatus(context, info);
     } catch (e) { log("\u5efa\u4f1a\u8bdd\u5931\u8d25: " + e.message); }
   } else {
     setStatus(sessionId + " \u25cb", "\u6865\u672a\u8fde\uff08\u70b9\u51fb\u6253\u5f00\u684c\u9762\u91cd\u8bd5\uff09");

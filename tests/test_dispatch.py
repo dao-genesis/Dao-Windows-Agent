@@ -31,7 +31,7 @@ def test_route_no_mention_falls_to_universal():
     router = MentionRouter(build_default_registry())
     d = router.route("列出正在运行的进程")
     assert d.layer == "universal"
-    assert d.targets == ["system"]
+    assert d.targets == ["browser", "system"]
     assert not d.unresolved
 
 
@@ -50,12 +50,12 @@ def test_route_reports_unresolved_handle():
     d = router.route("@blender 建个立方体")
     assert d.unresolved == ["blender"]
     # 未命中任何句柄 → 回退整机通用层
-    assert d.layer == "universal" and d.targets == ["system"]
+    assert d.layer == "universal" and d.targets == ["browser", "system"]
 
 
 def test_capability_manifest_shape():
     m = MentionRouter(build_default_registry()).capability_manifest()
-    assert [u["app_id"] for u in m["universal"]] == ["system"]
+    assert [u["app_id"] for u in m["universal"]] == ["browser", "system"]
     handles = {d["handle"] for d in m["domains"]}
     assert {"@kicad", "@freecad", "@jlceda"} <= handles
     assert all(d["origin"] == "builtin" for d in m["domains"])
