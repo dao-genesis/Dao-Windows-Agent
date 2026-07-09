@@ -84,6 +84,24 @@ _TOOLS: dict[str, dict] = {
         "required": ["session_id"],
         "handler": lambda a: _SERVICE.session_prompt(a["session_id"]),
     },
+    "route": {
+        "description": "通用适配层 @ 调度：把一句自然语言目标裁定到整机通用层或被 @句柄 唤起的领域工作层，"
+                       "并给出跨层动词候选。无 @ → 整机通用层(system)；@kicad/@freecad… → 对应专用工作层。"
+                       "先 route 定层与候选动词，再 session_invoke 执行。",
+        "properties": {
+            "text": {"type": "string", "description": "自然语言目标，可含 @句柄，如 '@kicad 导出 gerber'"},
+            "verb_limit": {"type": "integer", "description": "动词候选条数，默认 5"},
+        },
+        "required": ["text"],
+        "handler": lambda a: _SERVICE.route(a["text"], int(a.get("verb_limit", 5))),
+    },
+    "capabilities": {
+        "description": "统一能力清单：整机通用层 + 各 @句柄领域工作层（builtin/external 一视同仁）。"
+                       "Agent 一览而择路——无 @ 操作整机，需专门领域能力时 @对应句柄 唤起工作层。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.capabilities(),
+    },
     "account_create": {
         "description": "创建/幂等更新一个 Windows 本地账号并加入 Remote Desktop Users（多账号类虚拟机·扩展本源）。"
                        "配合 RDPWrap 单机多会话，每账号一路独立桌面，与主账号并行互不干扰。",

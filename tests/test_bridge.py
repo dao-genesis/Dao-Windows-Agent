@@ -62,6 +62,44 @@ def test_dispatch_discovery_and_errors(tmp_path):
     assert status == 200 and not obj["ok"] and "会话不存在" in obj["error"]
 
 
+def test_dispatch_route_universal_and_domain(tmp_path):
+    svc = _svc(tmp_path)
+    # 无 @ → 整机通用层
+    status, d = svc.dispatch("POST", "/api/route", {"text": "列出正在运行的进程"})
+    assert status == 200 and d["layer"] == "universal" and d["targets"] == ["system"]
+    # @kicad → 领域工作层，动词候选仅限目标层
+    status, d = svc.dispatch("POST", "/api/route", {"text": "@kicad 导出 gerber"})
+    assert status == 200 and d["layer"] == "domain" and d["targets"] == ["kicad"]
+    assert d["verb_hints"] and all(h["app_id"] == "kicad" for h in d["verb_hints"])
+    # 未注册句柄如实回报，不臆造
+    status, d = svc.dispatch("POST", "/api/route", {"text": "@notexist 干点啥"})
+    assert status == 200 and "notexist" in d["unresolved"] and d["layer"] == "universal"
+    # 缺参
+    status, obj = svc.dispatch("POST", "/api/route", {})
+    assert status == 400 and "text" in obj["error"]
+
+
+def test_dispatch_capabilities(tmp_path):
+    svc = _svc(tmp_path)
+    status, cap = svc.dispatch("GET", "/api/capabilities")
+    assert status == 200
+    handles = {e["handle"] for e in cap["universal"] + cap["domains"]}
+    assert "@win" in handles and "@kicad" in handles
+    assert any(e["app_id"] == "system" for e in cap["universal"])
+
+
+def test_mcp_route_and_capabilities_tools():
+    resp = handle_request({"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
+    names = {t["name"] for t in resp["result"]["tools"]}
+    assert {"route", "capabilities"} <= names
+
+    resp = handle_request({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                           "params": {"name": "route",
+                                      "arguments": {"text": "@freecad 导出 STEP"}}})
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload["layer"] == "domain" and payload["targets"] == ["freecad"]
+
+
 def test_mcp_initialize_and_tools_list():
     resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
     assert resp["result"]["serverInfo"]["name"] == "dao-windows-agent-bridge"

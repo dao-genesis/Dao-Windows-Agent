@@ -534,6 +534,78 @@ function openPanel(context) {
   panel.webview.onDidReceiveMessage((msg) => handlePanelMessage(context, msg));
 }
 
+// —— AI 交互基底面板（@ 调度）：一句自然语言 → 裁定通用层/领域工作层 → 一键执行候选动词 ——
+let askPanel = null;
+
+function askHtml(sessionId) {
+  return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><style>
+ body{font-family:var(--vscode-font-family);padding:12px;color:var(--vscode-foreground);}
+ h2{margin:2px 0;} .sid{opacity:.7;font-size:12px;margin-bottom:8px;}
+ .bar{display:flex;gap:6px;} textarea{flex:1;min-height:52px;background:var(--vscode-input-background);
+   color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:6px;padding:6px;font-family:inherit;}
+ button{padding:5px 12px;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:5px;}
+ button:hover{background:var(--vscode-button-hoverBackground);}
+ .layer{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;margin-left:6px;}
+ .universal{background:#264f78;} .domain{background:#4b3a66;}
+ .hint{border:1px solid var(--vscode-panel-border);border-radius:6px;padding:6px 8px;margin:6px 0;cursor:pointer;}
+ .hint:hover{border-color:var(--vscode-focusBorder);} .hint code{opacity:.85;}
+ .un{color:#e0a030;} pre{background:var(--vscode-textCodeBlock-background);padding:8px;border-radius:6px;white-space:pre-wrap;max-height:260px;overflow:auto;}
+</style></head><body>
+<h2>☯ DAO · AI 交互基底</h2>
+<div class="sid">本窗口会话 <b>${sessionId}</b> · 无 @ → 整机通用层；<code>@句柄</code> 唤起领域工作层（如 @kicad @freecad @paint）</div>
+<div class="bar"><textarea id="goal" placeholder="说出目标，例如：打开记事本写入'道法自然' 或 @kicad 导出 gerber"></textarea>
+ <button onclick="route()">调度</button></div>
+<div id="decision"></div>
+<h3>结果</h3><pre id="out">（输入目标后点「调度」——先定层与候选动词，再点候选执行）</pre>
+<script>
+ const vscode = acquireVsCodeApi();
+ function route(){ vscode.postMessage({kind:'route', text: document.getElementById('goal').value}); }
+ function run(app, verb){ vscode.postMessage({kind:'invoke', app_id:app, verb:verb}); }
+ window.addEventListener('message', e=>{
+   const m = e.data;
+   if (m.kind === 'decision'){
+     const d = m.data; let h = '';
+     h += '<div>落点<span class="layer '+d.layer+'">'+(d.layer==='universal'?'整机通用层':'领域工作层')+'</span> 目标: <b>'+(d.targets.join(', ')||'—')+'</b></div>';
+     if (d.unresolved && d.unresolved.length) h += '<div class="un">未就绪句柄（子插件未安装）: @'+d.unresolved.join(' @')+'</div>';
+     (d.verb_hints||[]).forEach(v=>{ h += '<div class="hint" onclick="run(\\''+v.app_id+'\\',\\''+v.verb+'\\')">▶ <b>'+v.verb+'</b> <code>@'+v.app_id+'</code> — '+(v.summary||v.description||'')+'</div>'; });
+     if (!(d.verb_hints||[]).length) h += '<div class="hint">（无候选动词，可直接在控制面手动执行）</div>';
+     document.getElementById('decision').innerHTML = h;
+   } else if (m.kind === 'result'){ document.getElementById('out').textContent = m.text; }
+ });
+</script></body></html>`;
+}
+
+async function handleAskMessage(context, msg) {
+  const sessionId = windowSessionId();
+  const info = await ensureBridge(context);
+  if (!info) { askPanel.webview.postMessage({ kind: "result", text: "\u2717 \u673a\u63a7\u6865\u4e0d\u53ef\u8fbe" }); return; }
+  const { url, token } = info;
+  try {
+    if (msg.kind === "route") {
+      const r = await apiCall(url, token, "POST", "/api/route", { text: msg.text || "" });
+      if (r.status === 200 && r.body) askPanel.webview.postMessage({ kind: "decision", data: r.body });
+      askPanel.webview.postMessage({ kind: "result", text: "route @ " + url + "\n" + JSON.stringify(r.body, null, 2) });
+    } else if (msg.kind === "invoke") {
+      await apiCall(url, token, "POST", "/api/session.create", { session_id: sessionId });
+      await apiCall(url, token, "POST", "/api/session.open_app", { session_id: sessionId, app_id: msg.app_id });
+      const r = await apiCall(url, token, "POST", "/api/session.invoke", { session_id: sessionId, app_id: msg.app_id, verb: msg.verb, params: {} }, 30000);
+      const tag = r.status === 200 ? "\u2713" : "\u2717 HTTP " + r.status;
+      askPanel.webview.postMessage({ kind: "result", text: tag + " " + msg.app_id + "." + msg.verb + "\n" + JSON.stringify(r.body, null, 2) });
+    }
+  } catch (e) {
+    askPanel.webview.postMessage({ kind: "result", text: "\u2717 " + msg.kind + " \u5f02\u5e38: " + e.message });
+  }
+}
+
+function openAsk(context) {
+  const sessionId = windowSessionId();
+  if (askPanel) { askPanel.reveal(); return; }
+  askPanel = vscode.window.createWebviewPanel("daoWinAsk", "DAO \u00b7 AI \u4ea4\u4e92", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
+  askPanel.webview.html = askHtml(sessionId);
+  askPanel.onDidDispose(() => { askPanel = null; });
+  askPanel.webview.onDidReceiveMessage((msg) => handleAskMessage(context, msg));
+}
+
 async function activate(context) {
   const sessionId = windowSessionId();
   log("DAO Windows Agent \u6fc0\u6d3b \u00b7 \u672c\u7a97\u53e3 = " + sessionId);
@@ -546,6 +618,7 @@ async function activate(context) {
     vscode.commands.registerCommand("daoWin.accountList", () => manageAccount(context, "list")),
     vscode.commands.registerCommand("daoWin.accountDestroy", () => manageAccount(context, "destroy")),
     vscode.commands.registerCommand("daoWin.openPanel", () => openPanel(context)),
+    vscode.commands.registerCommand("daoWin.ask", () => openAsk(context)),
     vscode.commands.registerCommand("daoWin.health", async () => {
       const info = await ensureBridge(context);
       if (!info) { vscode.window.showErrorMessage("DAO: \u673a\u63a7\u6865\u4e0d\u53ef\u8fbe"); return; }
