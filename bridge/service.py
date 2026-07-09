@@ -37,7 +37,10 @@ class BridgeService:
         root: str = "/tmp/dao-win/sessions",
         accounts: Optional[AccountManager] = None,
     ) -> None:
-        self.registry = registry or build_default_registry()
+        # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
+        # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
+        self.registry = registry or build_default_registry(
+            discover_subplugins=True, bind_osctl=True)
         self.manager = manager or SessionManager(self.registry, root=root)
         self.accounts = accounts or AccountManager()
         self.router = MentionRouter(self.registry)

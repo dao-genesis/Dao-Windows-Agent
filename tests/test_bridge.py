@@ -100,6 +100,30 @@ def test_mcp_route_and_capabilities_tools():
     assert payload["layer"] == "domain" and payload["targets"] == ["freecad"]
 
 
+def test_installed_subplugin_becomes_routable(tmp_path, monkeypatch):
+    """插件收编的领域子插件描述符 → 机控桥自动发现 → @句柄可路由（端到端·纯逻辑）。"""
+    spdir = tmp_path / "subplugins"
+    spdir.mkdir()
+    (spdir / "freecad-ext.json").write_text(json.dumps({
+        "app_id": "freecad-ext", "display_name": "FreeCAD (3D·子插件)",
+        "mention": "freecad3d", "layer": "domain", "level": 1,
+        "invoke_url": "http://127.0.0.1:18920/invoke",
+        "verbs": [{"name": "export_step", "summary": "导出 STEP", "aliases": ["step"]}],
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("DAO_SUBPLUGIN_DIR", str(spdir))
+
+    svc = BridgeService(root=str(tmp_path))
+    status, apps = svc.dispatch("GET", "/api/apps")
+    assert status == 200 and "freecad-ext" in apps["apps"]
+
+    status, d = svc.dispatch("POST", "/api/route", {"text": "@freecad3d 导出 STEP"})
+    assert status == 200 and d["layer"] == "domain" and d["targets"] == ["freecad-ext"]
+
+    status, cap = svc.dispatch("GET", "/api/capabilities")
+    assert any(e["handle"] == "@freecad3d" and e["origin"] == "external"
+               for e in cap["domains"])
+
+
 def test_mcp_initialize_and_tools_list():
     resp = handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
     assert resp["result"]["serverInfo"]["name"] == "dao-windows-agent-bridge"

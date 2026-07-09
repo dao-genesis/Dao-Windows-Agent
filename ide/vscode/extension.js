@@ -32,6 +32,35 @@ function cfg() {
   };
 }
 
+// —— 子插件自动收编（樸散為器·道并行而不相悖）——
+// 任一同装的 DAO 领域子插件在其 package.json 声明 `daoSubplugin`（或 contributes.daoSubplugin），
+// 本插件启动即把它落成发现目录里的描述符 → 机控桥扫描后自动多出一路 @ 工作层（无需改框架）。
+function subpluginDir() {
+  return path.join(require("os").homedir(), ".dao", "subplugins");
+}
+
+function harvestSubplugins() {
+  let dir;
+  try {
+    dir = subpluginDir();
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) { log("子插件发现目录创建失败: " + e.message); return 0; }
+  let n = 0;
+  for (const ext of vscode.extensions.all) {
+    const pj = ext.packageJSON || {};
+    const spec = pj.daoSubplugin || (pj.contributes && pj.contributes.daoSubplugin);
+    if (!spec || !spec.app_id || !Array.isArray(spec.verbs) || !spec.verbs.length) continue;
+    const desc = Object.assign({ source: "vscode:" + ext.id, layer: "domain" }, spec);
+    if (!desc.invoke_url) { log("子插件 " + ext.id + " 缺 invoke_url，跳过"); continue; }
+    try {
+      fs.writeFileSync(path.join(dir, desc.app_id + ".json"), JSON.stringify(desc, null, 2), "utf-8");
+      n++;
+      log("收编子插件 @" + (desc.mention || desc.app_id) + " ← " + ext.id);
+    } catch (e) { log("写子插件描述符失败 " + ext.id + ": " + e.message); }
+  }
+  return n;
+}
+
 // 本 IDE 窗口的稳定 session id：绑定工作区路径（同一窗口=同一隔离会话），无工作区则随机。
 function windowSessionId() {
   const ws = vscode.workspace.workspaceFolders;
@@ -610,6 +639,8 @@ async function activate(context) {
   const sessionId = windowSessionId();
   log("DAO Windows Agent \u6fc0\u6d3b \u00b7 \u672c\u7a97\u53e3 = " + sessionId);
   setStatus(sessionId, "\u70b9\u51fb\u6253\u5f00 DAO \u684c\u9762");
+  // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
+  try { const nsp = harvestSubplugins(); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
