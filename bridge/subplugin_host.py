@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import shlex
 import subprocess
@@ -38,13 +39,30 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Optional
 
 
+def _decode(data: "bytes | None") -> str:
+    """子进程输出稳健解码：先 UTF-8，失败退本地区域编码（中文 Windows 控制台为 GBK）。"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def _quote(value: str) -> str:
+    """按当前平台 shell 规则引用参数（POSIX→shlex.quote，Windows cmd→双引号）。"""
+    if os.name == "nt":
+        return '"' + str(value).replace('"', '\\"') + '"'
+    return shlex.quote(str(value))
+
+
 def _render_shell(template: str, params: dict) -> str:
-    """把 {param} 占位安全渲染进命令模板（值经 shlex.quote，防注入）。"""
+    """把 {param} 占位安全渲染进命令模板（值经平台引用，防注入）。"""
     class _Q(dict):
         def __missing__(self, key: str) -> str:
             return ""
 
-    quoted = _Q({k: shlex.quote(str(v)) for k, v in params.items()})
+    quoted = _Q({k: _quote(str(v)) for k, v in params.items()})
     return template.format_map(quoted)
 
 
@@ -126,11 +144,11 @@ class SubpluginHost:
         try:
             proc = subprocess.run(
                 cmd, shell=True, cwd=workdir or self.workdir,  # noqa: S602 - 模板来自本地 spec，参数已 quote
-                capture_output=True, text=True, timeout=300)
+                capture_output=True, timeout=300)
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"命令超时: {cmd}"}
-        out = (proc.stdout or "").strip()
-        err = (proc.stderr or "").strip()
+        out = _decode(proc.stdout).strip()
+        err = _decode(proc.stderr).strip()
         if proc.returncode != 0:
             return {"ok": False, "error": err or f"退出码 {proc.returncode}",
                     "logs": [cmd, out] if out else [cmd]}

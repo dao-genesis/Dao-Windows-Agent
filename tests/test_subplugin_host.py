@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 
 from bridge.service import BridgeService
@@ -17,9 +18,12 @@ _SPEC = {
     "mention": "echo",
     "token": "t0ken",
     "verbs": [
+        # 跨平台 shell 模板：真机（Linux/Windows）都能真跑真验
         {"name": "say", "summary": "回显文本", "params": {"text": "文本"},
-         "aliases": ["回显"], "shell": "printf %s {text}"},
-        {"name": "fail", "summary": "必败动词", "shell": "false"},
+         "aliases": ["回显"],
+         "shell": f'"{sys.executable}" -c "import sys;sys.stdout.write(sys.argv[1])" {{text}}'},
+        {"name": "fail", "summary": "必败动词",
+         "shell": f'"{sys.executable}" -c "import sys;sys.exit(1)"'},
         {"name": "py", "summary": "进程内 handler"},
     ],
 }
@@ -33,7 +37,8 @@ def _up(spec: dict) -> SubpluginHost:
 
 def test_render_shell_quotes_params():
     cmd = _render_shell("printf %s {text}", {"text": "a; rm -rf /"})
-    assert "'a; rm -rf /'" in cmd
+    expected = '"a; rm -rf /"' if os.name == "nt" else "'a; rm -rf /'"
+    assert expected in cmd
     assert _render_shell("x {missing}", {}) == "x "
 
 

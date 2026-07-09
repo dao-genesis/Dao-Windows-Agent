@@ -102,6 +102,13 @@ def test_system_backend_verbs(tmp_path):
     ):
         r = mgr.invoke("vm_be", "system", verb, **kwargs)
         if sys.platform == "win32":
+            if verb == "install_pkg" and not r.ok and "winget" in (r.error or ""):
+                continue  # 真机可能无 winget（如 Server/未装 App Installer）——降级信息已明确
+            if verb == "registry" and not r.ok:
+                # 真机 HKCU\Software\Dao 可能不存在：先写后读验证真往返
+                assert mgr.invoke("vm_be", "system", "registry", action="write",
+                                  path="HKCU\\Software\\Dao", name="probe", value="1").ok
+                r = mgr.invoke("vm_be", "system", verb, **kwargs)
             assert r.ok, (verb, r.error)
         else:
             assert not r.ok and "Windows" in (r.error or "")
@@ -205,8 +212,10 @@ def test_session_lifecycle_and_isolation(tmp_path):
 
 
 def test_uia_desktop_dry_run_builds_plan():
-    """级别②：无 driver 时返回结构化 UIA 动作计划，且每会话独立桌面隔离。"""
-    reg = build_default_registry()
+    """级别②：无 driver 时返回结构化 UIA 动作计划，且每会话独立桌面隔离。
+
+    本测验的是 dry-run 路径本身，故关闭实机 driver 自动探测（Windows 真机上否则会真执行）。"""
+    reg = build_default_registry(autodetect_uia=False)
     mgr = SessionManager(reg, root="/tmp/dao-win/test-uia")
     mgr.create("vm_np1")
     mgr.create("vm_np2")
