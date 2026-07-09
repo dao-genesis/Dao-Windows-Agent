@@ -14,6 +14,7 @@ import os
 import platform
 import subprocess
 import sys
+import urllib.request
 
 from core.adapter.base import ActionResult
 from core.adapter.subprocess_api import SubprocessApiAdapter
@@ -99,6 +100,107 @@ def _env(adapter, instance, name: str = "", **_):
     return ActionResult.good(dict(os.environ))
 
 
+def _download(adapter, instance, url: str, path: str, timeout: int = 300, **_):
+    """下载 URL 到磁盘文件（纯 stdlib，自动建父目录）——软件分发/资源获取入口。"""
+    if not url or not path:
+        return ActionResult.bad("需提供 url 与 path")
+    parent = os.path.dirname(os.path.abspath(path))
+    try:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        req = urllib.request.Request(url, headers={"User-Agent": "dao-windows-agent"})
+        with urllib.request.urlopen(req, timeout=int(timeout)) as resp, open(path, "wb") as fh:
+            total = 0
+            while True:
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                total += len(chunk)
+    except (OSError, ValueError) as exc:
+        return ActionResult.bad(f"{type(exc).__name__}: {exc}")
+    return ActionResult.good({"url": url, "path": os.path.abspath(path), "bytes": total})
+
+
+def _install_pkg(adapter, instance, pkg: str, source: str = "winget", timeout: int = 900, **_):
+    """安装软件（Windows→winget，静默接受协议）。"""
+    if not pkg:
+        return ActionResult.bad("需提供 pkg（winget 包 id，如 Git.Git）")
+    if not _IS_WIN:
+        return ActionResult.bad("install_pkg 仅 Windows(winget)；类 Unix 请直接 exec 包管理器命令")
+    if source != "winget":
+        return ActionResult.bad(f"未知 source: {source}（目前仅 winget）")
+    cmd = (f"winget install --id {pkg} -e --source winget --silent "
+           "--accept-package-agreements --accept-source-agreements "
+           "--disable-interactivity")
+    return adapter.run_cli(_shell_cmd(cmd), instance, timeout=int(timeout))
+
+
+def _service(adapter, instance, action: str = "list", name: str = "", timeout: int = 180, **_):
+    """Windows 服务：list/query/start/stop（PowerShell *-Service）。"""
+    action = (action or "list").lower()
+    if action not in ("list", "query", "start", "stop", "restart"):
+        return ActionResult.bad(f"未知 action: {action}")
+    if not _IS_WIN:
+        return ActionResult.bad("service 仅 Windows；类 Unix 请 exec systemctl")
+    if action == "list":
+        cmd = "Get-Service | Sort-Object Status,Name | Format-Table -AutoSize Status,Name,DisplayName"
+    else:
+        if not name:
+            return ActionResult.bad("需提供 name")
+        verb = {"query": "Get", "start": "Start", "stop": "Stop", "restart": "Restart"}[action]
+        cmd = f"{verb}-Service -Name '{name}'" + (" | Format-List *" if action == "query" else "; Get-Service -Name '" + name + "'")
+    return adapter.run_cli(_shell_cmd(cmd), instance, timeout=int(timeout))
+
+
+def _registry(adapter, instance, action: str = "read", path: str = "", name: str = "",
+              value: str = "", reg_type: str = "REG_SZ", timeout: int = 60, **_):
+    """注册表：read/write/delete（reg.exe，例 path=HKCU\\Software\\Dao）。"""
+    action = (action or "read").lower()
+    if action not in ("read", "write", "delete"):
+        return ActionResult.bad(f"未知 action: {action}")
+    if not path:
+        return ActionResult.bad("需提供 path（如 HKCU\\Software\\Dao）")
+    if not _IS_WIN:
+        return ActionResult.bad("registry 仅 Windows")
+    if action == "read":
+        cmd = f'reg query "{path}"' + (f' /v "{name}"' if name else "")
+    elif action == "write":
+        if not name:
+            return ActionResult.bad("write 需提供 name")
+        cmd = f'reg add "{path}" /v "{name}" /t {reg_type} /d "{value}" /f'
+    else:
+        cmd = f'reg delete "{path}"' + (f' /v "{name}"' if name else "") + " /f"
+    return adapter.run_cli(_shell_cmd(cmd), instance, timeout=int(timeout))
+
+
+def _schtask(adapter, instance, action: str = "list", name: str = "", cmd: str = "",
+             schedule: str = "ONCE", start_time: str = "", timeout: int = 60, **_):
+    """计划任务：list/create/run/delete（schtasks.exe）。"""
+    action = (action or "list").lower()
+    if action not in ("list", "create", "run", "delete"):
+        return ActionResult.bad(f"未知 action: {action}")
+    if not _IS_WIN:
+        return ActionResult.bad("schtask 仅 Windows；类 Unix 请 exec crontab")
+    if action == "list":
+        line = "schtasks /query /fo LIST" + (f' /tn "{name}"' if name else "")
+    elif action == "create":
+        if not name or not cmd:
+            return ActionResult.bad("create 需提供 name 与 cmd")
+        line = f'schtasks /create /f /tn "{name}" /tr "{cmd}" /sc {schedule}'
+        if start_time:
+            line += f" /st {start_time}"
+    elif action == "run":
+        if not name:
+            return ActionResult.bad("run 需提供 name")
+        line = f'schtasks /run /tn "{name}"'
+    else:
+        if not name:
+            return ActionResult.bad("delete 需提供 name")
+        line = f'schtasks /delete /f /tn "{name}"'
+    return adapter.run_cli(_shell_cmd(line), instance, timeout=int(timeout))
+
+
 def _sysinfo(adapter, instance, **_):
     """整机身份/系统信息（对照"复刻用户账号所在机器"）。"""
     return ActionResult.good({
@@ -144,6 +246,23 @@ PROFILE = AppProfile(
              {"name": "变量名(可选)"}, handler=_env, aliases=("getenv",)),
         Verb("sysinfo", "整机身份/系统信息(平台/主机名/用户/家目录)", handler=_sysinfo,
              aliases=("whoami", "info")),
+        Verb("download", "下载 URL 到磁盘文件(纯 stdlib·自动建父目录)",
+             {"url": "源地址", "path": "落盘路径", "timeout": "秒(默认300)"},
+             handler=_download, aliases=("fetch", "wget", "curl")),
+        Verb("install_pkg", "安装软件(Windows→winget·静默接受协议)",
+             {"pkg": "winget 包 id(如 Git.Git)", "source": "默认 winget", "timeout": "秒(默认900)"},
+             handler=_install_pkg, aliases=("winget", "install")),
+        Verb("service", "Windows 服务 list/query/start/stop/restart(PowerShell *-Service)",
+             {"action": "list|query|start|stop|restart", "name": "服务名(非 list 必填)"},
+             handler=_service, aliases=("services", "sc")),
+        Verb("registry", "注册表 read/write/delete(reg.exe)",
+             {"action": "read|write|delete", "path": "如 HKCU\\Software\\Dao", "name": "值名",
+              "value": "写入值", "reg_type": "REG_SZ/REG_DWORD 等"},
+             handler=_registry, aliases=("reg",)),
+        Verb("schtask", "计划任务 list/create/run/delete(schtasks.exe)",
+             {"action": "list|create|run|delete", "name": "任务名", "cmd": "create 时的命令行",
+              "schedule": "ONCE/DAILY 等(默认 ONCE)", "start_time": "HH:MM(可选)"},
+             handler=_schtask, aliases=("task", "schtasks")),
     ],
 )
 _ADAPTER = SubprocessApiAdapter

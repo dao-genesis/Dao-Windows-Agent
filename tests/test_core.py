@@ -72,6 +72,43 @@ def test_system_profile_real_roundtrip(tmp_path):
     assert isinstance(mgr.invoke("vm_sys", "system", "env").value, dict)
 
 
+def test_system_backend_verbs(tmp_path):
+    """后端控制面新动词：download 真跑（file://），Windows 专属动词跨平台参数校验与降级提示。"""
+    import sys
+
+    reg = build_default_registry()
+    mgr = SessionManager(reg, root=str(tmp_path))
+    mgr.create("vm_be")
+    assert mgr.open_app("vm_be", "system").ok
+
+    # download：file:// 真下载往返
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"dao" * 100)
+    dst = str(tmp_path / "dl" / "out.bin")
+    dl = mgr.invoke("vm_be", "system", "download", url=src.as_uri(), path=dst)
+    assert dl.ok and dl.value["bytes"] == 300
+    assert open(dst, "rb").read() == b"dao" * 100
+    # 参数缺失即拒
+    assert not mgr.invoke("vm_be", "system", "download", url="", path=dst).ok
+
+    # Windows 专属动词：非 Windows 明确降级提示；参数校验先于平台判断的动作校验
+    for verb, kwargs in (
+        ("install_pkg", {"pkg": "Git.Git"}),
+        ("service", {"action": "list"}),
+        ("registry", {"action": "read", "path": "HKCU\\Software\\Dao"}),
+        ("schtask", {"action": "list"}),
+    ):
+        r = mgr.invoke("vm_be", "system", verb, **kwargs)
+        if sys.platform == "win32":
+            assert r.ok, (verb, r.error)
+        else:
+            assert not r.ok and "Windows" in (r.error or "")
+    # 非法 action 一律拒绝（平台无关）
+    assert not mgr.invoke("vm_be", "system", "service", action="explode").ok
+    assert not mgr.invoke("vm_be", "system", "registry", action="explode", path="HKCU\\X").ok
+    assert not mgr.invoke("vm_be", "system", "schtask", action="explode").ok
+
+
 def test_system_verbs_searchable_and_aliased():
     """整机动词可经中文/英文检索命中，且别名解析正确。"""
     reg = build_default_registry()

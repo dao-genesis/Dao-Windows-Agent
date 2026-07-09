@@ -257,4 +257,30 @@ round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌
 - 修复：`desktop/tunnel/server.js` clientOptions 加 `maxInactivityTime: 0` 禁用；guacd 自身的 `User is not responding`（客户端不回 sync 才触发）保留，正常 Guacamole JS 客户端会回 sync 不受影响。
 - 排障要诀：raw ws 探针（不回 sync）连 4823 能收到指令流但 ~10s 被 1011 关闭 → 一眼定位服务端 inactivity 踢线，而非 RDP/guacd 问题。
 
+## 十三、路线A 阶段三真机全绿（后端控制面完整 · 本轮实证）
+
+**定调（用户本轮重申）：前端面板为辅，后端控制面打通一切底层为主。** Agent 的核心操作一律走桥 `/api/session.invoke`（profile 动词分发），面板 canvas 仅作可视化辅助。本轮把 `system`（整机①底座）画像补齐为"覆盖整台 Windows 的后端控制面"，并在 guest 面板会话内逐一真机验证。
+
+**`system` 画像动词（12 个，本轮由 7 → 12）：**
+
+| 动词 | 说明 | 真机验证（guest DESKTOP-2DO81T8\dao） |
+|---|---|---|
+| `exec` | 跑一行 shell（Win→PowerShell） | `whoami`→`desktop-2do81t8\dao`；`$PID` 指向 guest powershell.exe（非宿主） |
+| `read_file`/`write_file` | 读/写文本（自动建父目录） | 往返一致 |
+| `list_dir` | 列目录 | `C:\` / `C:\dao_win` 条目正确 |
+| `processes` | 列进程（可过滤） | tasklist 命中 guest 进程 |
+| `env`/`sysinfo` | 环境变量 / 整机身份 | 通过 |
+| **`download`** | 纯 stdlib 下载 URL 到磁盘 | 拉取 git README（3662 bytes）落盘成功 |
+| **`install_pkg`** | winget 静默安装（`--source winget` 消歧 + 接受协议） | 真装 `7zip.7zip` 26.02 → `winget list` 列出、`C:\Program Files\7-Zip\7z.exe` 存在 |
+| **`service`** | 服务 list/query/start/stop/restart（`*-Service`） | `Get-Service` 全量列出、`query Spooler` 详情通 |
+| **`registry`** | 注册表 read/write/delete（reg.exe） | `HKCU\Software\Dao` 写→读→删闭环 |
+| **`schtask`** | 计划任务 list/create/run/delete（schtasks.exe） | `DaoStage3` 建→列→跑→删闭环 |
+
+**跨平台守约：** `download` 纯 stdlib，Linux/CI 用 `file://` 真跑真测（新增单测 `test_system_backend_verbs`）；`install_pkg/service/registry/schtask` 为 Windows 专属，非 Windows 明确降级提示，非法 `action` 平台无关一律拒绝。core 仍零第三方依赖。
+
+**踩坑与正解：**
+- 桥进程常驻 `C:\dao_win`（非仓库工作区），改画像后需 `Copy-Item` 覆盖 + 重启 `start-bridge.ps1` 才生效；工作区路径无写权限（PermissionError），走 `C:\tmp` 中转。
+- winget 首装报 `0x8a15005e msstore 证书不匹配` 致包源歧义 → 固定 `--source winget` 解决。
+- guest 为 TCG 软件模拟，冷 PowerShell 首跑慢：`Get-Service` 全量需 >60s，故 `service` 默认 timeout 提到 180s。
+
 *道法自然 · 无为而无不为*
