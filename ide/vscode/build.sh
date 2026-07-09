@@ -15,6 +15,9 @@ find "$HERE/runtime" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev
 echo "== 二合一装配（可选：DAO_UNIFY_SRCS 给出领域插件目录列表，折入 vendor/ 并合并 contributes）=="
 if [ -n "${DAO_UNIFY_SRCS:-}" ]; then
   # 例: DAO_UNIFY_SRCS="$HOME/repos/Dao-3D-Modeling-Agent/90-归一_IDE/vscode-dao-freecad $HOME/repos/Dao-PCB-Design-Agent/vscode-dao-kicad"
+  # 合并 contributes 只服务于本次打包：先备份 package.json，打完包还原（不脏工作区）。
+  cp "$HERE/package.json" "$HERE/package.json.pre-unify"
+  trap 'mv -f "$HERE/package.json.pre-unify" "$HERE/package.json" 2>/dev/null || true' EXIT
   # shellcheck disable=SC2086
   node "$HERE/unify.js" $DAO_UNIFY_SRCS
 else
@@ -53,6 +56,7 @@ catch (e) { console.error('webview 脚本编译失败:', e.message); process.exi
 JS
 
 echo "== vsce package =="
+cd "$HERE"   # vsce 以 cwd 找 manifest：从仓库根目录调本脚本也能打包
 VER="$(node -p "require('$HERE/package.json').version" 2>/dev/null || echo 0.1.0)"
 OUT="$HERE/dao-windows-agent-${VER}.vsix"
 # --base*Url 必给：README 内有相对链接（../../docs/*），缺则 vsce 报错中断（真机踩坑）。
