@@ -27,6 +27,7 @@ def test_default_mode_and_set_persists(tmp_path):
     with open(mm.state_path, encoding="utf-8") as f:
         data = json.load(f)
     assert data["mode"] == "windows" and data["replace_official"] is True
+    assert "Windows" in data["overlay"]
     # 新实例从契约文件恢复当前模式
     mm2 = ModeManager(build_default_registry(), state_path=mm.state_path)
     assert mm2.current.mode_id == "windows"

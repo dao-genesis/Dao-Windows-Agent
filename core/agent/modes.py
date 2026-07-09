@@ -225,6 +225,7 @@ class ModeManager:
                         "name": mode.name,
                         "tool_policy": mode.tool_policy,
                         "replace_official": mode.replace_official,
+                        "overlay": mode.prompt_overlay,
                         "updated": int(time.time()),
                     },
                     f, ensure_ascii=False, indent=2,
