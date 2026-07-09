@@ -241,6 +241,20 @@ round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌
 - **宿主 `/dev/kvm` 无权限时 run_vm.sh 静默回退 TCG** —— Win11 在 TCG(`-cpu max`) 下反复 `SYSTEM_THREAD_EXCEPTION_NOT_HANDLED` 蓝屏循环（软件模拟指令失真），像"磁盘损坏"实则不是。正解：`sudo setfacl -m u:$USER:rw /dev/kvm`（或入 kvm 组）后重启 VM，KVM 下 ~45s 稳定进桌面。
 - 宿主经 VNC 快打字会丢 shift 字符（`Visual`→`isual`），非面板 bug；面板内键入无此问题。
 
-**遗留（下一 Agent）：** 剪贴板双向透传回归、多 IDE 窗口=多路 RDP 并行实测、断线自动重连（指数退避已写，待真机回归）、git push 403 解封后推 PR。
+**遗留（下一 Agent）：** ~~剪贴板双向透传回归、多 IDE 窗口=多路 RDP 并行实测、断线自动重连（指数退避已写，待真机回归）、git push 403 解封后推 PR~~ —— 已在阶段二全部完成（见下节）。
+
+## 十二、路线A 阶段二真机全绿（本轮实证 · v0.2.2 + 隧道修复）
+
+**阶段二回归（guest VSCode 面板内实测，全部 PASS，含录屏）：**
+- **剪贴板双向透传**：canvas 内记事本 Ctrl+C → 宿主 IDE 编辑器 Ctrl+V 原文粘出；IDE 编辑器复制 → canvas 内记事本粘出，双向一致。
+- **断开→重连回同一会话**：`断开` 后点 `连接`，记事本窗口与文本原样保留（RDP 会话未销毁，仅通道重建）。
+- **多 IDE 窗口=多路 RDP 并行**：guest 内开第二个 VSCode 窗口（`ide_f5f2bc30`），其面板独立登录一路新会话；canvas 内 `qwinsta` → `console(1) + rdp-tcp#0(2) + rdp-tcp#1(3)` 同为 `dao` 且同时 Active，互不劫持。
+- **空闲稳定性**：80s 空闲面板仍 `已连接 ●`，隧道无会话关闭。
+
+**本轮致命修复（隧道 10s 掉线循环）：**
+- 现象：面板连上后约 10s 即断，自动重连又断，无限循环（`会话打开/会话关闭` 交替）。
+- 根因：`guacamole-lite` 默认 `maxInactivityTime=10000` —— 以"客户端→guacd 消息"计活跃，空闲桌面 10s 无输入即被 1011 踢线。**桌面会话本就该允许长时间无输入**。
+- 修复：`desktop/tunnel/server.js` clientOptions 加 `maxInactivityTime: 0` 禁用；guacd 自身的 `User is not responding`（客户端不回 sync 才触发）保留，正常 Guacamole JS 客户端会回 sync 不受影响。
+- 排障要诀：raw ws 探针（不回 sync）连 4823 能收到指令流但 ~10s 被 1011 关闭 → 一眼定位服务端 inactivity 踢线，而非 RDP/guacd 问题。
 
 *道法自然 · 无为而无不为*

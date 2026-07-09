@@ -163,6 +163,8 @@ const guacServer = new GuacamoleLite(
   {
     crypt: { cypher: CIPHER, key: KEY },
     log: { level: "NORMAL" },
+    // 桌面会话本就可长时间无输入；guacamole-lite 默认 10s 无客户端消息即 1011 踢线（真机踩坑：面板每 10s 掉线重连循环）。
+    maxInactivityTime: 0,
     connectionDefaultSettings: {
       rdp: { "ignore-cert": true, security: "any" },
     },
