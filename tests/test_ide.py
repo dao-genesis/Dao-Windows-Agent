@@ -75,3 +75,25 @@ def test_firstlogon_provisions_vscode_extension():
     assert "Microsoft.VisualStudioCode" in src
     assert "--install-extension" in src
     assert "--source winget" in src  # 防 msstore 源歧义（真机踩坑）
+
+
+def test_home_windows_master_control():
+    """归一主页 · Windows 总控：命令注册 + RDP 五页配置收编 + 账号/子板块管理面。"""
+    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
+        m = json.load(fh)
+    cmds = {c["command"] for c in m["contributes"]["commands"]}
+    assert "daoWin.home" in cmds
+    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    # 宿主命令面
+    for cmd in ("homeInfo", "rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
+        assert f"'{cmd}'" in src or f'"{cmd}"' in src, f"缺主页命令 {cmd}"
+    # 官方 mstsc .rdp 关键字段（常规/显示/本地资源/体验/高级 五页收编）
+    for field in ("full address:s:", "desktopwidth:i:", "redirectclipboard:i:",
+                  "connection type:i:", "authentication level:i:", "gatewayhostname:s:"):
+        assert field in src, f".rdp 缺字段 {field}"
+    # 非 Windows 优雅降级：仅 win32 起 mstsc
+    assert "mstsc.exe" in src and 'process.platform === "win32"' in src
+    # 子板块 catalog 四大领域
+    for sp in ("freecad", "kicad", "jlceda", "homeassistant"):
+        assert sp in src, f"子板块 catalog 缺 {sp}"
