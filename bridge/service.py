@@ -118,10 +118,14 @@ class BridgeService:
         """返回该会话当前应注入 Agent 的系统提示（模式覆盖 + 帛书纪律 + 已开软件纪律）。"""
         sess = self.manager.sessions.get(session_id)
         open_apps = sorted(sess.instances) if sess else []
+        prompt = self.modes.build_prompt(open_apps)
+        handoff = self.handoff.active_snippet()
+        if handoff and self.modes.current.tool_policy != "none":
+            prompt = prompt + "\n\n" + handoff
         return {
             "session_id": session_id,
             "mode": self.modes.current.mode_id,
-            "prompt": self.modes.build_prompt(open_apps),
+            "prompt": prompt,
         }
 
     # --- 通用适配层 · @ 调度（AI 交互基底：一句自然语言 → 裁定通用层/领域工作层） ---
