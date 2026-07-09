@@ -79,12 +79,29 @@ class BridgeService:
             out.append({"session_id": sid, "apps": sorted(sess.instances)})
         return {"sessions": out}
 
+    def _mode_denied(self, app_id: str) -> Optional[dict]:
+        """模式工具面裁剪在调用面强制生效（如 coding 模式机控面关闭）。"""
+        if app_id in self.modes.allowed_apps():
+            return None
+        mode = self.modes.current
+        return {
+            "ok": False, "value": None, "logs": [],
+            "error": f"当前模式 {mode.mode_id}（{mode.name}）不开放应用 {app_id}"
+                     f"（可用: {self.modes.allowed_apps()}）；先 /api/mode.set 切换模式",
+        }
+
     def session_open_app(self, session_id: str, app_id: str, **kwargs: Any) -> dict:
+        denied = self._mode_denied(app_id)
+        if denied:
+            return denied
         return _result_to_dict(self.manager.open_app(session_id, app_id, **kwargs))
 
     def session_invoke(
         self, session_id: str, app_id: str, verb: str, params: Optional[dict] = None
     ) -> dict:
+        denied = self._mode_denied(app_id)
+        if denied:
+            return denied
         return _result_to_dict(
             self.manager.invoke(session_id, app_id, verb, **(params or {}))
         )

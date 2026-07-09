@@ -97,3 +97,30 @@ def test_bridge_mode_endpoints(tmp_path):
     status, body = svc.dispatch("POST", "/api/session.prompt", {"session_id": "s1"})
     assert status == 200 and body["mode"] == "domain:kicad"
     assert "专精模式" in body["prompt"]
+
+
+def test_mode_tool_policy_enforced_on_invoke(tmp_path):
+    reg = build_default_registry()
+    svc = BridgeService(
+        registry=reg,
+        root=str(tmp_path / "sessions"),
+        modes=ModeManager(reg, state_path=str(tmp_path / "mode.json")),
+    )
+    svc.dispatch("POST", "/api/session.create", {"session_id": "s1"})
+    # coding: 机控面关闭 → open/invoke 一律拒
+    svc.dispatch("POST", "/api/mode.set", {"mode": "coding"})
+    _, body = svc.dispatch("POST", "/api/session.open_app",
+                           {"session_id": "s1", "app_id": "system"})
+    assert body["ok"] is False and "coding" in body["error"]
+    _, body = svc.dispatch("POST", "/api/session.invoke",
+                           {"session_id": "s1", "app_id": "system", "verb": "exec",
+                            "params": {"cmd": "echo x"}})
+    assert body["ok"] is False and "mode.set" in body["error"]
+    # domain:kicad: 领域外应用拒, 通用层放行
+    svc.dispatch("POST", "/api/mode.set", {"mode": "domain:kicad"})
+    _, body = svc.dispatch("POST", "/api/session.open_app",
+                           {"session_id": "s1", "app_id": "freecad"})
+    assert body["ok"] is False
+    _, body = svc.dispatch("POST", "/api/session.open_app",
+                           {"session_id": "s1", "app_id": "system"})
+    assert body["ok"] is True
