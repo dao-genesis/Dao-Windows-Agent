@@ -80,8 +80,14 @@ try {
     $rdpZip = "$env:TEMP\RDPWrap.zip"
     Invoke-WebRequest -Uri 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' -OutFile $rdpZip
     Expand-Archive -Path $rdpZip -DestinationPath "$env:TEMP\rdpwrap" -Force
-    # silent install
-    Start-Process "$env:TEMP\rdpwrap\install.bat" -Wait -WindowStyle Hidden
+    # 静默装：直接调 RDPWInst.exe -i -s（install.bat 末尾有 pause，-Wait 会永久挂起·真机踩坑）。
+    # 无 RDPWInst 则回退 install.bat，但用 cmd /c 并喂空 stdin 让 pause 立即返回。
+    $rdpwinst = Join-Path "$env:TEMP\rdpwrap" 'RDPWInst.exe'
+    if (Test-Path $rdpwinst) {
+      Start-Process $rdpwinst -ArgumentList '-i','-s' -Wait -WindowStyle Hidden
+    } else {
+      Start-Process cmd.exe -ArgumentList '/c','"'+"$env:TEMP\rdpwrap\install.bat"+'" < NUL' -Wait -WindowStyle Hidden
+    }
     Log "rdpwrap installed"
   } else {
     Log "rdpwrap already present"
@@ -134,13 +140,26 @@ try {
     if (Test-Path $p) { $codeCli = $p; break }
   }
   if (-not $codeCli) {
-    winget install -e --id Microsoft.VisualStudioCode --source winget --silent `
-      --accept-source-agreements --accept-package-agreements --scope machine
+    try { winget install -e --id Microsoft.VisualStudioCode --source winget --silent `
+      --accept-source-agreements --accept-package-agreements --scope machine; Log "vscode installed (winget)" } catch { Log "winget vscode skipped: $_" }
     foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
                      "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
       if (Test-Path $p) { $codeCli = $p; break }
     }
-    Log "vscode installed (winget)"
+  }
+  if (-not $codeCli) {
+    # winget 不可用时离线兜底（Enterprise Eval 镜像常无 winget/msstore）：官网系统级静默安装
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $codeInst = "$env:TEMP\VSCodeSetup.exe"
+      Invoke-WebRequest -UseBasicParsing -Uri 'https://update.code.visualstudio.com/latest/win32-x64/stable' -OutFile $codeInst
+      Start-Process $codeInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
+      foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
+                       "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
+        if (Test-Path $p) { $codeCli = $p; break }
+      }
+      Log "vscode installed (offline)"
+    } catch { Log "offline vscode failed: $_" }
   }
   # 随应答盘带入的 .vsix（build_image.sh 已打包）
   $vsix = Get-ChildItem 'D:\dao-windows-agent-*.vsix','E:\dao-windows-agent-*.vsix','F:\dao-windows-agent-*.vsix','G:\dao-windows-agent-*.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1

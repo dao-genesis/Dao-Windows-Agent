@@ -205,6 +205,12 @@ const statusEl = document.getElementById('status');
 const acctEl = document.getElementById('acct');
 let client = null;
 let connecting = false;
+let userDisconnected = false;
+let retries = 0;
+let retryTimer = null;
+const MAX_RETRIES = 5;
+let lastLocalClip = null;
+let lastRemoteClip = null;
 
 // \u586b\u5145\u8d26\u53f7\u4e0b\u62c9\uff1b\u9009\u4e2d\u672c\u9762\u677f\u7ed1\u5b9a\u8d26\u53f7\uff0c\u5207\u5230\u5176\u4ed6\u8d26\u53f7\u5219\u65b0\u5f00/\u5207\u5230\u90a3\u4e00\u8def\u9762\u677f\u3002
 (function initAccounts(){
@@ -227,7 +233,9 @@ function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c ||
 async function doConnect() {
   if (connecting) return;
   connecting = true;
-  doDisconnect();
+  userDisconnected = false;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  doDisconnect(true);
   setStatus('\u53d6 token...', '#ffcc00');
   const w = container.clientWidth;
   const h = container.clientHeight;
@@ -266,11 +274,35 @@ async function doConnect() {
     const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
     display.scale(scale);
   };
+  // \u526a\u8d34\u677f\uff1a\u8fdc\u7aef\u2192\u672c\u5730\uff08\u7ecf\u6269\u5c55\u5bbf\u4e3b\u5199 vscode \u526a\u8d34\u677f\uff09
+  client.onclipboard = function(stream, mimetype) {
+    // 注意：本段位于模板字面量内，\\/ 会被吞成 /，禁用含斜杠的正则字面量（真机踩坑：SyntaxError 令整段脚本报废）。
+    if (mimetype.indexOf('text/') !== 0) { try { stream.sendAck('OK', 0); } catch(e) {} return; }
+    var reader = new Guacamole.StringReader(stream);
+    var data = '';
+    reader.ontext = function(t) { data += t; };
+    reader.onend = function() {
+      if (data && data !== lastLocalClip) { lastRemoteClip = data; vscodeApi.postMessage({type:'clipboard', text: data}); }
+    };
+  };
   client.onstatechange = function(state) {
     var names = ['\u7a7a\u95f2','\u6b63\u5728\u8fde\u63a5...','\u7b49\u5f85\u4e2d...','\u5df2\u8fde\u63a5 \u25cf','\u6b63\u5728\u65ad\u5f00...','\u5df2\u65ad\u5f00'];
     var colors = ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'];
     setStatus(names[state] || state, colors[state]);
     vscodeApi.postMessage({type:'state', state: state});
+    if (state === 3) { retries = 0; vscodeApi.postMessage({type:'readClipboard'}); }
+    // \u975e\u7528\u6237\u4e3b\u52a8\u65ad\u5f00 \u2192 \u9000\u907f\u91cd\u8fde
+    if (state === 5 && !userDisconnected) {
+      if (retries < MAX_RETRIES) {
+        var delay = Math.min(2000 * Math.pow(2, retries), 15000);
+        retries++;
+        setStatus('\u65ad\u7ebf\uff0c' + (delay/1000) + 's \u540e\u91cd\u8fde(' + retries + '/' + MAX_RETRIES + ')...', '#ff8800');
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(function(){ doConnect(); }, delay);
+      } else {
+        setStatus('\u5df2\u65ad\u5f00\uff08\u91cd\u8fde\u6b21\u6570\u8017\u5c3d\uff0c\u70b9\u300c\u8fde\u63a5\u300d\u624b\u52a8\u91cd\u8bd5\uff09', '#ff4444');
+      }
+    }
   };
   client.onerror = function(s) { setStatus('\u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
   tunnel.onerror = function(s) { setStatus('\u96a7\u9053\u9519\u8bef: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
@@ -278,9 +310,28 @@ async function doConnect() {
   connecting = false;
 }
 
-function doDisconnect() {
+function doDisconnect(isReconnect) {
+  if (!isReconnect) { userDisconnected = true; if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } }
   if (client) { try { client.disconnect(); } catch(e) {} client = null; }
 }
+
+// \u526a\u8d34\u677f\uff1a\u672c\u5730\u2192\u8fdc\u7aef\uff08\u6269\u5c55\u5bbf\u4e3b\u56de\u4f20 vscode \u526a\u8d34\u677f\u5185\u5bb9\uff09
+function sendClipboard(text) {
+  if (!client || typeof text !== 'string' || !text || text === lastRemoteClip) return;
+  lastLocalClip = text;
+  try {
+    var stream = client.createClipboardStream('text/plain');
+    var writer = new Guacamole.StringWriter(stream);
+    writer.sendText(text);
+    writer.sendEnd();
+  } catch (e) {}
+}
+window.addEventListener('message', function(ev) {
+  var msg = ev.data || {};
+  if (msg.type === 'clipboardData') sendClipboard(msg.text);
+});
+// \u9762\u677f\u91cd\u65b0\u83b7\u7126\u65f6\u540c\u6b65\u672c\u5730\u526a\u8d34\u677f\u5230\u8fdc\u7aef
+window.addEventListener('focus', function() { if (client) vscodeApi.postMessage({type:'readClipboard'}); });
 
 function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 
@@ -314,6 +365,14 @@ async function openDesktop(context, account) {
     }
     if (msg.type === "openAccount" && msg.account) {
       openDesktop(context, msg.account);
+    }
+    if (msg.type === "clipboard" && typeof msg.text === "string") {
+      vscode.env.clipboard.writeText(msg.text);
+    }
+    if (msg.type === "readClipboard") {
+      vscode.env.clipboard.readText().then((text) => {
+        try { p.webview.postMessage({ type: "clipboardData", text }); } catch (e) {}
+      });
     }
   });
 }
