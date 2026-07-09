@@ -635,10 +635,55 @@ function openAsk(context) {
   askPanel.webview.onDidReceiveMessage((msg) => handleAskMessage(context, msg));
 }
 
+// 二合一统领(参照 devin-remote/dao-one): 子引擎 vendored 在 vendor/<名>/extension.js,
+// 各自 activate 时锁到自己的子目录读资源; 其余字段透传。
+function subContext(ctx, subDir) {
+  const subPath = path.join(ctx.extensionPath, subDir);
+  const subUri = vscode.Uri.file(subPath);
+  return new Proxy(ctx, {
+    get(target, prop) {
+      if (prop === "extensionPath") return subPath;
+      if (prop === "extensionUri") return subUri;
+      if (prop === "asAbsolutePath") return (rel) => path.join(subPath, rel);
+      const v = target[prop];
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+}
+
+const _vendorLoaded = [];
+
+// 扫 vendor/*/extension.js 并依次折入激活(装了哪个领域模块就自动多出哪一路面板);
+// 单个子引擎失败不阻断主体与其他子引擎。
+async function activateVendorModules(context) {
+  const root = path.join(context.extensionPath, "vendor");
+  let names = [];
+  try { names = fs.readdirSync(root).filter((n) => fs.existsSync(path.join(root, n, "extension.js"))); } catch (_) { return; }
+  for (const n of names) {
+    const dir = "vendor/" + n;
+    try {
+      const mod = require(path.join(root, n, "extension.js"));
+      if (mod && typeof mod.activate === "function") {
+        await mod.activate(subContext(context, dir));
+        _vendorLoaded.push({ mod, name: n });
+        log("✓ [子模块 " + n + "] 引擎就位 (" + dir + ")");
+      } else log("✗ [子模块 " + n + "] 无 activate");
+    } catch (e) { log("✗ [子模块 " + n + "] 启动失败: " + (e && e.stack ? e.stack : e)); }
+  }
+  if (names.length) log("子模块就绪 " + _vendorLoaded.length + "/" + names.length);
+}
+
 async function activate(context) {
   const sessionId = windowSessionId();
   log("DAO Windows Agent \u6fc0\u6d3b \u00b7 \u672c\u7a97\u53e3 = " + sessionId);
   setStatus(sessionId, "\u70b9\u51fb\u6253\u5f00 DAO \u684c\u9762");
+  // AI 交互基底(dao-ai-base · Devin Desktop 同源): Cascade 三模式面板, 命名空间 daoWin.cascade*。
+  try {
+    const daoAiBase = require("./dao-ai-base");
+    daoAiBase.activateDaoAiBase(context, { ns: "daoWin", log: (m) => log("[dao-ai-base] " + m) });
+  } catch (e) { log("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
+  // 二合一子模块(FreeCAD / KiCad / 嘉立创EDA / HomeAssistant …): 构建时由 unify.js 折入 vendor/。
+  try { await activateVendorModules(context); } catch (e) { log("子模块编排异常: " + (e && e.stack ? e.stack : e)); }
   // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
   try { const nsp = harvestSubplugins(); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
 
@@ -676,6 +721,7 @@ async function activate(context) {
 }
 
 function deactivate() {
+  for (const v of _vendorLoaded) { try { v.mod.deactivate && v.mod.deactivate(); } catch (e) {} }
   if (spawnedBridge) { try { spawnedBridge.kill(); } catch (e) {} }
   for (const p of desktopPanels.values()) { try { p.dispose(); } catch (e) {} }
   desktopPanels.clear();
