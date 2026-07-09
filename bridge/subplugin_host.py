@@ -49,13 +49,20 @@ def _decode(data: "bytes | None") -> str:
         return data.decode(locale.getpreferredencoding(False), errors="replace")
 
 
+def _quote(value: str) -> str:
+    """按当前平台 shell 规则引用参数（POSIX→shlex.quote，Windows cmd→双引号）。"""
+    if os.name == "nt":
+        return '"' + str(value).replace('"', '\\"') + '"'
+    return shlex.quote(str(value))
+
+
 def _render_shell(template: str, params: dict) -> str:
-    """把 {param} 占位安全渲染进命令模板（值经 shlex.quote，防注入）。"""
+    """把 {param} 占位安全渲染进命令模板（值经平台引用，防注入）。"""
     class _Q(dict):
         def __missing__(self, key: str) -> str:
             return ""
 
-    quoted = _Q({k: shlex.quote(str(v)) for k, v in params.items()})
+    quoted = _Q({k: _quote(str(v)) for k, v in params.items()})
     return template.format_map(quoted)
 
 

@@ -26,7 +26,9 @@ _IS_WIN = sys.platform == "win32"
 def _shell_cmd(cmd: str) -> list[str]:
     """把一行命令包成当前平台的 shell 调用。"""
     if _IS_WIN:
-        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        # 强制 UTF-8 输出：中文 Windows 控制台默认 GBK，重定向管道里中文会乱码
+        wrapped = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " + cmd
+        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", wrapped]
     return ["/bin/sh", "-c", cmd]
 
 
