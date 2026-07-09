@@ -174,13 +174,36 @@ class ModeManager:
         }
 
     def build_prompt(self, open_apps: list[str]) -> str:
-        """模式感知的系统提示：模式覆盖 → 本源纪律 → 已开软件纪律。"""
+        """模式感知的系统提示：模式覆盖 → 本源纪律 → 已开软件纪律 → 可调度模块清单。"""
         mode = self.current
         if mode.tool_policy == "none":
             return mode.prompt_overlay
         allowed = set(self.allowed_apps())
         base = build_system_prompt(self.registry, [a for a in open_apps if a in allowed])
-        return mode.prompt_overlay + "\n\n" + base
+        parts = [mode.prompt_overlay, "", base]
+        if mode.tool_policy == "all":
+            snippet = self.dispatch_snippet()
+            if snippet:
+                parts += ["", snippet]
+        return "\n".join(parts)
+
+    def dispatch_snippet(self) -> str:
+        """通用调度层地基：告诉 Agent 有哪些领域模块可自主择用（@ 唤起或切专精模式）。
+
+        终局形态里用户谈到某领域需求（3D 建模/PCB/智能家居…），Agent 应自主在整机
+        桌面下打开对应软件并调用领域动词，工程完成后交接下一环节——本清单即其感知面。
+        """
+        lines: list[str] = []
+        for app_id in self.registry.app_ids():
+            prof = self.registry.get(app_id)
+            if prof is None or prof.is_universal:
+                continue
+            tags = "·".join(prof.tags) if prof.tags else ""
+            lines.append(f"- @{prof.handle} {prof.display_name}" + (f"（{tags}）" if tags else ""))
+        if not lines:
+            return ""
+        return ("可自主调度的领域模块（用户需求触及某领域时，@ 句柄唤起该工作层，"
+                "或建议切换到对应专精模式；工程完成后交接下一环节）：\n" + "\n".join(lines))
 
     # —— 契约文件（Proxy Pro / dao-desktop 联动读取）——
     def _load_state(self) -> str | None:

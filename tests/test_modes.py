@@ -66,6 +66,14 @@ def test_capabilities_and_prompt_follow_mode(tmp_path):
     assert "本源纪律" not in mm.build_prompt([])
 
 
+def test_dispatch_snippet_in_all_policy_prompts(tmp_path):
+    mm = _mm(tmp_path)
+    prompt = mm.build_prompt([])
+    assert "可自主调度的领域模块" in prompt and "@kicad" in prompt
+    mm.set("domain:kicad")
+    assert "可自主调度的领域模块" not in mm.build_prompt([])
+
+
 def test_bridge_mode_endpoints(tmp_path):
     reg = build_default_registry()
     svc = BridgeService(
