@@ -1,6 +1,8 @@
 """通用应用适配层核心单测（级别① 纯逻辑，无需真机/GUI）。"""
 from __future__ import annotations
 
+import os
+
 from core.adapter.base import ActionResult, AppAdapter, Instance
 from core.agent.rule import build_system_prompt
 from core.profiles.builtin import build_default_registry
@@ -140,6 +142,26 @@ def test_search_verbs_finds_deepened_verbs():
     assert hits and hits[0]["app_id"] == "kicad" and hits[0]["verb"] == "pcb_python"
     hits = reg.search_verbs("inspect model tree")
     assert hits and hits[0]["verb"] == "inspect_doc"
+
+
+def test_pcb_python_macro_does_not_shadow_pcbnew(tmp_path):
+    """脚本落名不可为 _pcbnew.py/pcbnew.py：脚本目录在 sys.path 首位，会遮蔽 KiCad 原生模块。"""
+    from core.profiles.builtin import kicad as kmod
+
+    class FakeInstance:
+        workdir = str(tmp_path)
+
+    captured = {}
+
+    class FakeAdapter:
+        def run_cli(self, argv, instance, timeout=None):
+            captured["argv"] = argv
+            return None
+
+    kmod._pcb_python(FakeAdapter(), FakeInstance(), script="print('x')")
+    macro = captured["argv"][-1]
+    assert os.path.basename(macro) not in ("_pcbnew.py", "pcbnew.py")
+    assert os.path.exists(macro)
 
 
 def test_search_verbs_finds_gerber():
