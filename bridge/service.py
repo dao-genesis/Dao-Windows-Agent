@@ -122,13 +122,23 @@ class BridgeService:
     # --- 通用适配层 · @ 调度（AI 交互基底：一句自然语言 → 裁定通用层/领域工作层） ---
     def route(self, text: str, verb_limit: int = 5) -> dict:
         d = self.router.route(text or "", verb_limit=verb_limit)
-        return {
-            "targets": d.targets,
+        allowed = set(self.modes.allowed_apps())
+        blocked = [t for t in d.targets if t not in allowed]
+        targets = [t for t in d.targets if t in allowed]
+        hints = [h for h in d.verb_hints if h.get("app_id") in allowed]
+        out = {
+            "targets": targets,
             "layer": d.layer,
             "unresolved": d.unresolved,
             "clean_text": d.clean_text,
-            "verb_hints": d.verb_hints,
+            "verb_hints": hints,
+            "mode": self.modes.current.mode_id,
         }
+        if blocked:
+            out["blocked_by_mode"] = blocked
+            out["hint"] = (f"当前模式 {self.modes.current.mode_id} 不开放: {blocked}；"
+                           "先 /api/mode.set 切换模式")
+        return out
 
     def capabilities(self) -> dict:
         manifest = self.router.capability_manifest()

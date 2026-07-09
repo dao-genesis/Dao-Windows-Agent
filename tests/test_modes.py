@@ -124,3 +124,26 @@ def test_mode_tool_policy_enforced_on_invoke(tmp_path):
     _, body = svc.dispatch("POST", "/api/session.open_app",
                            {"session_id": "s1", "app_id": "system"})
     assert body["ok"] is True
+
+
+def test_route_respects_mode_tool_policy(tmp_path):
+    reg = build_default_registry()
+    svc = BridgeService(
+        registry=reg,
+        root=str(tmp_path / "sessions"),
+        modes=ModeManager(reg, state_path=str(tmp_path / "mode.json")),
+    )
+    # primary: 全量放行
+    _, body = svc.dispatch("POST", "/api/route", {"text": "@kicad 导出 gerber"})
+    assert body["targets"] == ["kicad"] and body["mode"] == "primary"
+    assert "blocked_by_mode" not in body
+    # domain:freecad: @kicad 被裁掉并如实回报
+    svc.dispatch("POST", "/api/mode.set", {"mode": "domain:freecad"})
+    _, body = svc.dispatch("POST", "/api/route", {"text": "@kicad 导出 gerber"})
+    assert body["targets"] == [] and body["blocked_by_mode"] == ["kicad"]
+    assert "mode.set" in body["hint"]
+    assert all(h["app_id"] != "kicad" for h in body["verb_hints"])
+    # coding: 机控面整体关闭，通用层落点也为空
+    svc.dispatch("POST", "/api/mode.set", {"mode": "coding"})
+    _, body = svc.dispatch("POST", "/api/route", {"text": "打开记事本"})
+    assert body["targets"] == [] and body["verb_hints"] == []
