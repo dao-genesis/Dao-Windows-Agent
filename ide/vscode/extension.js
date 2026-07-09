@@ -39,24 +39,37 @@ function subpluginDir() {
   return path.join(require("os").homedir(), ".dao", "subplugins");
 }
 
-function harvestSubplugins() {
+function harvestSubplugins(vendorRoot) {
   let dir;
   try {
     dir = subpluginDir();
     fs.mkdirSync(dir, { recursive: true });
   } catch (e) { log("子插件发现目录创建失败: " + e.message); return 0; }
+  // 收编源 = 同装 VS Code 扩展 ∪ 折入 vendor/ 的二合一子模块（后者不在 vscode.extensions.all）。
+  const sources = [];
+  for (const ext of vscode.extensions.all) sources.push({ id: "vscode:" + ext.id, pj: ext.packageJSON || {} });
+  if (vendorRoot) {
+    let names = [];
+    try { names = fs.readdirSync(vendorRoot); } catch (_) {}
+    for (const nm of names) {
+      try {
+        const pj = JSON.parse(fs.readFileSync(path.join(vendorRoot, nm, "package.json"), "utf-8"));
+        sources.push({ id: "vendor:" + nm, pj });
+      } catch (_) {}
+    }
+  }
   let n = 0;
-  for (const ext of vscode.extensions.all) {
-    const pj = ext.packageJSON || {};
+  for (const src of sources) {
+    const pj = src.pj;
     const spec = pj.daoSubplugin || (pj.contributes && pj.contributes.daoSubplugin);
     if (!spec || !spec.app_id || !Array.isArray(spec.verbs) || !spec.verbs.length) continue;
-    const desc = Object.assign({ source: "vscode:" + ext.id, layer: "domain" }, spec);
-    if (!desc.invoke_url) { log("子插件 " + ext.id + " 缺 invoke_url，跳过"); continue; }
+    const desc = Object.assign({ source: src.id, layer: "domain" }, spec);
+    if (!desc.invoke_url) { log("子插件 " + src.id + " 缺 invoke_url，跳过"); continue; }
     try {
       fs.writeFileSync(path.join(dir, desc.app_id + ".json"), JSON.stringify(desc, null, 2), "utf-8");
       n++;
-      log("收编子插件 @" + (desc.mention || desc.app_id) + " ← " + ext.id);
-    } catch (e) { log("写子插件描述符失败 " + ext.id + ": " + e.message); }
+      log("收编子插件 @" + (desc.mention || desc.app_id) + " ← " + src.id);
+    } catch (e) { log("写子插件描述符失败 " + src.id + ": " + e.message); }
   }
   return n;
 }
@@ -685,7 +698,7 @@ async function activate(context) {
   // 二合一子模块(FreeCAD / KiCad / 嘉立创EDA / HomeAssistant …): 构建时由 unify.js 折入 vendor/。
   try { await activateVendorModules(context); } catch (e) { log("子模块编排异常: " + (e && e.stack ? e.stack : e)); }
   // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
-  try { const nsp = harvestSubplugins(); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
+  try { const nsp = harvestSubplugins(path.join(context.extensionPath, "vendor")); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
