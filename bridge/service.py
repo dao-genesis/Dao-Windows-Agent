@@ -21,6 +21,7 @@ from typing import Any, Optional
 from core.accounts import AccountManager
 from core.adapter.base import ActionResult
 from core.agent.rule import build_system_prompt
+from core.dispatch import MentionRouter
 from core.profiles.builtin import build_default_registry
 from core.profiles.registry import ProfileRegistry
 from core.session.manager import SessionManager
@@ -39,6 +40,7 @@ class BridgeService:
         self.registry = registry or build_default_registry()
         self.manager = manager or SessionManager(self.registry, root=root)
         self.accounts = accounts or AccountManager()
+        self.router = MentionRouter(self.registry)
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -91,6 +93,20 @@ class BridgeService:
         open_apps = sorted(sess.instances) if sess else []
         return {"session_id": session_id, "prompt": build_system_prompt(self.registry, open_apps)}
 
+    # --- 通用适配层 · @ 调度（AI 交互基底：一句自然语言 → 裁定通用层/领域工作层） ---
+    def route(self, text: str, verb_limit: int = 5) -> dict:
+        d = self.router.route(text or "", verb_limit=verb_limit)
+        return {
+            "targets": d.targets,
+            "layer": d.layer,
+            "unresolved": d.unresolved,
+            "clean_text": d.clean_text,
+            "verb_hints": d.verb_hints,
+        }
+
+    def capabilities(self) -> dict:
+        return self.router.capability_manifest()
+
     # --- 账号（Windows 多账号类虚拟机·扩展本源） ---
     def account_create(self, name: str, password: Optional[str] = None, admin: bool = False) -> dict:
         return self.accounts.create(name, password=password, admin=admin)
@@ -139,6 +155,11 @@ class BridgeService:
             if method == "POST" and path == "/api/session.prompt":
                 sid = _require(payload, "session_id")
                 return 200, self.session_prompt(sid)
+            if method == "POST" and path == "/api/route":
+                text = _require(payload, "text")
+                return 200, self.route(text, int(payload.get("verb_limit", 5)))
+            if method == "GET" and path == "/api/capabilities":
+                return 200, self.capabilities()
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":

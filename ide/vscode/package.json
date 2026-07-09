@@ -20,6 +20,7 @@
       { "command": "daoWin.accountList", "title": "DAO: 账号列表" },
       { "command": "daoWin.accountDestroy", "title": "DAO: 销毁 Windows 账号" },
       { "command": "daoWin.openPanel", "title": "DAO: 控制面（辅助自动化后端）" },
+      { "command": "daoWin.ask", "title": "DAO: AI 交互（@ 调度整机/领域工作层）" },
       { "command": "daoWin.health", "title": "DAO: 桥健康检查" },
       { "command": "daoWin.ensureBridge", "title": "DAO: 连接/自启机控桥" }
     ],
