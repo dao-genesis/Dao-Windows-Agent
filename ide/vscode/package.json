@@ -24,6 +24,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "daoWin.home",
+        "title": "DAO: 归一主页（Windows 总控 · RDP/账号/子板块）"
+      },
+      {
         "command": "daoWin.openDesktop",
         "title": "DAO: 打开桌面（本窗口 = 一路 RDP 会话）"
       },
