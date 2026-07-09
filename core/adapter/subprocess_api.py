@@ -5,12 +5,25 @@
 """
 from __future__ import annotations
 
+import locale
 import os
 import subprocess
 from typing import Any
 
 from core.adapter.base import ActionResult, AppAdapter, Instance
 from core.profiles.schema import AutomationLevel
+
+
+def decode_output(data: "bytes | str | None") -> str:
+    """子进程输出稳健解码：先 UTF-8，失败退本地区域编码（中文 Windows 控制台为 GBK）。"""
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
 
 
 class SubprocessApiAdapter(AppAdapter):
@@ -47,16 +60,17 @@ class SubprocessApiAdapter(AppAdapter):
                 args,
                 cwd=instance.workdir or None,
                 capture_output=True,
-                text=True,
                 timeout=timeout,
             )
         except FileNotFoundError:
             return ActionResult.bad(f"可执行文件不存在: {args[0]}（Windows 冷启动/真机才装）")
         except subprocess.TimeoutExpired:
             return ActionResult.bad(f"CLI 超时(>{timeout}s): {' '.join(args)}")
+        stdout = decode_output(proc.stdout)
+        stderr = decode_output(proc.stderr)
         logs = [f"$ {' '.join(args)}"]
-        if proc.stdout:
-            logs.append(proc.stdout.strip())
+        if stdout:
+            logs.append(stdout.strip())
         if proc.returncode != 0:
-            return ActionResult.bad(proc.stderr.strip() or f"退出码 {proc.returncode}", logs)
-        return ActionResult.good({"stdout": proc.stdout, "returncode": proc.returncode}, logs)
+            return ActionResult.bad(stderr.strip() or f"退出码 {proc.returncode}", logs)
+        return ActionResult.good({"stdout": stdout, "returncode": proc.returncode}, logs)

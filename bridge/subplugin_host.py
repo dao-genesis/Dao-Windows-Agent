@@ -30,12 +30,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import shlex
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Optional
+
+
+def _decode(data: "bytes | None") -> str:
+    """子进程输出稳健解码：先 UTF-8，失败退本地区域编码（中文 Windows 控制台为 GBK）。"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
 
 
 def _render_shell(template: str, params: dict) -> str:
@@ -126,11 +137,11 @@ class SubpluginHost:
         try:
             proc = subprocess.run(
                 cmd, shell=True, cwd=workdir or self.workdir,  # noqa: S602 - 模板来自本地 spec，参数已 quote
-                capture_output=True, text=True, timeout=300)
+                capture_output=True, timeout=300)
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"命令超时: {cmd}"}
-        out = (proc.stdout or "").strip()
-        err = (proc.stderr or "").strip()
+        out = _decode(proc.stdout).strip()
+        err = _decode(proc.stderr).strip()
         if proc.returncode != 0:
             return {"ok": False, "error": err or f"退出码 {proc.returncode}",
                     "logs": [cmd, out] if out else [cmd]}

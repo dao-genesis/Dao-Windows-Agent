@@ -205,8 +205,10 @@ def test_session_lifecycle_and_isolation(tmp_path):
 
 
 def test_uia_desktop_dry_run_builds_plan():
-    """级别②：无 driver 时返回结构化 UIA 动作计划，且每会话独立桌面隔离。"""
-    reg = build_default_registry()
+    """级别②：无 driver 时返回结构化 UIA 动作计划，且每会话独立桌面隔离。
+
+    本测验的是 dry-run 路径本身，故关闭实机 driver 自动探测（Windows 真机上否则会真执行）。"""
+    reg = build_default_registry(autodetect_uia=False)
     mgr = SessionManager(reg, root="/tmp/dao-win/test-uia")
     mgr.create("vm_np1")
     mgr.create("vm_np2")

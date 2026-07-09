@@ -26,6 +26,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from core.adapter.subprocess_api import decode_output
+
 # runner(script:str) -> (returncode:int, stdout:str, stderr:str)
 Runner = Callable[[str], "tuple[int, str, str]"]
 
@@ -40,9 +42,9 @@ def _powershell_runner(script: str) -> "tuple[int, str, str]":
     """默认真机 runner：走 powershell -NoProfile -Command。仅 Windows 有效。"""
     proc = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, timeout=120,
     )
-    return proc.returncode, proc.stdout, proc.stderr
+    return proc.returncode, decode_output(proc.stdout), decode_output(proc.stderr)
 
 
 def valid_name(name: str) -> bool:
