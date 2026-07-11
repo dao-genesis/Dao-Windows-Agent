@@ -1008,6 +1008,13 @@ async function activate(context) {
     const daoProxyPro = require("./dao-proxy-pro");
     daoProxyPro.activateDaoProxyPro(context, { ns: "daoWin", log: (m) => log("[dao-proxy-pro] " + m) });
   } catch (e) { log("[dao-proxy-pro] 引擎激活失败: " + (e && e.stack ? e.stack : e)); }
+  // 底层工具融合(官方并列层): 把自带 runtime 的 MCP 外壳注册进官方 mcp_config.json,
+  // 四领域动词以官方 function-calling 工具身份与内建工具并列, 与提示词隔离/替换同炉。
+  try {
+    const daoMcp = require("./dao-mcp");
+    const c0 = cfg();
+    await daoMcp.activateDaoMcp(context, { pythonPath: c0.pythonPath, bridgeUrl: c0.bridgeUrl, token: c0.token, log: (m) => log("[dao-mcp] " + m) });
+  } catch (e) { log("[dao-mcp] 工具层注册失败: " + (e && e.stack ? e.stack : e)); }
   // 二合一子模块(FreeCAD / KiCad / 嘉立创EDA / HomeAssistant …): 构建时由 unify.js 折入 vendor/。
   try { await activateVendorModules(context); } catch (e) { log("子模块编排异常: " + (e && e.stack ? e.stack : e)); }
   // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
@@ -1032,7 +1039,15 @@ async function activate(context) {
       const info = await ensureBridge(context);
       vscode.window.showInformationMessage(info ? "DAO \u6865\u5df2\u8fde: " + info.url : "DAO \u6865\u4e0d\u53ef\u8fbe");
     }),
-    vscode.commands.registerCommand("daoWin.switchMode", () => switchMode(context))
+    vscode.commands.registerCommand("daoWin.switchMode", () => switchMode(context)),
+    vscode.commands.registerCommand("daoWin.mcpRegister", async () => {
+      try {
+        const daoMcp = require("./dao-mcp");
+        const c1 = cfg();
+        const r = await daoMcp.activateDaoMcp(context, { pythonPath: c1.pythonPath, bridgeUrl: c1.bridgeUrl, token: c1.token, log: (m) => log("[dao-mcp] " + m) });
+        vscode.window.showInformationMessage("DAO MCP 工具层" + (r.changed ? "已注册/刷新" : "已就绪(无变化)") + ": " + r.path);
+      } catch (e) { vscode.window.showErrorMessage("DAO MCP 注册失败: " + e.message); }
+    })
   );
 
   // 激活即后台连桥并为本窗口建隔离会话（零点击冷启动）

@@ -1374,6 +1374,15 @@ def start_server(port=None, host=None):
     print(f"  {'='*56}")
     print(f"")
 
+    # 后台桥接形态：最小化主窗，不抢用户/IDE 焦点（FC_REMOTE_MINIMIZE=0 关闭）
+    if os.environ.get("FC_REMOTE_MINIMIZE", "1") != "0":
+        try:
+            mw = Gui.getMainWindow()
+            if mw:
+                mw.showMinimized()
+        except Exception:
+            pass
+
     return _server
 
 

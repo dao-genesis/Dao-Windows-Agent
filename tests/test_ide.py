@@ -97,3 +97,31 @@ def test_home_windows_master_control():
     # 子板块 catalog 四大领域
     for sp in ("freecad", "kicad", "jlceda", "homeassistant"):
         assert sp in src, f"子板块 catalog 缺 {sp}"
+
+
+def test_mcp_tool_layer_registration():
+    """底层工具融合: MCP 外壳注册进官方 mcp_config.json, 四领域动词并列官方工具。"""
+    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
+        m = json.load(fh)
+    cmds = {c["command"] for c in m["contributes"]["commands"]}
+    assert "daoWin.mcpRegister" in cmds
+    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert 'require("./dao-mcp")' in src
+    with open(os.path.join(IDE, "dao-mcp.js"), encoding="utf-8") as fh:
+        mcp = fh.read()
+    assert '"-m", "bridge.mcp"' in mcp and "mcp_config.json" in mcp
+    assert "RefreshMcpServers" in mcp  # 官方 LS 热刷新
+
+
+def test_mcp_node_selftest():
+    """dao-mcp 纯逻辑 node 自检(merge/entry/落盘幂等)。"""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node 不可用")
+    r = subprocess.run([node, os.path.join(IDE, "test", "dao-mcp.test.js")],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr

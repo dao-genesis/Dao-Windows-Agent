@@ -15,6 +15,7 @@
 //   · Cascade:language_server 同源直连;Devin Cloud:远端 ACP over wss(acp-wss.js)。
 const vscode = require("vscode");
 const os = require("os");
+const fs = require("fs");
 const path = require("path");
 const { AcpClient, resolveDevinBin } = require("./acp-client");
 const { AcpWssClient } = require("./acp-wss");
@@ -23,6 +24,22 @@ let hostState = null;
 try { ({ hostState } = require("../windsurf-shim")); } catch (_) {}
 
 const VIEW_ID = "dao.cascade";
+
+// 领域提示词塑形器(Proxy Pro 同源的隔离/替换层) —— 领域插件可注册一个 shaper:
+//   { wrap(text, {agent, epoch}), status() -> {mode,label,spChars,…}, toggle() }
+// 三模式(Cascade / Devin Local / Devin Cloud)发送前统一经 wrap 塑形;
+// 未注册或 native 模式时字节级直通, 不碰原文(道并行而不相惖)。
+let _promptShaper = null;
+function setPromptShaper(s) { _promptShaper = s; }
+function _shapeText(text, ctx) {
+  if (!_promptShaper) return text;
+  try {
+    const fn = typeof _promptShaper === "function" ? _promptShaper : _promptShaper.wrap;
+    if (typeof fn !== "function") return text;
+    const out = fn.call(_promptShaper, text, ctx || {});
+    return typeof out === "string" ? out : text;
+  } catch (_) { return text; }
+}
 
 // 三 agent —— 与官方 agent 切换器对齐(id / 标签 / 传输轨 / 是否 Preview)。
 const AGENTS = [
@@ -42,44 +59,14 @@ function nonce() {
 }
 
 class CascadePanelProvider {
-  constructor(context, log, viewId, opts) {
+  constructor(context, log, viewId) {
     this._ctx = context;
     this._log = log || (() => {});
     this._viewId = viewId || VIEW_ID;
     this._view = null;
     this._acp = null;       // Devin Local 的 ACP 客户端(懒启动)
     this._acpReady = false;
-    // 领域模式(dao-proxy-pro 式提示词隔离替换 · 插件内实现): opts.domain =
-    //   { id, name, systemPrompt(full:boolean)=>string|Promise, plannerConfig?(base)=>base }
-    // 开 → 每个 cascade 首消息前置全量领域系统提示词块(后续消息前置短提醒),
-    //   工具面可经 plannerConfig 钩子重塑; 关 → 完全回归日常 Devin Desktop 行为。道并行而不相惖。
-    this._domain = (opts && opts.domain) || null;
-    this._domainOn = this._domain
-      ? this._ctx.globalState.get(this._viewId + ".domainOn", this._domain.defaultOn !== false)
-      : false;
-    this._cxDomainInjected = {}; // cascadeId → 全量提示词块已注入
-  }
-
-  _domainActive() { return !!(this._domain && this._domainOn); }
-
-  _pushDomain() {
-    if (!this._domain) return;
-    this._post({ type: "domain", name: this._domain.name || this._domain.id, on: !!this._domainOn });
-  }
-
-  // 领域模式注入: 把用户文本包装为 items[](首消息全量领域系统提示词, 后续短提醒)
-  async _cxItems(text, cascadeId) {
-    if (!this._domainActive()) return [{ text }];
-    try {
-      const full = !(cascadeId && this._cxDomainInjected[cascadeId]);
-      const block = await Promise.resolve(this._domain.systemPrompt(full));
-      if (block) {
-        if (cascadeId) this._cxDomainInjected[cascadeId] = true;
-        const tag = (this._domain.id || "domain") + "_mode";
-        return [{ text: "<" + tag + ">\n" + block + "\n</" + tag + ">\n\n" + text }];
-      }
-    } catch (e) { this._log("domain: 提示词注入失败(降级直发): " + e.message); }
-    return [{ text }];
+    this._sessionEpoch = 0;  // 会话代际(供 shaper 判首条注入)
   }
 
   resolveWebviewView(webviewView) {
@@ -96,6 +83,9 @@ class CascadePanelProvider {
       try {
         if (msg.type === "ready") {
           this._pushEnv();
+          // 官方式面板初始化: 面板就绪即告知 LS 初始化面板状态通道(官方 UI 启动序列同款)
+          try { const ls = require("./ls-bridge"); if (ls.ready()) ls.call("InitializeCascadePanelState", {}).catch(() => {}); } catch (_) {}
+          this._startHeartbeat();
           // 宿主 LS 发现约需数秒(端口/CSRF), 轮询重试直至全量模型灌入首屏选择器。
           let tries = 0;
           const tick = async () => {
@@ -105,26 +95,18 @@ class CascadePanelProvider {
           tick();
           this._autoOpenRecent();
           this._pushUserSettings();
-          this._pushDomain();
           return;
-        }
-        if (msg.type === "domain-toggle") {
-          if (!this._domain) return;
-          this._domainOn = !this._domainOn;
-          this._ctx.globalState.update(this._viewId + ".domainOn", this._domainOn);
-          this._log("domain: " + (this._domain.name || this._domain.id) + " 模式 → " + (this._domainOn ? "开" : "关(日常 Devin 模式)"));
-          return this._pushDomain();
         }
         if (msg.type === "chat") return this._handleChat(msg);
         if (msg.type === "login") return this._handleLogin();
         if (msg.type === "login-code") return this._loginCtrl && this._loginCtrl.submitCode(msg.code);
         if (msg.type === "set-mode") {
           // Cascade 规划模式(cx: 前缀)与 ACP 会话模式分流; 官方对应 STATE_KEYS.cascadePlannerMode
-          if (/^cx:/.test(msg.modeId || "")) { this._cascadeMode = msg.modeId.slice(3); return; }
+          if (/^cx:/.test(msg.modeId || "")) { this._cascadeMode = msg.modeId.slice(3); this._sbSet({ mode: this._cascadeMode }); return; }
           return this._acp && this._acp.setMode(msg.modeId).catch(() => {});
         }
         if (msg.type === "set-config") {
-          if (msg.configId === "model" && msg.agent === "cascade") { this._cascadeModel = msg.value; return; }
+          if (msg.configId === "model" && msg.agent === "cascade") { this._cascadeModel = msg.value; this._sbSet({ modelLabel: (this._cxModelLabels || {})[msg.value] || msg.value }); return; }
           return this._acp && this._acp.setConfigOption(msg.configId, msg.value).catch((e) => this._post({ type: "error", text: e.message }));
         }
         if (msg.type === "cancel") {
@@ -139,6 +121,7 @@ class CascadePanelProvider {
           return this._acp && this._acp.cancel();
         }
         if (msg.type === "cx-revert") return this._handleCxRevert(msg.stepIndex);
+        if (msg.type === "cx-step-cancel") return this._handleCxStepCancel(msg.stepIndex);
         if (msg.type === "cx-branch") return this._handleCxBranch(msg.stepIndex, msg.text);
         if (msg.type === "cx-queue-remove" || msg.type === "cx-queue-front" || msg.type === "cx-queue-now") return this._handleCxQueueOp(msg);
         if (msg.type === "worktree-merge") return this._handleWorktreeMerge();
@@ -175,6 +158,10 @@ class CascadePanelProvider {
         if (msg.type === "agents-registry") return this._handleAgentsRegistry();
         if (msg.type === "codemaps-list") return this._handleCodeMapsList();
         if (msg.type === "codemap-generate") return this._handleCodeMapGenerate(msg.prompt);
+        if (msg.type === "codemap-meta") return this._handleCodeMapMeta(msg.id, msg.starred, msg.archived);
+        if (msg.type === "codemap-share") return this._handleCodeMapShare(msg.id);
+        if (msg.type === "codemap-import") return this._handleCodeMapImport();
+        if (msg.type === "codemap-sug-dismiss") return this._handleCodeMapSugDismiss(msg.id);
         if (msg.type === "open-file-line") return this._handleOpenFileLine(msg.path, msg.line);
         if (msg.type === "mcp-store-install") return this._handleMcpStoreInstall(msg.id, msg.link);
         if (msg.type === "store-open") return void vscode.env.openExternal(vscode.Uri.parse(msg.url)).then(undefined, () => {});
@@ -182,11 +169,22 @@ class CascadePanelProvider {
         if (msg.type === "custom-import-cursor") return this._handleCursorImport();
         if (msg.type === "mcp-tool-toggle") return this._handleMcpToolToggle(msg.server, msg.tool);
         if (msg.type === "mcp-prompt-run") return this._handleMcpPromptRun(msg.server, msg.prompt, msg.args);
-        if (msg.type === "account-status") return this._handleAccountStatus();
+        if (msg.type === "account-status") { this._acctPopOpen = true; return this._handleAccountStatus(); }
+        if (msg.type === "account-close") { this._acctPopOpen = false; return; }
         if (msg.type === "token-query") return this._handleTokenQuery(msg.reqId, msg.text);
         if (msg.type === "memory-delete") return this._handleMemoryDelete(msg.id);
         if (msg.type === "memory-edit") return this._handleMemoryEdit(msg.memory);
         if (msg.type === "history-open") return this.showHistory();
+        if (msg.type === "mode-status" || msg.type === "mode-toggle") {
+          if (msg.type === "mode-toggle" && _promptShaper && typeof _promptShaper.toggle === "function") {
+            try { _promptShaper.toggle(); } catch (_) {}
+          }
+          let st = null;
+          if (_promptShaper && typeof _promptShaper.status === "function") {
+            try { st = _promptShaper.status(); } catch (_) {}
+          }
+          return this._post(Object.assign({ type: "mode-status" }, st || { mode: "native", label: "" }));
+        }
         if (msg.type === "permission-reply") {
           const r = this._permPending && this._permPending.get(msg.reqId);
           if (r) { this._permPending.delete(msg.reqId); r(msg.optionId || null); }
@@ -207,6 +205,9 @@ class CascadePanelProvider {
 
   _post(m) { if (this._view) this._view.webview.postMessage(m); }
 
+  // 同步底部状态栏(官方本体把账号/引擎态放 IDE 状态栏, 插件版在 status-bar.js 补齐)
+  _sbSet(patch) { try { if (this._sb) this._sb.set(patch); } catch (_) {} }
+
   // Cascade 规划模式 → 官方 plannerConfig 配方(二进制实测):
   //   write=agentic; plan=agentic+exit_plan_mode 工具;
   //   其余走 conversationalV2.plannerMode(exa.codeium_common_pb.ConversationalPlannerMode)
@@ -222,6 +223,17 @@ class CascadePanelProvider {
     } catch (_) { this._cascadeModel = "swe-1-6-slow"; }
   }
 
+  // 官方式 LS 保活: Heartbeat 每 60s 一次(官方扩展同款, LS 以此判定扩展存活)。
+  _startHeartbeat() {
+    if (this._hbTimer) return;
+    const beat = () => {
+      try { const ls = require("./ls-bridge"); if (ls.ready()) ls.call("Heartbeat", {}).catch(() => {}); } catch (_) {}
+    };
+    beat();
+    this._hbTimer = setInterval(beat, 60000);
+    if (this._view) this._view.onDidDispose(() => { clearInterval(this._hbTimer); this._hbTimer = null; });
+  }
+
   // 与官方 composer 对齐: 全量模型灌入 webview 模型选择器(config-options 同渠)。
   // 官方首屏(New session)即列全模型, 故此处提前推送, 不再懒到首条消息发送时。
   // 1:1 复刻官方: 列全部模型(含 Pro 门控禁用项), 标注倍率(Nx)与禁用原因(灰置+title)。
@@ -231,12 +243,18 @@ class CascadePanelProvider {
       if (!ls.ready() || !ls.apiKey()) return false;
       const models = await ls.listModels();
       if (!models.length) return false;
+      // 官方式模型健康位: GetModelStatuses → {statuses:{uid:{status,message}}}(当前多为空, 防御式合入)
+      let mStatus = {};
+      try { const st = await ls.call("GetModelStatuses", {}); mStatus = (st && st.statuses) || {}; } catch (_) {}
       this._cxImageModels = new Set(models.filter((m) => m.images).map((m) => m.uid));
+      this._cxModelLabels = {};
+      for (const m of models) this._cxModelLabels[m.uid] = m.label;
       if (!this._cascadeModel) {
         const usable = models.filter((m) => !m.disabled);
         const en = usable.find((m) => !/BYOK/i.test(m.label)) || usable[0];
         this._cascadeModel = (en && en.uid) || "swe-1-6-slow";
       }
+      this._sbSet({ modelLabel: this._cxModelLabels[this._cascadeModel] || null, mode: this._cascadeMode || "write" });
       this._post({ type: "config-options", agent: "cascade", configOptions: [{
         id: "model", category: "model", currentValue: this._cascadeModel,
         options: models.map((m) => ({
@@ -244,6 +262,7 @@ class CascadePanelProvider {
           name: m.label + (m.credit != null ? "  ·  " + m.credit + "x" : ""),
           disabled: !!m.disabled,
           description: [
+            (mStatus[m.uid] && (mStatus[m.uid].message || mStatus[m.uid].status)) || "",
             m.disabled ? (m.reason ? m.reason + " · " + (m.reasonLink || "") : "需升级方案") : "",
             m.dims && m.dims.length ? m.dims.join(" · ") : "",
             m.pricing || "",
@@ -284,10 +303,6 @@ class CascadePanelProvider {
       // 硬拦截(R34 实测): runCommand.forceDisable 真实移除命令工具; 写盘类(code 工具)无 forceDisable, 仅提示词层
       if (mode === "readOnly" || mode === "noTool") base.toolConfig.runCommand = { forceDisable: true };
     }
-    // 领域模式工具面重塑钩子(如 FreeCAD 模式保留/禁用特定工具)
-    if (this._domainActive() && typeof this._domain.plannerConfig === "function") {
-      try { return this._domain.plannerConfig(base) || base; } catch (_) {}
-    }
     return base;
   }
 
@@ -309,6 +324,7 @@ class CascadePanelProvider {
       && vscode.workspace.workspaceFolders[0].name) || null;
     this._post({ type: "env", devinBin: bin || null, agents: AGENTS,
       loggedIn: auth.loggedIn, userName: auth.name, windsurf: ws, folder });
+    this._sbSet({ lsReady: !!(ws && ws.lsPort), user: (ws && ws.authName) || auth.name || null });
     this._cxPushWorkflows();
   }
 
@@ -453,6 +469,14 @@ class CascadePanelProvider {
     }
   }
 
+  // 官方式步级撤销: CancelCascadeSteps{cascadeId,stepIndices[]} 取消指定进行中步骤(不停整轮)
+  async _handleCxStepCancel(stepIndex) {
+    if (!this._cascadeLsId || typeof stepIndex !== "number") return;
+    const ls = require("./ls-bridge");
+    try { await ls.call("CancelCascadeSteps", { cascadeId: this._cascadeLsId, stepIndices: [stepIndex] }); }
+    catch (e) { this._post({ type: "error", text: "取消步骤失败: " + e.message }); }
+  }
+
   // 官方式步卡内容: 轨迹步 metadata.toolCall{name,argumentsJson} → 工具名 + 关键参数
   _cxStepCard(st, k, id) {
     if (st.codeAction) return this._cxDiffCard(st, k, id);
@@ -477,7 +501,7 @@ class CascadePanelProvider {
       if (v) title += " · " + String(v).slice(0, 80);
     } catch (_) {}
     return { type: "tool-call", id, toolCallId: "cx" + k, title,
-      kindName: "cascade",
+      kindName: "cascade", stepIndex: k,
       status: /DONE/.test(st.status || "") ? "completed" : /ERROR/.test(st.status || "") ? "failed" : "in_progress",
       locations: [] };
   }
@@ -850,7 +874,13 @@ class CascadePanelProvider {
   async _handleMemoriesList() {
     try {
       const ls = require("./ls-bridge");
-      const r = await ls.call("GetCascadeMemories", {});
+      const r = (await ls.call("GetCascadeMemories", {})) || {};
+      // 官方双源: 账号级 GetUserMemories 与工作区级 GetCascadeMemories 合并(按 id 去重)
+      try {
+        const um = await ls.call("GetUserMemories", {});
+        const seen = new Set(((r && r.memories) || []).map((m) => m.id));
+        for (const m of (um && um.memories) || []) if (!seen.has(m.id)) (r.memories = r.memories || []).push(m);
+      } catch (_) {}
       const ms = ((r && r.memories) || []).map((m) => ({
         id: m.memoryId, title: m.title || "",
         content: ((m.textMemory || {}).content) || "",
@@ -879,7 +909,7 @@ class CascadePanelProvider {
   async _handleStatusInfo() {
     const ls = require("./ls-bridge");
     try {
-      const [pr, wi, ri, dd, rl, we, wo, lg] = await Promise.all([
+      const [pr, wi, ri, dd, rl, we, wo, lg, cm] = await Promise.all([
         ls.call("GetProcesses", {}).catch(() => ({})),
         ls.call("GetWorkspaceInfos", {}).catch(() => ({})),
         ls.call("GetRepoInfos", {}).catch(() => ({})),
@@ -888,6 +918,7 @@ class CascadePanelProvider {
         ls.call("GetWorkspaceEditState", {}).catch(() => ({})),
         ls.call("GetDefaultWebOrigins", {}).catch(() => ({})),
         ls.call("GetLifeguardConfig", {}).catch(() => ({})),
+        ls.call("GetCommandModelConfigs", {}).catch(() => ({})),
       ]);
       const logs = (((dd.languageServerDiagnostics || {}).logs) || []).slice(-15).map((l) => String(l).trim());
       this._post({ type: "status-info", info: {
@@ -901,6 +932,7 @@ class CascadePanelProvider {
           files: (x.fileStates || x.files || []).length })),
         webOrigins: wo.defaultOrigins || [],
         lifeguard: (((lg.config || {}).modes || {}).agent) || null,
+        commandModels: (cm.clientModelConfigs || []).map((c) => c.label || c.modelUid || ""),
         logs,
       } });
     } catch (e) { this._post({ type: "error", text: "读取诊断信息失败: " + e.message }); }
@@ -1125,25 +1157,104 @@ class CascadePanelProvider {
       const ls = require("./ls-bridge");
       const repoPaths = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
       const r = await ls.call("GetCodeMapsForRepos", { repoPaths });
+      const idx = this._codeMapIndex();
       const maps = ((r && r.codeMaps) || []).map((s) => {
         let m = {}; try { m = JSON.parse(s); } catch (_) {}
+        const ie = idx[m.id] || {};
         return {
           id: m.id || "", title: m.title || m.id || "(无题)",
           prompt: ((m.metadata || {}).originalPrompt) || "",
           time: ((m.metadata || {}).generationTimestamp) || "",
+          starred: !!ie.starred, archived: !!ie.archived,
           traces: (m.traces || []).map((t) => ({
             title: t.title || "", desc: t.description || "", diagram: t.traceTextDiagram || "",
             locations: (t.locations || []).map((l) => ({ path: l.path || "", line: l.lineNumber || 1, title: l.title || "", lineContent: l.lineContent || "" })) })) };
       });
+      // 归档地图 GetCodeMapsForRepos 不返回——从 codemapindex.json 补条目(仅标题行, 供恢复)
+      const seen = new Set(maps.map((m) => m.id));
+      for (const id of Object.keys(idx)) {
+        const ie = idx[id];
+        if (seen.has(id) || !ie.archived) continue;
+        maps.push({ id, title: ie.title || id, prompt: "", time: "", starred: !!ie.starred, archived: true, traces: [] });
+      }
       // 官方式 Suggested maps: GetCodeMapSuggestions(后端实测: 可选 cascadeId, LLM 即时生成
       // {id,prompt,subtitle,startingPoints}; id 每次重生不可持久, 仅作本屏候选, 点选即以 prompt 生成)
       let suggestions = [];
       try {
         const sr = await ls.call("GetCodeMapSuggestions", this._cascadeLsId ? { cascadeId: this._cascadeLsId } : {});
-        suggestions = ((sr && sr.suggestions) || []).map((s) => ({ prompt: s.prompt || "", subtitle: s.subtitle || "", startingPoints: s.startingPoints || [] }));
+        suggestions = ((sr && sr.suggestions) || []).map((s) => ({ id: s.id || "", prompt: s.prompt || "", subtitle: s.subtitle || "", startingPoints: s.startingPoints || [] }));
       } catch (_) {}
       this._post({ type: "codemaps", maps, suggestions });
     } catch (e) { this._post({ type: "error", text: "读取 Code Maps 失败: " + e.message }); }
+  }
+
+  // codemapindex.json(~/.codeium/windsurf/codemaps): LS 持久化的地图元数据(starred/archived/fileName)
+  _codeMapIndex() {
+    const out = {};
+    try {
+      const p = path.join(os.homedir(), ".codeium", "windsurf", "codemaps", "codemapindex.json");
+      const j = JSON.parse(fs.readFileSync(p, "utf8"));
+      for (const e of (j.codeMaps || [])) out[e.id] = e;
+    } catch (_) {}
+    return out;
+  }
+
+  // 官方式地图元数据: UpdateCodeMapMetadata{id,starred,archived}(整字段写, 持久化至 codemapindex.json)
+  async _handleCodeMapMeta(id, starred, archived) {
+    if (!id) return;
+    try {
+      const body = { id };
+      if (typeof starred === "boolean") body.starred = starred;
+      if (typeof archived === "boolean") body.archived = archived;
+      await require("./ls-bridge").call("UpdateCodeMapMetadata", body);
+      this._handleCodeMapsList();
+    } catch (e) { this._post({ type: "codemap-status", text: "⚠ " + e.message }); }
+  }
+
+  // 官方式地图分享: ShareCodeMap{codeMapJson,fileName} → {shareUrl}(windsurf.com/codemaps/…)
+  async _handleCodeMapShare(id) {
+    if (!id) return;
+    try {
+      const ie = this._codeMapIndex()[id];
+      if (!ie || !ie.fileName) throw new Error("未在 codemapindex 找到该地图");
+      const json = fs.readFileSync(path.join(os.homedir(), ".codeium", "windsurf", "codemaps", ie.fileName), "utf8");
+      const r = await require("./ls-bridge").call("ShareCodeMap", { codeMapJson: json, fileName: ie.fileName });
+      const url = (r && r.shareUrl) || "";
+      if (!url) throw new Error("未返回分享链接");
+      await vscode.env.clipboard.writeText(url);
+      this._post({ type: "codemap-status", text: "✓ 分享链接已复制: " + url });
+      vscode.window.showInformationMessage("Code Map 分享链接已复制: " + url, "打开").then((a) => { if (a === "打开") vscode.env.openExternal(vscode.Uri.parse(url)); });
+    } catch (e) { this._post({ type: "codemap-status", text: "⚠ 分享失败: " + e.message }); }
+  }
+
+  // 官方式建议忽略: DismissCodeMapSuggestion{cascadeId,suggestionId}(两字段均必填, 无会话时不可用)
+  async _handleCodeMapSugDismiss(id) {
+    if (!id || !this._cascadeLsId) return;
+    try {
+      await require("./ls-bridge").call("DismissCodeMapSuggestion", { cascadeId: this._cascadeLsId, suggestionId: id });
+      this._handleCodeMapsList();
+    } catch (e) { this._post({ type: "codemap-status", text: "⚠ " + e.message }); }
+  }
+
+  // 官方式共享地图导入: GetSharedCodeMap{codeMapId} → codeMapData(JSON 全文) → SaveCodeMapFromJson
+  // (LS 自动重发号 id 时间戳后缀并落盘 codemaps/ + codemapindex.json)
+  async _handleCodeMapImport() {
+    try {
+      const input = await vscode.window.showInputBox({
+        prompt: "粘贴共享地图链接或 ID",
+        placeHolder: "https://windsurf.com/codemaps/<id> 或 <id>",
+      });
+      if (!input) return;
+      const id = input.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop();
+      if (!id) throw new Error("无法解析地图 ID");
+      this._post({ type: "codemap-status", text: "导入中…" });
+      const ls = require("./ls-bridge");
+      const shared = await ls.call("GetSharedCodeMap", { codeMapId: id });
+      if (!shared || !shared.codeMapData) throw new Error("共享地图无内容");
+      await ls.call("SaveCodeMapFromJson", { codeMapJson: shared.codeMapData });
+      this._post({ type: "codemap-status", text: "✓ 导入完成" });
+      this._handleCodeMapsList();
+    } catch (e) { this._post({ type: "codemap-status", text: "⚠ 导入失败: " + e.message }); }
   }
 
   // 官方式 Code Map 生成: GenerateCodeMap{prompt}(connect+json 流: status 增量 → success.codeMapJson)
@@ -1286,17 +1397,58 @@ class CascadePanelProvider {
     } catch (_) {}
   }
 
-  // 官方式账户/套餐: GetUserStatus → {name,email,planStatus.planInfo{planName,monthlyPromptCredits,monthlyFlowCredits,maxNumChatInputTokens}}
+  // 官方式账户/套餐: GetUserStatus → {name,email,planStatus{planInfo{...},实时配额}}
+  // planStatus 顶层字段(实测)携当日/本周配额剩余百分比、可用 Flex credits、超额余额与配额重置时刻,
+  // 与官方面板底栏账户卡「配额」同源。重置时刻为 Unix 秒, 前端渲染为本地时间。
   async _handleAccountStatus() {
     try {
       const ls = require("./ls-bridge");
       const r = await ls.call("GetUserStatus", {});
       const u = (r && r.userStatus) || {};
-      const pi = ((u.planStatus || {}).planInfo) || {};
+      const ps = u.planStatus || {};
+      const pi = ps.planInfo || {};
+      const num = (x) => (typeof x === "number" ? x : (x === undefined || x === null ? null : Number(x)));
+      // 官方式团队管控: GetTeamOrganizationalControls → 组织级可用模型标签(先取缓存, 首帧即带标签)
+      if (this._teamModelLabels === undefined) {
+        try {
+          const tc = await ls.call("GetTeamOrganizationalControls", {});
+          this._teamModelLabels = ((tc && tc.controls) || {}).extensionModelLabels || [];
+        } catch (_) { this._teamModelLabels = []; }
+      }
       this._post({ type: "account", name: u.name || "", email: u.email || "",
         plan: pi.planName || "", promptCredits: pi.monthlyPromptCredits || 0,
-        flowCredits: pi.monthlyFlowCredits || 0, maxInputTokens: pi.maxNumChatInputTokens || "" });
+        flowCredits: pi.monthlyFlowCredits || 0, maxInputTokens: pi.maxNumChatInputTokens || "",
+        dailyQuotaPct: num(ps.dailyQuotaRemainingPercent), weeklyQuotaPct: num(ps.weeklyQuotaRemainingPercent),
+        flexCredits: num(ps.availableFlexCredits),
+        dailyResetUnix: num(ps.dailyQuotaResetAtUnix), weeklyResetUnix: num(ps.weeklyQuotaResetAtUnix),
+        teamModelLabels: this._teamModelLabels || [] });
+      this._watchPanelState();
     } catch (e) { this._post({ type: "error", text: "读取账户状态失败: " + e.message }); }
+  }
+
+  // 官方式实时面板状态: StreamCascadePanelReactiveUpdates{protocolVersion:1,id:<apiKey>}
+  // (Connect server-streaming, 后端实测)—— 配额消耗/套餐变化即推 fullState/diff 帧, 以之为
+  // 变更信号去抖重拉 GetUserStatus, 使账户卡配额与官方面板底栏实时同步。断流后 5s 自动重连。
+  // 活性: 仅当账户卡当前可见(_acctPopOpen)才推送刷新, 避免未打开时的无谓抖动。
+  _watchPanelState() {
+    if (this._panelWatching) return;
+    const ls = require("./ls-bridge");
+    if (!ls.ready() || !ls.apiKey()) return;
+    this._panelWatching = true;
+    const loop = () => {
+      const id = ls.apiKey();
+      if (!id) { this._panelWatching = false; return; }
+      ls.callStream("StreamCascadePanelReactiveUpdates", { protocolVersion: 1, id }, () => {
+        clearTimeout(this._panelDebounce);
+        this._panelDebounce = setTimeout(() => {
+          if (this._acctPopOpen) this._handleAccountStatus().catch(() => {});
+        }, 400);
+      }, 24 * 3600 * 1000).catch(() => {}).then(() => {
+        if (this._disposed) { this._panelWatching = false; return; }
+        setTimeout(loop, 5000);
+      });
+    };
+    loop();
   }
 
   // 官方式定制热重载: RefreshCustomization{} 让 LS 重新扫描 rules/skills/workflows
@@ -1336,7 +1488,7 @@ class CascadePanelProvider {
     await this._cxEnsureModel();
     const req = {
       cascadeId: this._cascadeLsId,
-      items: await this._cxItems(text, this._cascadeLsId),
+      items: [{ text }],
       cascadeConfig: { plannerConfig: this._cxPlannerConfig() },
     };
     if (images && images.length) req.images = images;
@@ -1403,7 +1555,7 @@ class CascadePanelProvider {
     }));
     const cfg = { plannerConfig: this._cxPlannerConfig() };
     for (const cid of ids) {
-      const req = { cascadeId: cid, items: await this._cxItems(msg.text, cid), cascadeConfig: cfg };
+      const req = { cascadeId: cid, items: [{ text: msg.text }], cascadeConfig: cfg };
       if (imgs.length) req.images = imgs;
       await ls.call("SendUserCascadeMessage", req);
     }
@@ -1577,8 +1729,11 @@ class CascadePanelProvider {
     if (!name || !name.trim()) return;
     try {
       const ls = require("./ls-bridge");
+      // rule/workflow 是 markdown 文件, LS 不自动补扩展名, 无 .md 会不被扫描收录
+      let fn = name.trim();
+      if (kind !== "skill" && !/\.md$/i.test(fn)) fn += ".md";
       const r = await ls.call("CreateCustomizationFile", {
-        fileName: name.trim(), fileType: ft, workspaceConfigDir: ".windsurf" });
+        fileName: fn, fileType: ft, workspaceConfigDir: ".windsurf" });
       const p = ((r && r.filePath) || "").replace(/^file:\/\//, "");
       if (p) await this._handleOpenFile(p);
       this._handleCustomizationsList();
@@ -1679,6 +1834,7 @@ class CascadePanelProvider {
   }
 
   async _handleSessionNew() {
+    this._sessionEpoch++;
     if (this._cxWatch) { try { this._cxWatch.close(); } catch (_) {} this._cxWatch = null; }
     this._cxWatchId = null;
     this._cascadeLsId = null;
@@ -1737,6 +1893,7 @@ class CascadePanelProvider {
 
   async _handleChat(msg) {
     const agent = msg.agent || "devin-local";
+    msg = Object.assign({}, msg, { text: _shapeText(msg.text, { agent, epoch: this._sessionEpoch }) });
     if (agent === "devin-local") {
       const bin = this._bin();
       if (!bin) {
@@ -1772,10 +1929,17 @@ class CascadePanelProvider {
         const imgs = this._cxImages(msg.images);
         // 官方式发送前配额闸: CheckUserMessageRateLimit → !hasCapacity 即拦(免费额度耗尽时与官方同款提示)
         try {
-          const cap = await ls.call("CheckUserMessageRateLimit", {});
+          // 官方双闸: CheckUserMessageRateLimit(消息频次) + CheckChatCapacity(后端总容量), 任一无容即拦
+          const [cap, chat] = await Promise.all([
+            ls.call("CheckUserMessageRateLimit", {}),
+            ls.call("CheckChatCapacity", {}).catch(() => null),
+          ]);
           if (cap && cap.hasCapacity === false) {
             const left = (cap.messagesRemaining >= 0 && cap.maxMessages >= 0) ? "（" + cap.messagesRemaining + "/" + cap.maxMessages + "）" : "";
             return this._post({ type: "assistant-done", id: msg.id, text: "⚠ 已达消息用量上限" + left + "，请稍后再试或升级套餐" });
+          }
+          if (chat && chat.hasCapacity === false) {
+            return this._post({ type: "assistant-done", id: msg.id, text: "⚠ 后端聊天容量已满，请稍后再试" });
           }
         } catch (_) {}
         // 官方式消息队列: 运行中再发 → QueueCascadeMessage(带 cascadeConfig, 轮次结束 LS 自动续驱)
@@ -1804,7 +1968,7 @@ class CascadePanelProvider {
         try {
           const req = {
             cascadeId: this._cascadeLsId,
-            items: await this._cxItems(msg.text, this._cascadeLsId),
+            items: [{ text: msg.text }],
             cascadeConfig: { plannerConfig: this._cxPlannerConfig() },
           };
           if (imgs.length) req.images = imgs;
@@ -2029,7 +2193,7 @@ class CascadePanelProvider {
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 10px 6px; display:flex; flex-direction:column; gap:6px; }
   .card.dragover { border-color:var(--accent,#4a9eff); box-shadow:0 0 0 1px var(--accent,#4a9eff) inset; }
   textarea { resize:none; background:transparent; color:var(--vscode-input-foreground); border:none; outline:none; padding:2px 2px 0; font:13px var(--vscode-font-family); min-height:20px; max-height:120px; }
-  .row { display:flex; gap:4px; align-items:center; }
+  .row { display:flex; gap:4px; align-items:center; flex-wrap:wrap; row-gap:2px; }
   .pill { display:inline-flex; gap:4px; align-items:center; border:none; background:transparent; color:var(--dim); font:12px var(--vscode-font-family); border-radius:999px; padding:3px 8px; cursor:pointer; }
   .pill:hover { background:var(--pill-hover); color:var(--vscode-foreground); }
   .pill select { appearance:none; -webkit-appearance:none; background:transparent; color:inherit; border:none; font:inherit; cursor:pointer; outline:none; max-width:110px; text-overflow:ellipsis; }
@@ -2111,6 +2275,27 @@ class CascadePanelProvider {
   #slashMenu .it .ds, #atMenu .it .ds { color:var(--dim); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #slashMenu .it.sel, #slashMenu .it:hover, #atMenu .it.sel, #atMenu .it:hover { background:var(--pill-hover); }
   #atMenu .empty2 { padding:6px 10px; font-size:11.5px; color:var(--dim); }
+  #modelBtn, #modeBtn, #agentBtn { background:transparent; border:none; color:inherit; font:inherit; cursor:pointer; max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0; }
+  #modelMenu, #modeMenu, #agentMenu { display:none; margin:0 0 6px; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  #modelMenu.show, #modeMenu.show, #agentMenu.show { display:block; }
+  #modelMenu #modelFilter { width:100%; box-sizing:border-box; background:transparent; border:none; border-bottom:1px solid var(--line); color:var(--vscode-foreground); font:12px var(--vscode-font-family); padding:6px 10px; outline:none; }
+  #modelList, #modeList, #agentList { max-height:260px; overflow-y:auto; }
+  #modeList .mit, #agentList .mit { padding:5px 10px; cursor:pointer; }
+  #modeList .mit:hover, #modeList .mit.sel, #modeList .mit.kbd, #agentList .mit:hover, #agentList .mit.sel, #agentList .mit.kbd { background:var(--pill-hover); }
+  #modeList .mit.kbd, #agentList .mit.kbd { outline:1px solid var(--line); outline-offset:-1px; }
+  #modeList .mit .mrow, #agentList .mit .mrow { display:flex; align-items:baseline; gap:6px; font-size:12px; }
+  #modeList .mit .mds, #agentList .mit .mds { color:var(--dim); font-size:10.5px; margin-top:1px; line-height:1.35; }
+  #agentList .mit .bdg { font-size:9.5px; padding:0 5px; border:1px solid var(--line); border-radius:6px; color:var(--dim); flex-shrink:0; }
+  #modelList .mgrp { padding:5px 10px 2px; font-size:10.5px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--card); }
+  #modelList .mit { padding:5px 10px; cursor:pointer; }
+  #modelList .mit:hover, #modelList .mit.sel, #modelList .mit.kbd { background:var(--pill-hover); }
+  #modelList .mit.kbd { outline:1px solid var(--line); outline-offset:-1px; }
+  #modelList .mit.dis { opacity:.45; cursor:default; }
+  #modelList .mit .mrow { display:flex; align-items:baseline; gap:6px; font-size:12px; }
+  #modelList .mit .mnm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #modelList .mit .mx { color:var(--dim); font-size:11px; flex-shrink:0; }
+  #modelList .mit .mds { color:var(--dim); font-size:10.5px; margin-top:1px; line-height:1.35; }
+  #modelList .empty3 { padding:8px 10px; font-size:11.5px; color:var(--dim); }
 </style></head><body>
   <div id="log">
     <div class="empty" id="empty">
@@ -2144,6 +2329,9 @@ class CascadePanelProvider {
   <div class="composer">
     <div id="slashMenu"></div>
     <div id="atMenu"></div>
+    <div id="modelMenu"><input id="modelFilter" type="text" placeholder="搜索模型…"><div id="modelList"></div></div>
+    <div id="modeMenu"><div id="modeList"></div></div>
+    <div id="agentMenu"><div id="agentList"></div></div>
     <div class="card">
       <div id="imgStrip" class="imgstrip"></div>
       <textarea id="input" rows="1" placeholder="Type @ to bring in another conversation"></textarea>
@@ -2153,12 +2341,12 @@ class CascadePanelProvider {
         <button id="imgBtn" title="附加图片（支持粘贴）">🖼</button>
         <button id="arenaBtn" title="Arena 模式：同题双轨候选，择优续行（新会话/会话中途均可）">⚔</button>
         <button id="wtBtn" title="Worktree 模式：新会话在隔离 git worktree 中运行，改动不直接落入主工作区，可随后合并">⎇</button>
-        <button id="domainBtn" style="display:none;width:auto;padding:0 8px;font-size:12px"></button>
-        <span class="pill" id="modeWrap" title="Session Mode">&lt;&gt;<select id="modeSel"></select></span>
-        <span class="pill" id="modelWrap" title="Model"><select id="modelSel"></select></span>
+        <span class="pill" id="modeWrap" title="Session Mode">&lt;&gt;<button id="modeBtn" type="button"></button></span>
+        <span class="pill" id="modelWrap" title="Model"><button id="modelBtn" type="button"></button></span>
         <span class="spacer"></span>
         <span id="tokCount" title="输入 token / 上限 (GetMessageTokenCount)" style="font-size:10.5px;color:var(--dim);"></span>
-        <span class="pill" title="切换 agent (Ctrl+')"><span id="agentIcon">⬡</span><select id="agent"></select><span class="badge" id="badge"></span></span>
+        <span class="pill" id="daoModePill" title="领域模式切换(提示词隔离/替换)" style="display:none"></span>
+        <span class="pill" id="agentWrap" title="切换 agent (Ctrl+')"><span id="agentIcon">⬡</span><button id="agentBtn" type="button"></button><span class="badge" id="badge"></span></span>
         <button class="send" id="send" title="发送 (Enter)">↑</button>
       </div>
     </div>
@@ -2175,11 +2363,13 @@ class CascadePanelProvider {
   let agent = AGENTS[0].id;
   const state = vscode.getState() || { history: [] };
   const $ = (id) => document.getElementById(id);
-  const logEl=$("log"), inputEl=$("input"), sendEl=$("send"), agentEl=$("agent"),
+  const logEl=$("log"), inputEl=$("input"), sendEl=$("send"),
+        agentBtn=$("agentBtn"), agentMenu=$("agentMenu"), agentList=$("agentList"),
         badgeEl=$("badge"), envEl=$("env"), emptyEl=$("empty"),
         authbar=$("authbar"), authmsg=$("authmsg"), loginBtn=$("loginBtn"),
         authcode=$("authcode"), authsubmit=$("authsubmit"), modeSel=$("modeSel"),
-        modelSel=$("modelSel"),
+        modelBtn=$("modelBtn"), modelMenu=$("modelMenu"), modelFilter=$("modelFilter"), modelList=$("modelList"),
+        modeBtn=$("modeBtn"), modeMenu=$("modeMenu"), modeList=$("modeList"),
         usageEl=$("usage"), folderSeg=$("folderSeg"),
         modeWrap=$("modeWrap"), modelWrap=$("modelWrap"), recentEl=$("recent"),
         recentList=$("recentList"), viewAll=$("viewAll"),
@@ -2205,7 +2395,61 @@ class CascadePanelProvider {
   agBtn.onclick=()=>openHomeList("agList","agents-registry");
   cmBtn.onclick=()=>openHomeList("cmList","codemaps-list");
 
-  modelSel.addEventListener("change",()=>vscode.postMessage({type:"set-config", configId:"model", value:modelSel.value, agent}));
+  // 官方式富模型下拉: 自定义弹层(分族分组 + 搜索 + 徽标 + 价目副行), 替代 native select(R61 局限)
+  let modelCur=null;
+  function modelLabel(o){ return (o.recommended?"⭐ ":"")+(o.disabled?"🔒 ":"")+(o.name||o.value)+(o.images?" 🖼":""); }
+  function modelBtnSync(s){
+    const o=(s.options||[]).find(x=>x.value===s.currentValue);
+    modelCur=s; modelBtn.textContent=o?modelLabel(o):(s.currentValue||"模型");
+    modelBtn.title=o&&o.description?o.description:"Model";
+  }
+  function modelMenuRender(q){
+    modelList.innerHTML=""; const s=modelCur; if(!s) return;
+    const ql=(q||"").toLowerCase();
+    const match=(o)=>!ql||(o.name||o.value).toLowerCase().includes(ql)||(o.familyLabel||"").toLowerCase().includes(ql);
+    const mkIt=(o)=>{
+      const it=document.createElement("div"); it.className="mit"+(o.disabled?" dis":"")+(o.value===s.currentValue?" sel":"");
+      const row=document.createElement("div"); row.className="mrow";
+      const nm=document.createElement("span"); nm.className="mnm"; nm.textContent=modelLabel(o); row.appendChild(nm);
+      const mx=(o.description||"").match(/·\\s*([\\d.]+x)/);
+      if(mx){ const x=document.createElement("span"); x.className="mx"; x.textContent=mx[1]; row.appendChild(x); }
+      it.appendChild(row);
+      if(o.description){ const ds=document.createElement("div"); ds.className="mds"; ds.textContent=o.description; it.appendChild(ds); }
+      if(!o.disabled) it.onclick=()=>{ modelMenuClose();
+        vscode.postMessage({type:"set-config", configId:"model", value:o.value, agent});
+        modelCur=Object.assign({},s,{currentValue:o.value}); modelBtnSync(modelCur);
+        const grp=curGroup(); if(cfgStore[grp]&&cfgStore[grp].model) cfgStore[grp].model.currentValue=o.value; };
+      return it; };
+    const opts=(s.options||[]).filter(match); let any=false;
+    const groups=new Map(); const flat=[];
+    for(const o of opts){ const gl=o.familyLabel||""; if(gl){ if(!groups.has(gl)) groups.set(gl,[]); groups.get(gl).push(o); } else flat.push(o); }
+    for(const o of flat){ modelList.appendChild(mkIt(o)); any=true; }
+    for(const [gl,items] of groups){ const h=document.createElement("div"); h.className="mgrp"; h.textContent=gl; modelList.appendChild(h);
+      for(const o of items){ modelList.appendChild(mkIt(o)); any=true; } }
+    if(!any){ const e=document.createElement("div"); e.className="empty3"; e.textContent="无匹配模型"; modelList.appendChild(e); }
+  }
+  function modelMenuClose(){ modelMenu.classList.remove("show"); }
+  modelBtn.onclick=(e)=>{ e.stopPropagation();
+    if(modelMenu.classList.contains("show")) return modelMenuClose();
+    modelFilter.value=""; modelMenuRender(""); modelMenu.classList.add("show");
+    modelFilter.focus(); const sel=modelList.querySelector(".mit.sel"); if(sel) sel.scrollIntoView({block:"center"}); };
+  modelFilter.addEventListener("input",()=>modelMenuRender(modelFilter.value));
+  // 键盘导航: ↑↓ 在可选项间移动(跳过🔒门控与组头, 循环), Enter 选中
+  function modelKbdItems(){ return Array.from(modelList.querySelectorAll(".mit:not(.dis)")); }
+  modelFilter.addEventListener("keydown",(e)=>{
+    if(e.key==="Escape") return modelMenuClose();
+    if(e.key!=="ArrowDown"&&e.key!=="ArrowUp"&&e.key!=="Enter") return;
+    e.preventDefault();
+    const items=modelKbdItems(); if(!items.length) return;
+    let i=items.findIndex(x=>x.classList.contains("kbd"));
+    if(e.key==="Enter"){ const t=i>=0?items[i]:items.find(x=>x.classList.contains("sel")); if(t) t.click(); return; }
+    if(i>=0) items[i].classList.remove("kbd");
+    i=e.key==="ArrowDown"?(i+1)%items.length:(i<=0?items.length-1:i-1);
+    items[i].classList.add("kbd"); items[i].scrollIntoView({block:"nearest"});
+  });
+  document.addEventListener("click",(e)=>{ if(!modelMenu.contains(e.target)&&e.target!==modelBtn) modelMenuClose();
+    if(!modeMenu.contains(e.target)&&e.target!==modeBtn) modeMenuClose();
+    if(!agentMenu.contains(e.target)&&e.target!==agentBtn) agentMenuClose(); });
   // 发送钮在回合进行中变为停止钮(官方式)
   let busy=false;
   function setBusy(b){ busy=b; sendEl.textContent=b?"■":"↑"; sendEl.title=b?"中断当前回合":"发送 (Enter)"; }
@@ -2213,13 +2457,25 @@ class CascadePanelProvider {
   loginBtn.onclick=()=>{ authmsg.textContent="正在拉起登录…"; vscode.postMessage({type:"login"}); };
   authsubmit.onclick=()=>{ if(authcode.value.trim()){ vscode.postMessage({type:"login-code", code:authcode.value.trim()}); authmsg.textContent="校验中…"; } };
   authcode.addEventListener("keydown",(e)=>{ if(e.key==="Enter") authsubmit.onclick(); });
-  modeSel.addEventListener("change",()=>vscode.postMessage({type:"set-mode", modeId:modeSel.value}));
+  // 官方式模式下拉(同 R100 模型弹层): 行=名称 + description 副行
+  let modeOpts=[], modeVal=null;
+  function modeBtnSync(){ const o=modeOpts.find(x=>x.value===modeVal);
+    modeBtn.textContent=o?(o.name||o.value):(modeVal||"模式"); modeBtn.title=o&&o.description?o.description:"Session Mode"; }
+  function modeSet(opts,cur){ modeOpts=opts; modeVal=cur; modeBtnSync(); }
+  function modeMenuClose(){ modeMenu.classList.remove("show"); }
+  function modeMenuRender(){ modeList.innerHTML="";
+    for(const o of modeOpts){ const it=document.createElement("div"); it.className="mit"+(o.value===modeVal?" sel":"");
+      const row=document.createElement("div"); row.className="mrow"; row.textContent=o.name||o.value; it.appendChild(row);
+      if(o.description){ const ds=document.createElement("div"); ds.className="mds"; ds.textContent=o.description; it.appendChild(ds); }
+      it.onclick=()=>{ modeMenuClose(); modeVal=o.value; modeBtnSync();
+        vscode.postMessage({type:"set-mode", modeId:o.value});
+        const grp=curGroup(); if(cfgStore[grp]&&cfgStore[grp].mode) cfgStore[grp].mode.currentValue=o.value; };
+      modeList.appendChild(it); } }
+  modeBtn.onclick=(e)=>{ e.stopPropagation(); modelMenuClose();
+    if(modeMenu.classList.contains("show")) return modeMenuClose();
+    modeMenuRender(); modeMenu.classList.add("show"); };
 
-  function renderAgents() {
-    agentEl.innerHTML="";
-    for (const a of AGENTS){ const o=document.createElement("option"); o.value=a.id; o.textContent=a.label; agentEl.appendChild(o); }
-    agentEl.value=agent; onAgentChange();
-  }
+  function renderAgents(){ onAgentChange(); }
   // 官方式 agent 图标:Cascade=波形,Devin Local/Cloud=Devin 六边形(cloud 带云标)
   const AGENT_ICONS={cascade:"🌊","devin-local":"⬢","devin-cloud":"☁"};
   const agentIcon=$("agentIcon");
@@ -2228,36 +2484,51 @@ class CascadePanelProvider {
   function curGroup(){ return agent==="cascade"?"cascade":"acp"; }
   function renderConfigFor(grp){
     const s=cfgStore[grp]||{};
-    if(s.model){ modelSel.innerHTML="";
-      // 官方两级选择器同构: 按「模型族」(familyLabel) 分组为 <optgroup>, 标注 ⭐推荐 / 🖼图像 / 🔒门控
-      const opts=s.model.options||[]; const groups=new Map(); const flat=[];
-      for(const o of opts){ const gl=o.familyLabel||""; if(gl){ if(!groups.has(gl)) groups.set(gl,[]); groups.get(gl).push(o); } else flat.push(o); }
-      const mkOpt=(o)=>{ const e=document.createElement("option"); e.value=o.value;
-        e.textContent=(o.recommended?"⭐ ":"")+(o.disabled?"🔒 ":"")+(o.name||o.value)+(o.images?" 🖼":"");
-        if(o.disabled) e.disabled=true; if(o.description) e.title=o.description; return e; };
-      for(const o of flat) modelSel.appendChild(mkOpt(o));
-      for(const [gl,items] of groups){ const og=document.createElement("optgroup"); og.label=gl;
-        for(const o of items) og.appendChild(mkOpt(o)); modelSel.appendChild(og); }
-      modelSel.value=s.model.currentValue; modelWrap.classList.add("show"); }
-    else { modelWrap.classList.remove("show"); }
-    if(s.mode){ modeSel.innerHTML="";
-      for(const o of (s.mode.options||[])){ const e=document.createElement("option"); e.value=o.value; e.textContent=o.name||o.value; if(o.description) e.title=o.description; modeSel.appendChild(e); }
-      modeSel.value=s.mode.currentValue; modeWrap.classList.add("show"); }
-    else { modeWrap.classList.remove("show"); }
+    if(s.model){ modelBtnSync(s.model); modelMenuClose(); modelWrap.classList.add("show"); }
+    else { modelWrap.classList.remove("show"); modelMenuClose(); }
+    if(s.mode){ modeSet(s.mode.options||[], s.mode.currentValue); modeMenuClose(); modeWrap.classList.add("show"); }
+    else { modeWrap.classList.remove("show"); modeMenuClose(); }
   }
   function onAgentChange(){
-    agent=agentEl.value;
     if(typeof slashSync==="function") slashSync();
     const a=AGENTS.find(x=>x.id===agent);
     badgeEl.textContent=a&&a.preview?"Preview":"";
     agentIcon.textContent=AGENT_ICONS[agent]||"⬡";
-    const pill=agentEl.closest(".pill"); if(pill&&a) pill.title=a.label+" · "+a.hint+" (Ctrl+')";
+    agentBtn.textContent=a?a.label:agent;
+    const pill=agentBtn.closest(".pill"); if(pill&&a) pill.title=a.label+" · "+a.hint+" (Ctrl+')";
     renderConfigFor(curGroup());
   }
-  agentEl.addEventListener("change", onAgentChange);
+  // 官方式 agent 下拉(同 R100/R102 弹层): 行=图标+标签+Preview 徽标, hint 副行
+  function agentMenuClose(){ agentMenu.classList.remove("show"); }
+  function agentMenuRender(){ agentList.innerHTML="";
+    for(const a of AGENTS){ const it=document.createElement("div"); it.className="mit"+(a.id===agent?" sel":"");
+      const row=document.createElement("div"); row.className="mrow";
+      const nm=document.createElement("span"); nm.className="mnm"; nm.textContent=(AGENT_ICONS[a.id]||"⬡")+" "+a.label; row.appendChild(nm);
+      if(a.preview){ const b=document.createElement("span"); b.className="bdg"; b.textContent="Preview"; row.appendChild(b); }
+      it.appendChild(row);
+      const ds=document.createElement("div"); ds.className="mds"; ds.textContent=a.hint; it.appendChild(ds);
+      it.onclick=()=>{ agentMenuClose(); agent=a.id; onAgentChange(); };
+      agentList.appendChild(it); } }
+  agentBtn.onclick=(e)=>{ e.stopPropagation(); modelMenuClose(); modeMenuClose();
+    if(agentMenu.classList.contains("show")) return agentMenuClose();
+    agentMenuRender(); agentMenu.classList.add("show"); };
   // Ctrl+' 循环切换 agent(复刻官方快捷键)
   document.addEventListener("keydown",(e)=>{ if(e.ctrlKey && e.key==="'"){ e.preventDefault();
-    const i=AGENTS.findIndex(x=>x.id===agent); agentEl.value=AGENTS[(i+1)%AGENTS.length].id; onAgentChange(); }});
+    const i=AGENTS.findIndex(x=>x.id===agent); agent=AGENTS[(i+1)%AGENTS.length].id; onAgentChange(); }});
+  // mode/agent 弹层键盘导航(同 R101): ↑↓ 循环 .kbd 高亮, Enter 选中, Escape 关闭
+  document.addEventListener("keydown",(e)=>{
+    const open=[[modeMenu,modeList],[agentMenu,agentList]].find(([m])=>m.classList.contains("show"));
+    if(!open) return;
+    if(e.key==="Escape"){ e.preventDefault(); return open[0]===modeMenu?modeMenuClose():agentMenuClose(); }
+    if(e.key!=="ArrowDown"&&e.key!=="ArrowUp"&&e.key!=="Enter") return;
+    e.preventDefault();
+    const items=Array.from(open[1].querySelectorAll(".mit")); if(!items.length) return;
+    let i=items.findIndex(x=>x.classList.contains("kbd"));
+    if(e.key==="Enter"){ const t=i>=0?items[i]:items.find(x=>x.classList.contains("sel")); if(t) t.click(); return; }
+    if(i>=0) items[i].classList.remove("kbd");
+    i=e.key==="ArrowDown"?(i+1)%items.length:(i<=0?items.length-1:i-1);
+    items[i].classList.add("kbd"); items[i].scrollIntoView({block:"nearest"});
+  });
 
   // 官方式轮换占位文案
   const HINTS=["Type @ to bring in another conversation",
@@ -2323,8 +2594,6 @@ class CascadePanelProvider {
   wtUndo.onclick=()=>vscode.postMessage({type:"worktree-undo"});
   $("wtOpen").onclick=()=>vscode.postMessage({type:"worktree-open"});
   wtBtn.onclick=()=>{ wtOn=!wtOn; wtBtn.classList.toggle("on",wtOn); };
-  const domainBtn=$("domainBtn");
-  domainBtn.onclick=()=>vscode.postMessage({type:"domain-toggle"});
   wtMerge.onclick=()=>vscode.postMessage({type:"worktree-merge"});
   const arenaBtn=$("arenaBtn"); let arenaOn=false;
   const arenaTitle=arenaBtn.title;
@@ -2486,7 +2755,7 @@ class CascadePanelProvider {
         +(m.windsurf&&m.windsurf.lsPort?"\\n官方 language_server 端口 "+m.windsurf.lsPort+" · CSRF "+(m.windsurf.lsCsrf?"已捕获":"未捕获"):"");
       if(m.folder) folderSeg.textContent="📁 "+m.folder;
       envEl.style.cursor="pointer"; envEl.onclick=()=>{ const ex=document.getElementById("acctPop");
-        if(ex){ ex.remove(); } else vscode.postMessage({type:"account-status"}); };
+        if(ex){ ex.remove(); vscode.postMessage({type:"account-close"}); } else vscode.postMessage({type:"account-status"}); };
       if(m.devinBin && !m.loggedIn){ authbar.classList.add("show"); authmsg.textContent="未登录 — 插件自持登录(不依赖 Devin Desktop)"; }
       else { authbar.classList.remove("show"); }
     }
@@ -2500,7 +2769,13 @@ class CascadePanelProvider {
       const old=document.getElementById("acctPop"); if(old) old.remove();
       const p=document.createElement("div"); p.id="acctPop";
       p.style.cssText="position:fixed;left:8px;bottom:34px;z-index:99;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-widget-border,#444);border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.7;box-shadow:0 4px 12px rgba(0,0,0,.4);";
-      const rows=[["账户",m.name],["邮箱",m.email],["套餐",m.plan],["Prompt 额度/月",m.promptCredits],["Flow 额度/月",m.flowCredits],["输入 token 上限",m.maxInputTokens]];
+      const fmtT=(u)=>{ try{ return new Date(u*1000).toLocaleString(); }catch(_){ return ""; } };
+      const rows=[["账户",m.name],["邮箱",m.email],["套餐",m.plan],["Prompt 额度/月",m.promptCredits],["Flow 额度/月",m.flowCredits],["输入 token 上限",m.maxInputTokens],
+        ["今日配额剩余",(m.dailyQuotaPct===null||m.dailyQuotaPct===undefined)?"":m.dailyQuotaPct+"%"],
+        ["本周配额剩余",(m.weeklyQuotaPct===null||m.weeklyQuotaPct===undefined)?"":m.weeklyQuotaPct+"%"],
+        ["Flex credits",(m.flexCredits===null||m.flexCredits===undefined)?"":m.flexCredits],
+        ["日配额重置",m.dailyResetUnix?fmtT(m.dailyResetUnix):""],
+        ["周配额重置",m.weeklyResetUnix?fmtT(m.weeklyResetUnix):""]];
       for(const [k,v] of rows){ if(v===""||v===undefined) continue;
         const d=document.createElement("div"); const b=document.createElement("b"); b.textContent=k+": "; d.appendChild(b);
         d.appendChild(document.createTextNode(String(v))); p.appendChild(d); }
@@ -2656,6 +2931,8 @@ class CascadePanelProvider {
         row((info.lifeguard.enabled?"已启用":"已禁用")+" · "+(info.lifeguard.modelDisplayName||info.lifeguard.model||"")+(info.lifeguard.agentVersion?" · "+info.lifeguard.agentVersion:"")); }
       if((info.webOrigins||[]).length){ sec("Cascade Web 默认白名单 ("+info.webOrigins.length+")");
         row(info.webOrigins.map(function(u){return u.replace(/^https?:\\/\\//,"");}).join(" · ")); }
+      if((info.commandModels||[]).length){ sec("Command 模型 ("+info.commandModels.length+")");
+        row(info.commandModels.join(" · ")); }
       sec("LS 日志尾部");
       for(const l of info.logs||[]) row(l);
     }
@@ -2729,7 +3006,9 @@ class CascadePanelProvider {
       const bt=document.createElement("span"); bt.className="mt"; bt.textContent="Code Maps ("+(m.maps||[]).length+")";
       const rf=document.createElement("span"); rf.className="mi"; rf.title="刷新"; rf.textContent="↻";
       rf.onclick=()=>vscode.postMessage({type:"codemaps-list"});
-      bar.appendChild(bt); bar.appendChild(rf); cmList.appendChild(bar);
+      const im=document.createElement("span"); im.className="mi"; im.title="导入共享地图(粘贴链接)"; im.textContent="⇘";
+      im.onclick=()=>vscode.postMessage({type:"codemap-import"});
+      bar.appendChild(bt); bar.appendChild(rf); bar.appendChild(im); cmList.appendChild(bar);
       const gen=document.createElement("div"); gen.style.cssText="display:flex;gap:6px;margin:4px 0;";
       const gi=document.createElement("input"); gi.placeholder="描述要生成的代码地图…"; gi.style.cssText="flex:1;background:var(--card);color:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;";
       const gb=document.createElement("button"); gb.textContent="生成"; gb.style.cssText="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;";
@@ -2742,20 +3021,34 @@ class CascadePanelProvider {
       if(sugs.length){
         const sh=document.createElement("div"); sh.textContent="Suggested maps"; sh.style.cssText="font-size:11px;color:var(--dim);margin:6px 0 2px;"; cmList.appendChild(sh);
         for(const sg of sugs){ const sc=document.createElement("div"); sc.className="mem"; sc.style.cursor="pointer"; sc.title="点击以此建议生成地图";
-          const st=document.createElement("div"); st.textContent="✧ "+sg.prompt; st.style.fontSize="12px";
+          const st=document.createElement("div"); st.style.cssText="font-size:12px;display:flex;align-items:center;gap:4px;";
+          const stx=document.createElement("span"); stx.textContent="✧ "+sg.prompt; stx.style.flex="1"; st.appendChild(stx);
+          if(sg.id){ const sx=document.createElement("span"); sx.className="mi"; sx.textContent="×"; sx.title="忽略此建议";
+            sx.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-sug-dismiss", id:sg.id}); }; st.appendChild(sx); }
           const ss=document.createElement("div"); ss.textContent=sg.subtitle+((sg.startingPoints||[]).length?" · "+sg.startingPoints.join(", "):""); ss.style.cssText="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
           sc.appendChild(st); sc.appendChild(ss);
           sc.onclick=()=>{ gi.value=sg.prompt; gs.textContent="生成中…"; vscode.postMessage({type:"codemap-generate", prompt:sg.prompt}); };
           cmList.appendChild(sc);
         }
       }
-      const arr=m.maps||[];
-      if(!arr.length){ const d=document.createElement("div"); d.textContent="(暂无地图 —— 输入提示生成)"; d.style.opacity=".6"; cmList.appendChild(d); }
-      for(const mp of arr){ const it=document.createElement("div"); it.className="mem";
+      // 官方式地图卡: ★ 置顶 / 归档分区 / ⇗ 分享(UpdateCodeMapMetadata + ShareCodeMap)
+      const all=m.maps||[];
+      const live=all.filter(x=>!x.archived), arch=all.filter(x=>x.archived);
+      live.sort((a,b)=>(b.starred?1:0)-(a.starred?1:0));
+      if(!all.length){ const d=document.createElement("div"); d.textContent="(暂无地图 —— 输入提示生成)"; d.style.opacity=".6"; cmList.appendChild(d); }
+      const mkCard=(mp)=>{ const it=document.createElement("div"); it.className="mem";
         const h=document.createElement("div"); h.className="mh"; h.style.cursor="pointer";
         const t=document.createElement("span"); t.className="mt"; t.textContent="\u{1F5FA} "+mp.title; t.title=mp.prompt;
+        if(mp.archived) t.style.opacity=".55";
         const tg=document.createElement("span"); tg.className="mtags"; tg.textContent=(mp.traces||[]).length+" traces"+(mp.time?" \u00b7 "+mp.time.slice(0,10):"");
-        h.appendChild(t); h.appendChild(tg); it.appendChild(h);
+        const star=document.createElement("span"); star.className="mi"; star.textContent=mp.starred?"\u2605":"\u2606"; star.title=mp.starred?"取消置顶":"置顶";
+        if(mp.starred) star.style.color="#e2b93d";
+        star.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-meta", id:mp.id, starred:!mp.starred}); };
+        const sh=document.createElement("span"); sh.className="mi"; sh.textContent="\u21d7"; sh.title="分享(复制链接)";
+        sh.onclick=(ev)=>{ ev.stopPropagation(); const gs=document.getElementById("cmStatus"); if(gs) gs.textContent="分享中…"; vscode.postMessage({type:"codemap-share", id:mp.id}); };
+        const ar=document.createElement("span"); ar.className="mi"; ar.textContent=mp.archived?"\u2934":"\u{1F5C3}"; ar.title=mp.archived?"恢复":"归档";
+        ar.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-meta", id:mp.id, archived:!mp.archived}); };
+        h.appendChild(t); h.appendChild(tg); h.appendChild(star); h.appendChild(sh); h.appendChild(ar); it.appendChild(h);
         const body=document.createElement("div"); body.style.display="none";
         for(const tr of (mp.traces||[])){
           const th=document.createElement("div"); th.className="mc"; th.style.fontWeight="600"; th.textContent=tr.title; body.appendChild(th);
@@ -2767,7 +3060,15 @@ class CascadePanelProvider {
             row.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"open-file-line", path:lc.path, line:lc.line}); };
             body.appendChild(row); } }
         h.onclick=()=>{ body.style.display=body.style.display==="none"?"":"none"; };
-        it.appendChild(body); cmList.appendChild(it); }
+        it.appendChild(body); return it; };
+      for(const mp of live) cmList.appendChild(mkCard(mp));
+      if(arch.length){
+        const ah=document.createElement("div"); ah.textContent="\u25b8 已归档 ("+arch.length+")"; ah.style.cssText="font-size:11px;color:var(--dim);margin:8px 0 2px;cursor:pointer;";
+        const aw=document.createElement("div"); aw.style.display="none";
+        ah.onclick=()=>{ const open=aw.style.display==="none"; aw.style.display=open?"":"none"; ah.textContent=(open?"\u25be":"\u25b8")+" 已归档 ("+arch.length+")"; };
+        for(const mp of arch) aw.appendChild(mkCard(mp));
+        cmList.appendChild(ah); cmList.appendChild(aw);
+      }
     }
     else if(m.type==="codemap-status"){
       const gs=document.getElementById("cmStatus"); if(gs) gs.textContent=m.text;
@@ -2893,6 +3194,11 @@ class CascadePanelProvider {
       const st=document.createElement("span"); st.className="st"; st.textContent=m.status||"…";
       const ti=document.createElement("span"); ti.className="tt"; ti.textContent=(el.dataset.kn?"["+el.dataset.kn+"] ":"")+(el.dataset.ti||m.toolCallId);
       hd.appendChild(st); hd.appendChild(ti);
+      if(m.kindName==="cascade"&&m.status==="in_progress"&&typeof m.stepIndex==="number"){
+        const cx=document.createElement("button"); cx.className="stepcancel"; cx.textContent="✕"; cx.title="取消此步骤(CancelCascadeSteps)";
+        cx.style.cssText="margin-left:auto;cursor:pointer;background:none;border:none;color:#8b949e;font-size:11px;";
+        cx.onclick=(e)=>{ e.stopPropagation(); cx.remove(); vscode.postMessage({type:"cx-step-cancel", stepIndex:m.stepIndex}); };
+        hd.appendChild(cx); }
       if(el.dataset.loc){ const ch=document.createElement("span"); ch.className="chev"; ch.textContent=el.dataset.open?"▾":"▸"; hd.appendChild(ch);
         const bd=document.createElement("div"); bd.className="tbody";
         for(const p of el.dataset.loc.split("\\n")){ const r=document.createElement("div"); r.textContent=p; bd.appendChild(r); }
@@ -2933,11 +3239,10 @@ class CascadePanelProvider {
       atRender();
     }
     else if(m.type==="modes" && m.modes && m.modes.availableModes){
-      modeSel.innerHTML="";
-      for(const md of m.modes.availableModes){ const o=document.createElement("option"); o.value=md.id; o.textContent=md.name; modeSel.appendChild(o); }
-      modeSel.value=m.modes.currentModeId; modeWrap.classList.add("show");
+      modeSet(m.modes.availableModes.map(md=>({value:md.id,name:md.name,description:md.description})), m.modes.currentModeId);
+      modeWrap.classList.add("show");
     }
-    else if(m.type==="mode-current"){ if(modeSel.querySelector('option[value="'+m.modeId+'"]')) modeSel.value=m.modeId; }
+    else if(m.type==="mode-current"){ if(modeOpts.some(o=>o.value===m.modeId)){ modeVal=m.modeId; modeBtnSync(); } }
     else if(m.type==="thought-delta"){
       // 官方式可折叠思考块:流式中展开计时,答复开始后自动收起为「Thought for Ns」
       const node=findNode(m.id);
@@ -2976,7 +3281,11 @@ class CascadePanelProvider {
       const node=findNode(m.id);
       if(node){ const fin=(node.dataset.acc||"")||m.text||"(空响应)";
         if(!node.dataset.acc){ node.innerHTML=md(fin); }
-        state.history.push({role:"assistant",content:fin}); vscode.setState(state); attachMsgCopy(node); }
+        state.history.push({role:"assistant",content:fin}); vscode.setState(state); attachMsgCopy(node);
+        if(/^⚠|\\n⚠/.test(fin)){ const lastU=[...state.history].reverse().find(function(h){return h.role==="user";});
+          if(lastU&&lastU.content){ const rt=document.createElement("button"); rt.className="msgretry"; rt.textContent="↻ 重试";
+            rt.title="重发上一条消息"; rt.style.cssText="display:block;margin-top:6px;cursor:pointer;background:none;border:1px solid #58a6ff;border-radius:4px;color:#58a6ff;padding:2px 10px;font-size:12px;";
+            rt.onclick=function(){ rt.remove(); inputEl.value=lastU.content; send(); }; node.appendChild(rt); } } }
       const pl=logEl.querySelector('.plan[data-active]'); if(pl) delete pl.dataset.active;
       setBusy(false);
     } else if(m.type==="arena-start"){
@@ -2995,14 +3304,6 @@ class CascadePanelProvider {
     } else if(m.type==="arena-done"){
       const n=findNode(m.id); if(n) n.querySelectorAll(".apick").forEach(p=>{p.disabled=false;});
       setBusy(false);
-    } else if(m.type==="domain"){
-      // 领域模式开关胶囊: 开=领域专用(提示词/工具面全量重塑), 关=日常 Devin Desktop
-      domainBtn.style.display="";
-      domainBtn.textContent=(m.on?"⚿ ":"○ ")+m.name;
-      domainBtn.title=m.on?(m.name+" 模式已开：底层提示词与工具面塑为 "+m.name+" 专用；点击切回日常 Devin 模式")
-                           :("日常 Devin 模式；点击切入 "+m.name+" 模式(领域专用提示词/工具面)");
-      domainBtn.classList.toggle("on",!!m.on);
-      domainBtn.style.opacity=m.on?"1":".55";
     } else if(m.type==="worktree-info"){
       wtBar.style.display=m.on?"flex":"none"; wtTxt.textContent=m.text||"";
       wtUndo.style.display=m.undo?"":"none";
@@ -3019,10 +3320,16 @@ class CascadePanelProvider {
     } else if(m.type==="msg-stats"){ const node=findNode(m.id);
       if(node&&m.text){ let sf=node.querySelector(".msgstats"); if(!sf){ sf=document.createElement("div"); sf.className="msgstats"; node.appendChild(sf); } sf.textContent=m.text; }
     } else if(m.type==="insert-input"){ inputEl.value=(inputEl.value?inputEl.value+"\\n":"")+m.text; autoGrow(); inputEl.focus(); }
+    else if(m.type==="mode-status"){
+      const mp=document.getElementById("daoModePill");
+      if(mp){ if(m.label){ mp.style.display="inline-flex"; mp.textContent=m.label; mp.title=(m.hint||"领域模式切换")+(m.spChars?" · SP "+m.spChars+"字":""); } else { mp.style.display="none"; } }
+    }
     else if(m.type==="error"){ addMsg("assistant","⚠ "+m.text); setBusy(false); }
   });
 
-  renderAgents(); vscode.postMessage({type:"ready"}); vscode.postMessage({type:"sessions-list"});
+  const daoModePill=document.getElementById("daoModePill");
+  if(daoModePill) daoModePill.onclick=()=>vscode.postMessage({type:"mode-toggle"});
+  renderAgents(); vscode.postMessage({type:"ready"}); vscode.postMessage({type:"sessions-list"}); vscode.postMessage({type:"mode-status"});
 </script></body></html>`;
   }
 }
@@ -3031,12 +3338,30 @@ function register(context, log, opts) {
   // opts.ns: 命名空间(默认 "dao") —— 供 dao-ai-base 被多个领域插件 vendor 时隔离视图/命令 id。
   const ns = (opts && opts.ns) || "dao";
   const viewId = ns + ".cascade";
-  const provider = new CascadePanelProvider(context, log, viewId, opts);
+  const provider = new CascadePanelProvider(context, log, viewId);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(viewId, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     })
   );
+  // 官方式底部状态栏(账号/引擎/模型态与面板同源同步)
+  try { provider._sb = require("./status-bar").createStatusBar(context, viewId); } catch (_) {}
+  // 官方把 Cascade 面板默认放右侧辅助栏 —— 首次安装对齐官方布局(仅一次, 此后尊重用户拖动)。
+  // Devin Desktop 工作台无 moveViewToSecondarySideBar 命令, 但内建 vscode.moveViews 可把视图
+  // 迁入官方原生 Cascade 容器(windsurf.cascadeViewContainerId, 常驻辅助栏); 标准 VS Code 走后者兜底。
+  const MOVED_KEY = viewId + ".movedToAuxBar";
+  if (!context.globalState.get(MOVED_KEY)) {
+    context.globalState.update(MOVED_KEY, true);
+    vscode.commands.executeCommand(viewId + ".focus").then(async () => {
+      try {
+        await vscode.commands.executeCommand("vscode.moveViews", {
+          viewIds: [viewId], destinationId: "windsurf.cascadeViewContainerId",
+        });
+      } catch (_) {
+        try { await vscode.commands.executeCommand("workbench.action.moveViewToSecondarySideBar"); } catch (_) {}
+      }
+    }, () => {});
+  }
   context.subscriptions.push(
     // 注意: 视图 id 为 <ns>.cascade 时, 工作台自动生成 "<ns>.cascade.focus" —— 不可自注册同名命令
     // (会遮蔽内建并自递归)。这里用 <ns>.cascade.open 转发内建 focus。
@@ -3045,9 +3370,55 @@ function register(context, log, opts) {
     ),
     vscode.commands.registerCommand(viewId + ".newSession", () => provider._handleSessionNew()),
     vscode.commands.registerCommand(viewId + ".history", () => provider.showHistory()),
-    vscode.commands.registerCommand(viewId + ".deepwiki", () => provider.deepwikiFromEditor())
+    vscode.commands.registerCommand(viewId + ".deepwiki", () => provider.deepwikiFromEditor()),
+    // 官方式 Send problems to Cascade: 汇集诊断(当前文件优先, 无则全工作区) → @mention 式塗入 composer
+    vscode.commands.registerCommand(viewId + ".sendProblems", async () => {
+      const fmt = (uri, ds) => ds.map((d) => {
+        const sev = ["错误", "警告", "信息", "提示"][d.severity] || "问题";
+        return "- @" + vscode.workspace.asRelativePath(uri) + ":" + (d.range.start.line + 1) +
+          " [" + sev + (d.source ? "·" + d.source : "") + "] " + d.message.split("\n")[0];
+      });
+      const ed = vscode.window.activeTextEditor;
+      let lines = [];
+      if (ed) lines = fmt(ed.document.uri, vscode.languages.getDiagnostics(ed.document.uri));
+      if (!lines.length) for (const [uri, ds] of vscode.languages.getDiagnostics()) { lines.push(...fmt(uri, ds)); if (lines.length >= 30) break; }
+      if (!lines.length) return void vscode.window.showInformationMessage("问题面板当前没有诊断");
+      await vscode.commands.executeCommand(viewId + ".focus").then(undefined, () => {});
+      provider._post({ type: "insert-input", text: "请分析并修复以下问题:\n" + lines.slice(0, 30).join("\n") });
+    }),
+    // 官方式 Explain and Fix: 选中出错代码 → 带文件@定位与该处诊断塗入 composer
+    vscode.commands.registerCommand(viewId + ".explainFix", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed) return void vscode.window.showInformationMessage("先在编辑器中选中出错的代码");
+      const sel = ed.selection.isEmpty ? (ed.document.getWordRangeAtPosition(ed.selection.active) || ed.selection) : ed.selection;
+      const ds = vscode.languages.getDiagnostics(ed.document.uri).filter((d) => d.range.intersection(sel) || d.range.contains(sel.start));
+      const rel = vscode.workspace.asRelativePath(ed.document.uri);
+      const code = ed.document.getText(sel).slice(0, 2000);
+      let text = "解释并修复 @" + rel + ":" + (sel.start.line + 1) + " 处的问题:\n```\n" + code + "\n```";
+      if (ds.length) text += "\n诊断:\n" + ds.slice(0, 5).map((d) => "- " + d.message.split("\n")[0]).join("\n");
+      await vscode.commands.executeCommand(viewId + ".focus").then(undefined, () => {});
+      provider._post({ type: "insert-input", text });
+    }),
+    // 官方式提交信息生成: GenerateCommitMessage{repoRootUri} → 写入 SCM 输入框(官方 SCM ✨ 同款)
+    vscode.commands.registerCommand(viewId + ".genCommit", async () => {
+      try {
+        const ls = require("./ls-bridge");
+        if (!ls.ready()) throw new Error("官方 language_server 未就绪");
+        const ws = (vscode.workspace.workspaceFolders || [])[0];
+        if (!ws) throw new Error("无工作区");
+        const r = await ls.call("GenerateCommitMessage", { repoRootUri: ws.uri.toString() });
+        const text = (r && (r.commitMessage || r.message)) || "";
+        if (!text) throw new Error("未生成内容");
+        const gitExt = vscode.extensions.getExtension("vscode.git");
+        const api = gitExt && gitExt.exports && gitExt.exports.getAPI(1);
+        const repo = api && api.repositories && api.repositories[0];
+        if (repo) repo.inputBox.value = text;
+        else await vscode.env.clipboard.writeText(text);
+        vscode.window.setStatusBarMessage("✨ 提交信息已生成" + (repo ? "" : "(已复制到剪贴板)"), 4000);
+      } catch (e) { vscode.window.showWarningMessage("生成提交信息失败: " + e.message); }
+    })
   );
   return provider;
 }
 
-module.exports = { register, VIEW_ID, AGENTS };
+module.exports = { register, setPromptShaper, VIEW_ID, AGENTS };

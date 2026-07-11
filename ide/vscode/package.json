@@ -2,7 +2,7 @@
   "name": "dao-windows-agent",
   "displayName": "DAO Windows Agent · 桌面级路由",
   "description": "IDE 装上本插件 → 面板里直接就是整台 Windows 桌面本体（类多 RDP）。每个 IDE 窗口 = 一路独立完整的 RDP 会话，canvas 渲染进 Webview，鼠键直操。",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "dao",
   "license": "MIT",
   "engines": {
@@ -66,6 +66,10 @@
       {
         "command": "daoWin.switchMode",
         "title": "DAO: 切换模式（主/纯编程/Windows全接管/专精领域）"
+      },
+      {
+        "command": "daoWin.mcpRegister",
+        "title": "DAO: 注册 MCP 工具层（四领域动词并列官方工具）"
       },
       {
         "command": "daoWin.cascade.open",
