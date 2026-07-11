@@ -1,0 +1,276 @@
+{
+  "name": "dao-freecad",
+  "displayName": "DAO · FreeCAD 归一工作台",
+  "description": "把 FreeCAD 全部功能以单网页形式嵌入 IDE 中间面板：模型树 / 3D 视口 / 属性 / Python 控制台 / GUI 命令，桥接 FreeCAD 本体，适配任何 VS Code 系 IDE（含 AI IDE）。",
+  "version": "0.8.1",
+  "publisher": "dao",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:dao-freecad.open",
+    "onCommand:dao-freecad.openWindow",
+    "onCustomEditor:dao-freecad.fcstd"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dao-freecad.open",
+        "title": "DAO FreeCAD: 打开归一工作台"
+      },
+      {
+        "command": "dao-freecad.openShell",
+        "title": "DAO FreeCAD: 归一总控外壳 /shell（主页 + FreeCAD 整窗 + 工作台 + Proxy Pro 平级板块）"
+      },
+      {
+        "command": "dao-freecad.openWindow",
+        "title": "DAO FreeCAD: 整窗归一（软件本体全 UI 路由为单网页）"
+      },
+      {
+        "command": "dao-freecad.openFile",
+        "title": "DAO FreeCAD: 在工作台中打开当前 FCStd/STEP/STL"
+      },
+      {
+        "command": "dao-freecad.fitWindow",
+        "title": "DAO FreeCAD: 面板适配（收拢 FreeCAD 主窗到面板尺寸）"
+      },
+      {
+        "command": "dao-freecad.installRuntime",
+        "title": "DAO FreeCAD: 安装/重装内置 FreeCAD 运行时（零安装）"
+      },
+      {
+        "command": "dao-freecad.status",
+        "title": "DAO FreeCAD: 状态总览（FreeCAD/内置运行时/桥接/显示路由）"
+      },
+      {
+        "command": "dao-freecad.restartBridge",
+        "title": "DAO FreeCAD: 启动/重启内核桥接"
+      },
+      {
+        "command": "daoFreecad.cascade.open",
+        "title": "FreeCAD · AI: 聚焦 Cascade 三模式面板"
+      },
+      {
+        "command": "daoFreecad.cascade.newSession",
+        "title": "FreeCAD · AI: 新建 Cascade 会话",
+        "icon": "$(add)"
+      },
+      {
+        "command": "daoFreecad.cascade.history",
+        "title": "FreeCAD · AI: Cascade 历史会话",
+        "icon": "$(history)"
+      },
+      {
+        "command": "daoFreecad.cascade.deepwiki",
+        "title": "FreeCAD · AI: DeepWiki 解释选中符号"
+      },
+      {
+        "command": "daopp.originInvert",
+        "title": "道Agent Pro: 启 (invert · 道德经前置 · 彻删官方着相)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.originPassthrough",
+        "title": "官方Agent: 启 (passthrough · 锚归云 · 直连)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.toggleMode",
+        "title": "道Agent Pro: 切换模式 (道 ⇄ 官方)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.openPreview",
+        "title": "道Agent Pro: 浏览器观真 SP (/origin/preview)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.verifyEndToEnd",
+        "title": "全链路自检 (E2E)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.selftest",
+        "title": "闭环自检 (L1 + L2)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.外接api.toggle",
+        "title": "道Agent Pro: 外接 api 开关 (第三方API路由 · 默开)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.eaConfig",
+        "title": "道Agent Pro: 外接API 热配置 (Provider+路由 · 不重启)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.restoreOfficial",
+        "title": "道Agent Pro: 复原官方直连 (卸载善后/解锚 · 卡死自救)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.term.exec",
+        "title": "道Agent Pro: 终端会话池 · exec (七层一招治 · 零第三方)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.term.list",
+        "title": "道Agent Pro: 终端会话池 · list (列所有 sid · 终端池状)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.term.close",
+        "title": "道Agent Pro: 终端会话池 · close (选 sid 关 · 释 shell 进程)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.modelUnlock.toggle",
+        "title": "道Agent Pro: 模型解锁 开关 (执大象天下往 · 全量109模型注入)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.modelUnlock.status",
+        "title": "道Agent Pro: 模型解锁 状态 (查看全量模型目录)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.revproxy.toggle",
+        "title": "道Agent Pro: 模型反代 开关 (反者道之动 · 标准 OpenAI/Anthropic 本地端点)",
+        "category": "道Agent Pro"
+      },
+      {
+        "command": "daopp.revproxy.status",
+        "title": "道Agent Pro: 模型反代 状态 (端点/Key/可反代模型)",
+        "category": "道Agent Pro"
+      }
+    ],
+    "configuration": {
+      "title": "DAO FreeCAD",
+      "properties": {
+        "dao-freecad.freecadPath": {
+          "type": "string",
+          "default": "",
+          "description": "FreeCAD 可执行文件路径（留空则按 PATH / 常见位置自动探测；Linux AppImage 解包用 squashfs-root/usr/bin/freecad）"
+        },
+        "dao-freecad.serverScript": {
+          "type": "string",
+          "default": "",
+          "description": "_fc_remote_server.py 桥接脚本路径（留空则在工作区内自动查找 10-反笙_FreeCAD/_fc_remote_server.py）"
+        },
+        "dao-freecad.port": {
+          "type": "number",
+          "default": 18920,
+          "description": "桥接 HTTP 端口"
+        },
+        "dao-freecad.shellPort": {
+          "type": "number",
+          "default": 9920,
+          "description": "归一外壳 /shell 端口（与 dao-one 归一网页同源习惯；被占用时自动后退相邻端口，与 dao-vsix 本地 API 并行不悖）"
+        },
+        "dao-freecad.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "IDE 启动时自动拉起 FreeCAD 内核桥接，并开启看门狗自愈（探到本机 FreeCAD 直接路由，缺失才下载内置）"
+        },
+        "dao-freecad.autoProvision": {
+          "type": "boolean",
+          "default": true,
+          "description": "未找到 FreeCAD 时自动下载官方发行包并内置为插件运行时（Linux AppImage / Windows 7z / macOS dmg，零安装）"
+        },
+        "dao.origin.port": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "源.js 反代端口 (0=自动 per-user FNV-1a hash · 8889..8988 · 多账号自然隔离). 非0则覆盖."
+        },
+        "dao.origin.defaultMode": {
+          "type": "string",
+          "default": "invert",
+          "enum": [
+            "invert",
+            "passthrough",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "invert — 道Agent · 道德经直为前置 + 彻删官方一切着相之名 (身份/风格/规训) · 工具本身全保不动",
+            "passthrough — 官方Agent · 锚归云 · 直连",
+            "custom — 自定义SP · 用户编辑 _customSp.txt · 保留实时信息块"
+          ],
+          "description": "首激默模 (三态互斥 · 无off)"
+        },
+        "dao.origin.banner": {
+          "type": "boolean",
+          "default": false,
+          "description": "启动时显道德经横幅 (默认 false · 不言之教)"
+        },
+        "dao.外接api.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "外接第三方API路由 · Pro版默开 · 启后: dao_router 加载配置.json · 匹配modelUid → 第三方API · 不匹配 → 官方透传 · 道并行而不相悖. 配 ~/.codeium/dao-byok/配置.json 填 provider+apiKey."
+        },
+        "dao.modelUnlock.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "模型解锁 · 执大象天下往 · 拦截GetUserSettings响应注入全量109模型目录 · 突破账号权限限制 · 前端显示所有模型"
+        },
+        "dao.revproxy.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "模型反代 · 反者道之动 · 把『渠道配置/模型路由』已接通模型反向暴露为标准 OpenAI(/v1/chat/completions,/v1/models)与 Anthropic(/v1/messages)本地端点 · 脱离 Devin Desktop · 供智能家居/本地脚本/其他设备以标准 SDK 直调. 配置落 ~/.codeium/dao-byok/revproxy.json. 默认关 · 在④模型反代面板开启."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "daoFreecad-cascade",
+          "title": "FreeCAD · AI",
+          "icon": "$(comment-discussion)"
+        },
+        {
+          "id": "dao-container",
+          "title": "道Agent Pro",
+          "icon": "dao-proxy-pro/media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "daoFreecad-cascade": [
+        {
+          "id": "daoFreecad.cascade",
+          "name": "Cascade · 三模式",
+          "type": "webview"
+        }
+      ],
+      "dao-container": [
+        {
+          "id": "daopp.essence",
+          "name": "本源观照",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "daoFreecad.cascade.newSession",
+          "when": "view == daoFreecad.cascade",
+          "group": "navigation@1"
+        },
+        {
+          "command": "daoFreecad.cascade.history",
+          "when": "view == daoFreecad.cascade",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  }
+}
