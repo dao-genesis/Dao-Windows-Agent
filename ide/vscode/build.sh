@@ -12,7 +12,10 @@ cp -r "$REPO/bridge" "$HERE/runtime/bridge"
 cp -r "$REPO/core" "$HERE/runtime/core"
 find "$HERE/runtime" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
-echo "== 二合一装配（可选：DAO_UNIFY_SRCS 给出领域插件目录列表，折入 vendor/ 并合并 contributes）=="
+echo "== 归一装配（默认折入 subplugins/ 内已收编的领域插件；DAO_UNIFY_SRCS 可覆盖；DAO_UNIFY=0 关闭）=="
+if [ -z "${DAO_UNIFY_SRCS:-}" ] && [ "${DAO_UNIFY:-1}" != "0" ] && [ -d "$HERE/subplugins" ]; then
+  DAO_UNIFY_SRCS="$(find "$HERE/subplugins" -mindepth 1 -maxdepth 1 -type d | sort | tr '\n' ' ')"
+fi
 if [ -n "${DAO_UNIFY_SRCS:-}" ]; then
   # 例: DAO_UNIFY_SRCS="$HOME/repos/Dao-3D-Modeling-Agent/90-归一_IDE/vscode-dao-freecad $HOME/repos/Dao-PCB-Design-Agent/vscode-dao-kicad"
   # 合并 contributes 只服务于本次打包：先备份 package.json，打完包还原（不脏工作区）。
@@ -21,7 +24,7 @@ if [ -n "${DAO_UNIFY_SRCS:-}" ]; then
   # shellcheck disable=SC2086
   node "$HERE/unify.js" $DAO_UNIFY_SRCS
 else
-  echo "跳过（未设 DAO_UNIFY_SRCS；纯主体 + AI 基底打包）"
+  echo "跳过（DAO_UNIFY=0 或无 subplugins/；纯主体 + AI 基底打包）"
 fi
 
 echo "== 生成 PNG 图标（若缺）=="

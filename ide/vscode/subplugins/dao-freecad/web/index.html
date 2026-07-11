@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAO · FreeCAD 归一工作台</title>
+<style>
+:root{--bg:#1e1e1e;--panel:#252526;--border:#3c3c3c;--fg:#d4d4d4;--dim:#8a8a8a;--acc:#0e639c;--ok:#4ec9b0;--err:#f48771}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--fg);font:13px/1.5 "Segoe UI",system-ui,sans-serif}
+#app{display:grid;height:100%;grid-template-rows:36px 1fr 180px;grid-template-columns:230px 1fr 250px;
+ grid-template-areas:"bar bar bar" "tree view props" "cons cons cons"}
+#bar{grid-area:bar;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--panel);border-bottom:1px solid var(--border)}
+#bar .dot{width:9px;height:9px;border-radius:50%;background:var(--err)}
+#bar .dot.on{background:var(--ok)}
+#bar button,select{background:#333;color:var(--fg);border:1px solid var(--border);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:12px}
+#bar button:hover{background:var(--acc)}
+#tree{grid-area:tree;overflow:auto;background:var(--panel);border-right:1px solid var(--border);padding:6px}
+#tree h3,#props h3{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:4px 0 6px}
+.node{padding:2px 4px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node:hover{background:#2a2d2e}.node.sel{background:var(--acc)}
+.node .t{color:var(--dim);font-size:11px;margin-left:4px}
+#view{grid-area:view;position:relative;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center}
+#gl{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#hint{position:absolute;bottom:6px;left:8px;color:var(--dim);font-size:11px;pointer-events:none}
+#props{grid-area:props;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--border);padding:6px;overflow:hidden}
+#propbody{flex:1;overflow:auto;min-height:60px}
+#ai{flex:1.2;display:flex;flex-direction:column;border-top:1px solid var(--border);margin-top:6px;padding-top:4px;min-height:120px}
+#ailog{flex:1;overflow:auto;font-size:11px;line-height:1.5;white-space:pre-wrap}
+#ailog .u{color:#dcdcaa}#ailog .a{color:var(--ok)}#ailog .e{color:var(--err)}
+#aiin{width:100%;background:#1b1b1b;border:1px solid var(--border);border-radius:3px;color:var(--fg);padding:5px 6px;font-size:12px;outline:none;margin-top:4px}
+#props table{width:100%;border-collapse:collapse;font-size:11px}
+#props td{padding:2px 4px;border-bottom:1px solid #2d2d2d;vertical-align:top;word-break:break-all}
+#props td:first-child{color:#9cdcfe;white-space:nowrap}
+#cons{grid-area:cons;display:flex;flex-direction:column;background:var(--panel);border-top:1px solid var(--border)}
+#log{flex:1;overflow:auto;padding:6px 8px;font:12px/1.45 Consolas,monospace;white-space:pre-wrap}
+#log .in{color:#dcdcaa}#log .out{color:var(--fg)}#log .er{color:var(--err)}
+#inrow{display:flex;border-top:1px solid var(--border)}
+#inrow select{border:none;border-right:1px solid var(--border);border-radius:0}
+#inrow input{flex:1;background:#1b1b1b;border:none;outline:none;color:var(--fg);padding:6px 8px;font:12px Consolas,monospace}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <span class="dot" id="dot"></span><b>DAO·FreeCAD</b><span id="st" style="color:var(--dim)">连接中…</span>
+    <span style="flex:1"></span>
+    <select id="wb" title="工作台"></select>
+    <button data-v="fit_all">适合</button><button data-v="isometric">等轴</button>
+    <button data-v="front">前</button><button data-v="top">顶</button><button data-v="right">右</button>
+    <button data-v="zoom_in">＋</button><button data-v="zoom_out">－</button>
+    <button id="refresh">⟳</button>
+    <button onclick="location.href='window.html'" title="FreeCAD 软件本体整体路由为网页">整窗</button>
+  </div>
+  <div id="tree"><h3>模型树</h3><div id="treebody"></div></div>
+  <div id="view"><canvas id="gl"></canvas><div id="hint">内核原生 WebGL · 左拖旋转 · 右拖/中拖平移 · 滚轮缩放 · 双击适合 · 单击选中</div></div>
+  <div id="props"><h3>属性</h3><div id="propbody" style="color:var(--dim)">选中对象查看属性</div>
+    <div id="ai"><h3>AI 建模副驾 <span id="aist" style="color:var(--dim);font-weight:normal;text-transform:none;letter-spacing:0"></span></h3><div id="ailog"><span class="a">对话式建模。/tools 看工具目录；/tools solid 看某组；/config 看 AI 配置；/config model=… key=… url=… 配置模型；/new 新会话。配置模型后走真·LLM 工具闭环(/chat)，否则走规则规划器(/agent)。</span></div>
+    <input id="aiin" placeholder="描述建模意图，回车发送 → /chat · /agent" autocomplete="off"></div></div>
+  <div id="cons">
+    <div id="log"></div>
+    <div id="inrow">
+      <select id="mode"><option value="py">Python</option><option value="cmd">GUI命令</option></select>
+      <input id="cmd" placeholder="Python 代码（回车执行；FreeCAD as App / FreeCADGui as Gui 已可用）" autocomplete="off">
+    </div>
+  </div>
+</div>
+<script>
+const qs=new URLSearchParams(location.search);
+const API=qs.get('api')||location.origin;
+const $=id=>document.getElementById(id);
+async function api(m,p,body){const r=await fetch(API+p,{method:m,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});return r.json()}
+function logln(cls,txt){const d=document.createElement('div');d.className=cls;d.textContent=txt;$('log').appendChild(d);$('log').scrollTop=1e9}
+
+/* ── viewport: 内核原生 WebGL(非投屏) — /scene 返回真实 tessellation, 本地 GPU 渲染 ── */
+const canvas=$('gl');
+let gl=null;
+for(const t of['webgl','experimental-webgl']){
+ try{gl=canvas.getContext(t,{antialias:true,failIfMajorPerformanceCaveat:false})}catch(e){}
+ if(gl)break}
+if(!gl)$('hint').textContent='⚠ WebGL 不可用：视口已停用（模型树 / 属性 / 控制台 / AI 副驾照常可用）';
+const VS=`attribute vec3 aP;attribute vec3 aN;uniform mat4 uMVP;uniform mat4 uM;varying vec3 vN;varying vec3 vP;
+void main(){gl_Position=uMVP*vec4(aP,1.0);vN=mat3(uM)*aN;vP=(uM*vec4(aP,1.0)).xyz;}`;
+const FS=`precision mediump float;uniform vec3 uColor;uniform float uAlpha;uniform vec3 uEye;varying vec3 vN;varying vec3 vP;
+void main(){vec3 N=normalize(vN);vec3 L1=normalize(vec3(0.5,0.6,1.0));vec3 L2=normalize(vec3(-0.6,-0.3,0.4));
+float d=max(dot(N,L1),max(dot(N,L1)*-1.0,0.0)*0.6)+0.35*max(abs(dot(N,L2)),0.0);
+vec3 V=normalize(uEye-vP);float spec=pow(max(dot(reflect(-L1,N),V),0.0),24.0)*0.25;
+gl_FragColor=vec4(uColor*(0.25+0.75*min(d,1.0))+spec,uAlpha);}`;
+const VSL=`attribute vec3 aP;uniform mat4 uMVP;void main(){gl_Position=uMVP*vec4(aP,1.0);gl_Position.z-=0.0006*gl_Position.w;}`;
+const FSL=`precision mediump float;uniform vec3 uColor;void main(){gl_FragColor=vec4(uColor,1.0);}`;
+function mkProg(vs,fs){const p=gl.createProgram();for(const[t,s]of[[gl.VERTEX_SHADER,vs],[gl.FRAGMENT_SHADER,fs]]){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);gl.attachShader(p,sh)}gl.linkProgram(p);return p}
+const progM=gl&&mkProg(VS,FS),progL=gl&&mkProg(VSL,FSL);
+/* mat4 helpers (column-major) */
+function mIdent(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}
+function mMul(a,b){const o=new Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s}return o}
+function mPersp(fov,asp,n,f){const t=1/Math.tan(fov/2);return[t/asp,0,0,0,0,t,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0]}
+function vSub(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]]}
+function vCross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
+function vNorm(a){const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l]}
+function mLook(eye,ctr,up){const z=vNorm(vSub(eye,ctr)),x=vNorm(vCross(up,z)),y=vCross(z,x);
+ return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-(x[0]*eye[0]+x[1]*eye[1]+x[2]*eye[2]),-(y[0]*eye[0]+y[1]*eye[1]+y[2]*eye[2]),-(z[0]*eye[0]+z[1]*eye[1]+z[2]*eye[2]),1]}
+/* camera: orbit around target, Z-up (FreeCAD convention) */
+let cam={az:45,el:35,dist:100,target:[0,0,0]};
+function eyePos(){const a=cam.az*Math.PI/180,e=cam.el*Math.PI/180;
+ return[cam.target[0]+cam.dist*Math.cos(e)*Math.cos(a),cam.target[1]+cam.dist*Math.cos(e)*Math.sin(a),cam.target[2]+cam.dist*Math.sin(e)]}
+/* scene store: name -> {vbo,nbo,ibo,n,edges:[{vbo,n}],color,alpha,selected} */
+let meshes={},sceneRev=null,bboxMin=null,bboxMax=null;
+function buildObject(o){
+ if(!gl)return;
+ const old=meshes[o.name];if(old)freeMesh(old);
+ if(!o.vertices||!o.vertices.length){delete meshes[o.name];return}
+ const v=new Float32Array(o.vertices),f=new Uint32Array(o.faces||[]);
+ /* per-vertex normals accumulated from faces */
+ const nrm=new Float32Array(v.length);
+ for(let i=0;i<f.length;i+=3){const a=f[i]*3,b=f[i+1]*3,c=f[i+2]*3;
+  const ux=v[b]-v[a],uy=v[b+1]-v[a+1],uz=v[b+2]-v[a+2],wx=v[c]-v[a],wy=v[c+1]-v[a+1],wz=v[c+2]-v[a+2];
+  const nx=uy*wz-uz*wy,ny=uz*wx-ux*wz,nz=ux*wy-uy*wx;
+  for(const k of[a,b,c]){nrm[k]+=nx;nrm[k+1]+=ny;nrm[k+2]+=nz}}
+ for(let i=0;i<nrm.length;i+=3){const l=Math.hypot(nrm[i],nrm[i+1],nrm[i+2])||1;nrm[i]/=l;nrm[i+1]/=l;nrm[i+2]/=l}
+ const m={n:f.length,color:o.color||[0.8,0.8,0.8],alpha:1-(o.transparency||0)/100,selected:!!o.selected,edges:[]};
+ m.vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,m.vbo);gl.bufferData(gl.ARRAY_BUFFER,v,gl.STATIC_DRAW);
+ m.nbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,m.nbo);gl.bufferData(gl.ARRAY_BUFFER,nrm,gl.STATIC_DRAW);
+ m.ibo=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,m.ibo);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,f,gl.STATIC_DRAW);
+ for(const ed of(o.edges||[])){if(ed.length<6)continue;const ev=new Float32Array(ed);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,ev,gl.STATIC_DRAW);
+  m.edges.push({vbo:b,n:ed.length/3})}
+ for(let i=0;i<v.length;i+=3){if(!bboxMin){bboxMin=[v[i],v[i+1],v[i+2]];bboxMax=[v[i],v[i+1],v[i+2]]}
+  for(let k=0;k<3;k++){bboxMin[k]=Math.min(bboxMin[k],v[i+k]);bboxMax[k]=Math.max(bboxMax[k],v[i+k])}}
+ meshes[o.name]=m}
+function freeMesh(m){gl.deleteBuffer(m.vbo);gl.deleteBuffer(m.nbo);gl.deleteBuffer(m.ibo);m.edges.forEach(e=>gl.deleteBuffer(e.vbo))}
+const ext32=gl&&gl.getExtension('OES_element_index_uint');
+function fitAll(){if(!bboxMin)return;
+ cam.target=[(bboxMin[0]+bboxMax[0])/2,(bboxMin[1]+bboxMax[1])/2,(bboxMin[2]+bboxMax[2])/2];
+ cam.dist=Math.max(1,Math.hypot(bboxMax[0]-bboxMin[0],bboxMax[1]-bboxMin[1],bboxMax[2]-bboxMin[2])*1.4);draw()}
+function draw(){
+ if(!gl)return;
+ const w=$('view').clientWidth,h=$('view').clientHeight;
+ if(canvas.width!==w*devicePixelRatio||canvas.height!==h*devicePixelRatio){canvas.width=w*devicePixelRatio;canvas.height=h*devicePixelRatio}
+ gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(0.066,0.066,0.066,1);gl.enable(gl.DEPTH_TEST);
+ gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ const eye=eyePos(),view=mLook(eye,cam.target,[0,0,1]),proj=mPersp(0.9,Math.max(0.1,w/h),cam.dist*0.01,cam.dist*40),mvp=mMul(proj,view);
+ gl.useProgram(progM);
+ gl.uniformMatrix4fv(gl.getUniformLocation(progM,'uMVP'),false,new Float32Array(mvp));
+ gl.uniformMatrix4fv(gl.getUniformLocation(progM,'uM'),false,new Float32Array(mIdent()));
+ gl.uniform3fv(gl.getUniformLocation(progM,'uEye'),eye);
+ const aP=gl.getAttribLocation(progM,'aP'),aN=gl.getAttribLocation(progM,'aN');
+ gl.enableVertexAttribArray(aP);gl.enableVertexAttribArray(aN);
+ for(const name in meshes){const m=meshes[name];if(!m.n)continue;
+  gl.bindBuffer(gl.ARRAY_BUFFER,m.vbo);gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,m.nbo);gl.vertexAttribPointer(aN,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,m.ibo);
+  const col=m.selected?[0.15,0.75,0.95]:m.color;
+  gl.uniform3fv(gl.getUniformLocation(progM,'uColor'),col);
+  gl.uniform1f(gl.getUniformLocation(progM,'uAlpha'),m.alpha);
+  gl.drawElements(gl.TRIANGLES,m.n,ext32?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT,0)}
+ gl.disableVertexAttribArray(aN);
+ gl.useProgram(progL);
+ gl.uniformMatrix4fv(gl.getUniformLocation(progL,'uMVP'),false,new Float32Array(mvp));
+ const aPL=gl.getAttribLocation(progL,'aP');gl.enableVertexAttribArray(aPL);
+ for(const name in meshes){const m=meshes[name];
+  gl.uniform3fv(gl.getUniformLocation(progL,'uColor'),m.selected?[0.3,0.9,1.0]:[0.12,0.12,0.12]);
+  for(const e of m.edges){gl.bindBuffer(gl.ARRAY_BUFFER,e.vbo);gl.vertexAttribPointer(aPL,3,gl.FLOAT,false,0,0);gl.drawArrays(gl.LINE_STRIP,0,e.n)}}}
+let firstScene=true;
+async function loadScene(force){try{
+ const d=await api('GET','/scene'+(sceneRev&&!force?('?rev='+sceneRev):''));
+ if(!d.ok)return; if(d.unchanged)return;
+ sceneRev=d.rev;
+ for(const n in meshes){freeMesh(meshes[n])}meshes={};bboxMin=bboxMax=null;
+ (d.objects||[]).forEach(buildObject);
+ if(firstScene&&bboxMin){firstScene=false;fitAll()}else draw();
+}catch(e){}}
+setInterval(()=>loadScene(false),1200);
+/* interaction: pure client-side orbit/pan/zoom (零往返, 非投屏) */
+let drag=null;
+canvas.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY,btn:e.button,moved:false};e.preventDefault()});
+window.addEventListener('mouseup',e=>{
+ if(drag&&!drag.moved&&drag.btn===0)pick(e);
+ drag=null});
+window.addEventListener('mousemove',e=>{if(!drag)return;
+ const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+ if(Math.abs(dx)+Math.abs(dy)>2)drag.moved=true;
+ drag.x=e.clientX;drag.y=e.clientY;
+ if(drag.btn===0){cam.az-=dx*0.4;cam.el=Math.max(-89,Math.min(89,cam.el+dy*0.4))}
+ else{const s=cam.dist*0.0018,a=cam.az*Math.PI/180,eL=cam.el*Math.PI/180;
+  const right=[-Math.sin(a),Math.cos(a),0],up=[-Math.sin(eL)*Math.cos(a),-Math.sin(eL)*Math.sin(a),Math.cos(eL)];
+  for(let k=0;k<3;k++)cam.target[k]+=(-dx*right[k]+dy*up[k])*s}
+ draw()});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+$('view').addEventListener('wheel',e=>{e.preventDefault();cam.dist*=e.deltaY>0?1.12:0.89;cam.dist=Math.max(0.5,cam.dist);draw()},{passive:false});
+$('view').addEventListener('dblclick',()=>fitAll());
+new ResizeObserver(()=>draw()).observe($('view'));
+/* GPU color-pick: render ids offscreen, read pixel → 选中内核对象 */
+async function pick(e){
+ if(!gl)return;
+ const names=Object.keys(meshes);if(!names.length)return;
+ const rect=canvas.getBoundingClientRect();
+ const px=(e.clientX-rect.left)*devicePixelRatio,py=(e.clientY-rect.top)*devicePixelRatio;
+ gl.clearColor(1,1,1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ const eye=eyePos(),view=mLook(eye,cam.target,[0,0,1]);
+ const w=$('view').clientWidth,h=$('view').clientHeight;
+ const mvp=mMul(mPersp(0.9,Math.max(0.1,w/h),cam.dist*0.01,cam.dist*40),view);
+ gl.useProgram(progL);
+ gl.uniformMatrix4fv(gl.getUniformLocation(progL,'uMVP'),false,new Float32Array(mvp));
+ const aPL=gl.getAttribLocation(progL,'aP');gl.enableVertexAttribArray(aPL);
+ names.forEach((n,i)=>{const m=meshes[n];if(!m.n)return;
+  gl.uniform3fv(gl.getUniformLocation(progL,'uColor'),[((i+1)&255)/255,(((i+1)>>8)&255)/255,0]);
+  gl.bindBuffer(gl.ARRAY_BUFFER,m.vbo);gl.vertexAttribPointer(aPL,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,m.ibo);
+  gl.drawElements(gl.TRIANGLES,m.n,ext32?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT,0)});
+ const buf=new Uint8Array(4);gl.readPixels(px,canvas.height-py,1,1,gl.RGBA,gl.UNSIGNED_BYTE,buf);
+ const id=buf[0]+(buf[1]<<8);draw();
+ if(id>0&&id<=names.length){const name=names[id-1];
+  for(const n in meshes)meshes[n].selected=(n===name);draw();
+  const doc=(await api('GET','/document')).document;
+  if(doc){await api('POST','/select',{doc:doc.name,obj:name});
+   const p=await api('POST','/property',{doc:doc.name,obj:name});
+   if(p.ok)$('propbody').innerHTML='<table>'+Object.entries(p.properties).map(([k,v])=>`<tr><td>${k}</td><td>${String(v).replace(/</g,'&lt;')}</td></tr>`).join('')+'</table>';
+   highlightTree(name)}}}
+function highlightTree(name){document.querySelectorAll('#treebody .node[data-name]').forEach(n=>n.classList.toggle('sel',n.dataset.name===name))}
+/* view buttons act on local native camera */
+const VIEWS={fit_all:()=>fitAll(),isometric:()=>{cam.az=45;cam.el=35;draw()},front:()=>{cam.az=-90;cam.el=0;draw()},
+ top:()=>{cam.az=-90;cam.el=89;draw()},right:()=>{cam.az=0;cam.el=0;draw()},
+ zoom_in:()=>{cam.dist*=0.8;draw()},zoom_out:()=>{cam.dist*=1.25;draw()}};
+document.querySelectorAll('#bar [data-v]').forEach(b=>b.onclick=()=>{(VIEWS[b.dataset.v]||(()=>{}))()});
+$('refresh').onclick=()=>{loadTree();loadScene(true)};
+
+/* ── status + workbenches ── */
+async function status(){try{const d=await api('GET','/status');
+ $('dot').classList.toggle('on',!!d.ok);
+ $('st').textContent=d.ok?('FreeCAD '+d.freecad_version.slice(0,3).join('.')+' · '+(d.active_document||'无文档')+' · '+d.object_count+' 对象'):'离线';
+ return d.ok}catch(e){$('dot').classList.remove('on');$('st').textContent='离线（等待 FreeCAD 桥接…）';return false}}
+async function loadWb(){try{const d=await api('GET','/workbenches');if(!d.ok)return;
+ $('wb').innerHTML=Object.keys(d.workbenches).sort().map(w=>`<option ${w===d.active?'selected':''}>${w}</option>`).join('')}catch(e){}}
+$('wb').onchange=async()=>{await api('POST','/workbench',{name:$('wb').value})};
+
+/* ── model tree + properties ── */
+let selNode=null;
+async function loadTree(){try{const d=await api('GET','/document');const tb=$('treebody');tb.innerHTML='';
+ if(!d.ok||!d.document){tb.innerHTML='<div style="color:var(--dim)">无打开的文档</div>';return}
+ const doc=d.document;
+ const h=document.createElement('div');h.className='node';h.innerHTML=`<b>📄 ${doc.label}</b>`;tb.appendChild(h);
+ doc.objects.forEach(o=>{const n=document.createElement('div');n.className='node';n.style.paddingLeft='16px';n.dataset.name=o.name;
+  n.innerHTML=`${o.label}<span class="t">${o.type.split('::').pop()}</span>`;
+  n.onclick=async()=>{if(selNode)selNode.classList.remove('sel');selNode=n;n.classList.add('sel');
+   for(const nm in meshes)meshes[nm].selected=(nm===o.name);draw();
+   await api('POST','/select',{doc:doc.name,obj:o.name});
+   const p=await api('POST','/property',{doc:doc.name,obj:o.name});
+   if(p.ok)$('propbody').innerHTML='<table>'+Object.entries(p.properties).map(([k,v])=>`<tr><td>${k}</td><td>${String(v).replace(/</g,'&lt;')}</td></tr>`).join('')+'</table>'};
+  tb.appendChild(n)})}catch(e){}}
+
+/* ── console ── */
+$('cmd').addEventListener('keydown',async e=>{if(e.key!=='Enter')return;
+ const v=$('cmd').value.trim();if(!v)return;$('cmd').value='';
+ const mode=$('mode').value;logln('in',(mode==='py'?'>>> ':'CMD ')+v);
+ try{const d=mode==='py'?await api('POST','/exec',{code:v}):await api('POST','/run_command',{command:v});
+  logln(d.ok?'out':'er',JSON.stringify(d));loadScene(true);loadTree();status()}catch(err){logln('er',String(err))}});
+
+/* ── AI copilot — 真·LLM 工具闭环(/chat, 仿 Devin Desktop) + 规则回退(/agent) ── */
+function ailn(cls,txt){const d=document.createElement('div');d.className=cls;d.textContent=txt;$('ailog').appendChild(d);$('ailog').scrollTop=1e9}
+let aiCfg={configured:false},aiSession=null,toolCat=null;
+async function aiStatus(){try{const d=await api('GET','/aiconfig');if(d.ok){aiCfg=d.config;
+  $('aist').textContent=aiCfg.configured?('· '+(aiCfg.model||'?')+' 就绪'):'· 未配模型(规则模式)'}}catch(e){}}
+async function showTools(grp){
+ try{if(!toolCat)toolCat=await api('GET','/toolspec');
+  if(!toolCat.ok){ailn('e','工具目录不可用: '+(toolCat.error||''));toolCat=null;return}
+  if(!grp){ailn('a','工具目录: 共 '+toolCat.count+' 个工具 / '+toolCat.groups.length+' 组 (精选契约 '+toolCat.curated+')');
+   toolCat.groups.forEach(g=>ailn('a','  · '+g.group+'.* ×'+g.tools.length+' — '+g.title+': '+g.desc));
+   ailn('a','  /tools <组名> 看组内工具详情');return}
+  const g=toolCat.groups.find(x=>x.group===grp);
+  if(!g){ailn('e','无此组: '+grp);return}
+  g.tools.forEach(t=>{const req=(t.parameters.required||[]);const props=Object.keys(t.parameters.properties||{});
+   ailn('a','  · '+t.name+' — '+t.description+(props.length?'  {'+props.map(p=>req.includes(p)?p+'*':p).join(', ')+'}':''))});
+ }catch(err){ailn('e',String(err))}}
+$('aiin').addEventListener('keydown',async e=>{if(e.key!=='Enter')return;
+ const v=$('aiin').value.trim();if(!v)return;$('aiin').value='';
+ if(v==='/new'){aiSession=null;ailn('a','已开新会话');return}
+ if(v.startsWith('/tools')){await showTools(v.split(/\s+/)[1]);return}
+ if(v.startsWith('/config')){
+  const kv={};v.replace(/(\w+)=([^\s]+)/g,(_,k,val)=>{kv[k]=val;return ''});
+  if(Object.keys(kv).length){
+   const body={};if(kv.model)body.model=kv.model;if(kv.key)body.api_key=kv.key;if(kv.url)body.base_url=kv.url;
+   const d=await api('POST','/aiconfig',body);ailn(d.ok?'a':'e','配置'+(d.ok?('已保存 · '+(d.configured?'模型就绪':'仍缺密钥/端点')):'失败: '+(d.error||'')));await aiStatus();return}
+  const d=await api('GET','/aiconfig');ailn('a','AI 配置: '+JSON.stringify(d.config));return}
+ ailn('u','你: '+v);
+ try{
+  if(aiCfg.configured){
+   const d=await api('POST','/chat',{text:v,session:aiSession});
+   if(d.ok){aiSession=d.session;
+    (d.say||[]).forEach(s=>ailn('a','AI: '+s));
+    (d.actions||[]).forEach(r=>ailn(r.ok?'a':'e','  · '+r.tool+(r.ok?' ✓':' ✗ '+(r.error||''))));
+    if(d.verify)ailn(d.verify.ok?'a':'e','  验证: '+(d.verify.ok?'通过':JSON.stringify(d.verify.issues||d.verify.error)));
+   }else ailn('e','AI: '+(d.error||'失败'));
+  }else{
+   const d=await api('POST','/agent',{text:v});
+   if(d.ok){ailn('a','AI: '+d.note);
+    (d.results||[]).forEach(r=>ailn(r.ok?'a':'e','  · '+r.tool+(r.ok?' ✓':' ✗ '+(r.error||''))));
+   }else ailn('e','AI: '+(d.error||'失败'));
+  }
+  loadScene(true);loadTree();status()}catch(err){ailn('e',String(err))}});
+aiStatus();
+
+/* ── boot ── */
+(async()=>{if(await status()){await loadWb();await loadTree();await loadScene(true)}
+ setInterval(status,5000);setInterval(loadTree,8000)})();
+</script>
+</body>
+</html>

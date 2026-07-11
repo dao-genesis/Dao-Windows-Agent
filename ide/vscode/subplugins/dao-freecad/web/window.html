@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAO · FreeCAD 整窗归一</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#1e1e1e;color:#d4d4d4;font:12px/1.4 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+#bar{position:fixed;top:0;left:0;right:0;height:26px;display:flex;align-items:center;gap:10px;
+ padding:0 10px;background:#252526cc;border-bottom:1px solid #3c3c3c;z-index:10;backdrop-filter:blur(4px)}
+#bar b{color:#4ec9b0}
+#bar a{color:#3794ff;text-decoration:none}
+#stat{margin-left:auto;color:#8a8a8a}
+#stage{position:absolute;inset:26px 0 0 0;background:#111}
+#vnc{width:100%;height:100%;border:0;display:block}
+#off{position:absolute;inset:26px 0 0 0;display:none;align-items:center;justify-content:center;color:#f48771;background:#111}
+</style>
+</head>
+<body>
+<div id="bar"><b>☯ FreeCAD 整窗归一</b>
+ <span>FreeCAD 软件本体经 xpra X11 指令级逐窗路由至此页 · 菜单/工具栏/对话框/3D 视口原样直接操作</span>
+ <a href="index.html">⇄ 工作台模式</a>
+ <span id="stat">连接中…</span></div>
+<div id="stage"><iframe id="vnc" allow="clipboard-read; clipboard-write"></iframe></div>
+<div id="off">显示路由离线 — 等待 FreeCAD GUI / xpra 通道…</div>
+
+<script>
+// 显示层：xpra X11 指令级逐窗路由（损伤区域增量编码·完整键鼠/剪贴板语义），非整屏像素投屏。
+// 控制层：AI/脚本不走本页面，直接经 :18920 /exec /agent 在 FreeCAD 进程内核操作。
+const XPRA_PORT = 14500;
+const host = location.hostname || '127.0.0.1';
+const xpraBase = `http://${host}:${XPRA_PORT}`;
+const iframe = document.getElementById('vnc');
+const stat = document.getElementById('stat');
+const off = document.getElementById('off');
+
+iframe.src = xpraBase + '/index.html?reconnect=true&sound=false&clipboard=true';
+
+async function probe(){
+  try{
+    const r = await fetch(xpraBase + '/index.html', {method:'GET', cache:'no-store', mode:'no-cors'});
+    const alive = r.ok || r.type === 'opaque';
+    off.style.display = alive ? 'none' : 'flex';
+    stat.textContent = alive ? '在线 · xpra 指令级直连 FreeCAD 本体' : '离线';
+  }catch(e){ off.style.display = 'flex'; stat.textContent = '离线'; }
+}
+setInterval(probe, 3000); probe();
+</script>
+</body>
+</html>
