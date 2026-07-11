@@ -7188,6 +7188,8 @@ def _light_a11y() -> None:
     if _a11y_lit[0]:
         return
     _a11y_lit[0] = True
+    if not sys.platform.startswith("linux"):
+        return  # AT-SPI/dbus 是 Linux 语义底座; Windows 走 UIA, 无需点灯
     _session_bus()          # F303: make sure we are on the desktop's bus
     import subprocess
     for cmd in (
@@ -7238,7 +7240,8 @@ def launch(argv, wait_title: str | None = None, timeout: float = 20.0,
         e.update(env)
     before = {w["id"] for w in list_windows()}
     try:
-        proc = subprocess.Popen(argv, env=e, start_new_session=True,
+        proc = subprocess.Popen(argv, env=e,
+                                start_new_session=(os.name == "posix"),
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         # F306: an absent binary is an ordinary answer, not a crash \u2014 the floor

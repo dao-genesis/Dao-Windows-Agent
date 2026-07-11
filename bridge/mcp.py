@@ -4,16 +4,100 @@
 
 实现 initialize / tools/list / tools/call 三个核心方法（纯标准库）。工具集与
 bridge/README.md 的暴露约定一一对应，命名沿用 ha-copilot 的 search/describe/run 三段式。
+
+两种存在形态（与 ide/vscode/dao-mcp.js 注册的 env 约定对应）：
+* 未设 `DAO_WIN_BRIDGE_URL` —— 在本进程内直接驱动 BridgeService（guest 内/单机）。
+* 设了 `DAO_WIN_BRIDGE_URL`（可选 `DAO_WIN_TOKEN`） —— 作为纯代理，把同名动作
+  转发到远端 bridge 的 /api/*（IDE 侧 MCP → Windows guest 的控制平面）。
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
+import urllib.request
 from typing import Any, Callable
 
 from bridge.service import BridgeService
 
-_SERVICE = BridgeService()
+
+class RemoteBridge:
+    """把工具层动作转发到远端 bridge HTTP 接口（与 BridgeService 同名同义）。"""
+
+    def __init__(self, base_url: str, token: str = "") -> None:
+        self.base = base_url.rstrip("/")
+        self.token = token
+
+    def _req(self, method: str, path: str, payload: dict | None = None) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        data = json.dumps(payload or {}).encode() if method == "POST" else None
+        req = urllib.request.Request(self.base + path, data=data,
+                                     headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            return json.loads(resp.read())
+
+    def apps(self):
+        return self._req("GET", "/api/apps")
+
+    def search_verbs(self, query: str, limit: int = 10):
+        return self._req("POST", "/api/search_verbs", {"query": query, "limit": limit})
+
+    def describe_app(self, app_id: str):
+        return self._req("POST", "/api/describe_app", {"app_id": app_id})
+
+    def session_create(self, session_id=None):
+        return self._req("POST", "/api/session.create",
+                         {"session_id": session_id} if session_id else {})
+
+    def session_list(self):
+        return self._req("GET", "/api/session.list")
+
+    def session_open_app(self, session_id: str, app_id: str, **extra):
+        return self._req("POST", "/api/session.open_app",
+                         {"session_id": session_id, "app_id": app_id, **extra})
+
+    def session_invoke(self, session_id: str, app_id: str, verb: str, params=None):
+        return self._req("POST", "/api/session.invoke",
+                         {"session_id": session_id, "app_id": app_id,
+                          "verb": verb, "params": params or {}})
+
+    def session_destroy(self, session_id: str):
+        return self._req("POST", "/api/session.destroy", {"session_id": session_id})
+
+    def session_prompt(self, session_id: str):
+        return self._req("POST", "/api/session.prompt", {"session_id": session_id})
+
+    def route(self, text: str, verb_limit: int = 5):
+        return self._req("POST", "/api/route", {"text": text, "verb_limit": verb_limit})
+
+    def capabilities(self):
+        return self._req("GET", "/api/capabilities")
+
+    def account_create(self, name: str, password=None, admin: bool = False):
+        return self._req("POST", "/api/account.create",
+                         {"name": name, "password": password, "admin": admin})
+
+    def account_list(self):
+        return self._req("GET", "/api/account.list")
+
+    def account_destroy(self, name: str, delete_profile: bool = True):
+        return self._req("POST", "/api/account.destroy",
+                         {"name": name, "delete_profile": delete_profile})
+
+    def account_sessions(self):
+        return self._req("GET", "/api/account.sessions")
+
+
+def _make_service():
+    url = os.environ.get("DAO_WIN_BRIDGE_URL", "").strip()
+    if url:
+        return RemoteBridge(url, os.environ.get("DAO_WIN_TOKEN", "").strip())
+    return BridgeService()
+
+
+_SERVICE = _make_service()
 
 # 工具定义：name -> (说明, 入参 schema properties, 必填, handler)
 _TOOLS: dict[str, dict] = {

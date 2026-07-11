@@ -30,6 +30,35 @@ def load_osctl(vendor_dir: Optional[str] = None) -> Any:
     return osctl
 
 
+def _spec_kw(spec) -> dict:
+    """把 find/target 规格({by,value} 字典或裸字符串)译成 uia_* 的 name/ctype 关键字。
+
+    画像以 ``{"by": "control_type", "value": "Edit"}`` 指控件类型——误当 name 会命中
+    同名菜单项(如 Notepad 的 Edit 菜单)，故按 by 分流到 ctype/name。
+    """
+    if isinstance(spec, str):
+        return {"name": spec}
+    if isinstance(spec, dict):
+        by, value = spec.get("by"), spec.get("value")
+        if by == "control_type":
+            return {"ctype": value}
+        if value is not None:
+            return {"name": value}
+    return {}
+
+
+# 文本编辑区在不同代 Windows 控件型不同：经典应用是 Edit，Win11 新 Notepad/WinUI 是
+# Document(RichEdit)，部分是 Text——画像写任意一种都视为“编辑区”逐个尝试（与
+# uia_win 适配器的 find_edit_control 同义）。
+_EDIT_KINDS = ("Edit", "Document", "Text")
+
+
+def _kw_variants(kw: dict) -> list[dict]:
+    if kw.get("ctype") in _EDIT_KINDS and not kw.get("name"):
+        return [{"ctype": c} for c in _EDIT_KINDS]
+    return [kw]
+
+
 class OsctlExecutor:
     """把一份动作计划(`{verb, steps:[{op,...}]}`)逐步落到 osctl。
 
@@ -69,27 +98,41 @@ class OsctlExecutor:
         return {"op": "launch", "ok": rec is not None, "window": rec}
 
     def _op_find(self, desktop: str, step: dict) -> dict:
-        rect = self.os.uia_find(self._win.get(desktop), name=step.get("value"),
-                                ctype=step.get("control_type"))
+        kw = _spec_kw(step)
+        if step.get("control_type"):
+            kw.setdefault("ctype", step["control_type"])
+        rect = None
+        for k in _kw_variants(kw):
+            rect = self.os.uia_find(self._win.get(desktop), **k)
+            if rect:
+                break
         return {"op": "find", "ok": rect is not None, "rect": rect}
 
     def _op_click(self, desktop: str, step: dict) -> dict:
-        rect = self.os.uia_find(self._win.get(desktop), name=step.get("target"))
+        rect = self.os.uia_find(self._win.get(desktop), **_spec_kw(step.get("target")))
         ok = bool(rect is not None and self.os.click_center(rect))
         return {"op": "click", "ok": ok, "rect": rect}
 
     def _op_set_value(self, desktop: str, step: dict) -> dict:
-        ok = bool(self.os.uia_set_value(self._win.get(desktop), step.get("text", ""),
-                                        name=step.get("target")))
+        ok = False
+        for k in _kw_variants(_spec_kw(step.get("target"))):
+            ok = bool(self.os.uia_set_value(self._win.get(desktop),
+                                            step.get("text", ""), **k))
+            if ok:
+                break
         return {"op": "set_value", "ok": ok}
 
     def _op_get_text(self, desktop: str, step: dict) -> dict:
-        txt = self.os.uia_text(self._win.get(desktop), name=step.get("target"))
+        txt = None
+        for k in _kw_variants(_spec_kw(step.get("target"))):
+            txt = self.os.uia_text(self._win.get(desktop), **k)
+            if txt:
+                break
         return {"op": "get_text", "ok": txt is not None, "text": txt}
 
     def _op_invoke(self, desktop: str, step: dict) -> dict:
-        return {"op": "invoke", "ok": bool(self.os.uia_invoke(self._win.get(desktop),
-                                                              name=step.get("target")))}
+        return {"op": "invoke", "ok": bool(self.os.uia_invoke(
+            self._win.get(desktop), **_spec_kw(step.get("target"))))}
 
     def _op_menu(self, desktop: str, step: dict) -> dict:
         path = step.get("path") or []
