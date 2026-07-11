@@ -101,6 +101,9 @@ else
     sleep 3
   done
   [ "$installed" = "1" ] || { echo "[FATAL] 装机三次均异常退出，不落哨兵。查 VNC:0 或 qemu 版本（当前 $(qemu-system-x86_64 --version | head -1)）。"; exit 1; }
+  # 装机真伪校验：SIGTERM 下 QEMU 也以 0 退出，磁盘实占过小即未真装完，不落哨兵。
+  disk_bytes=$(stat -c %s "$DISK" 2>/dev/null || echo 0)
+  [ "$disk_bytes" -ge $((5*1024*1024*1024)) ] || { echo "[FATAL] 装机退出但磁盘仅 $disk_bytes 字节（<5GB），判为未装完（如被信号终止），不落哨兵。"; exit 1; }
   touch "$INSTALLED_FLAG"
   echo "装机结束，落哨兵 $INSTALLED_FLAG"
 fi
