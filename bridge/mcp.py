@@ -282,6 +282,9 @@ def handle_request(req: dict) -> dict | None:
 
 
 def main() -> None:
+    # Windows 控制台默认 cp1252 无法编码中文工具描述，统一走 UTF-8
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     for line in sys.stdin:
         line = line.strip()
         if not line:
