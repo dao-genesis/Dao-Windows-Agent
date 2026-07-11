@@ -1,0 +1,231 @@
+{
+  "name": "ha-copilot-ide",
+  "displayName": "HA Copilot",
+  "description": "Operate the whole Home Assistant SYSTEM from your IDE — native boards routed into a single webview shell, a cloud-agent chat that designs automations / configures integrations / imports community blueprints for you, config files and MCP, all backed by the ha_copilot capability layer.",
+  "version": "0.10.0",
+  "publisher": "ha-copilot",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dao-genesis/ha-copilot.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "activationEvents": [
+    "onFileSystem:hacfg"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "haCopilot",
+          "title": "HA Copilot",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "haCopilot": [
+        {
+          "type": "webview",
+          "id": "haCopilot.chat",
+          "name": "AI 对话",
+          "icon": "media/icon.svg"
+        },
+        {
+          "id": "haCopilot.home",
+          "name": "区域与实体",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "haCopilot.connect",
+        "title": "HA Copilot: 连接 Home Assistant (URL + Token)"
+      },
+      {
+        "command": "haCopilot.disconnect",
+        "title": "HA Copilot: 断开连接"
+      },
+      {
+        "command": "haCopilot.openPanel",
+        "title": "HA Copilot: 打开生态面板（单网页多板块）"
+      },
+      {
+        "command": "haCopilot.togglePanel",
+        "title": "HA Copilot: 打开/关闭生态面板"
+      },
+      {
+        "command": "haCopilot.configureLlm",
+        "title": "HA Copilot: 配置外接模型 API（第三方 LLM 接入底层）"
+      },
+      {
+        "command": "haCopilot.agentDoc",
+        "title": "HA Copilot: 生成 Agent 接入文档 (MD)"
+      },
+      {
+        "command": "haCopilot.mountConfig",
+        "title": "HA Copilot: 挂载配置目录 (hacfg://)"
+      },
+      {
+        "command": "haCopilot.newChat",
+        "title": "HA Copilot: 新对话",
+        "icon": "$(add)"
+      },
+      {
+        "command": "haCopilot.refreshHome",
+        "title": "HA Copilot: 刷新实体",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "haCopilot.toggleEntity",
+        "title": "HA Copilot: 切换实体开关"
+      },
+      {
+        "command": "haCopilot.mcpConfig",
+        "title": "HA Copilot: 生成 MCP 接入配置"
+      },
+      {
+        "command": "haCopilot.runTool",
+        "title": "HA Copilot: 运行工具 (run_tool)"
+      },
+      {
+        "command": "haCopilot.exportChat",
+        "title": "HA Copilot: 导出当前会话 (Markdown)",
+        "icon": "$(export)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "haCopilot.newChat",
+          "when": "view == haCopilot.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "haCopilot.exportChat",
+          "when": "view == haCopilot.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "haCopilot.refreshHome",
+          "when": "view == haCopilot.home",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "HA Copilot",
+      "properties": {
+        "haCopilot.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Home Assistant base URL, e.g. http://127.0.0.1:8123"
+        },
+        "haCopilot.language": {
+          "type": "string",
+          "default": "zh-CN",
+          "description": "Conversation language sent to the agent."
+        },
+        "haCopilot.token": {
+          "type": "string",
+          "default": "",
+          "description": "Home Assistant long-lived access token（也可用连接命令存入加密仓）。"
+        },
+        "haCopilot.panelUrl": {
+          "type": "string",
+          "default": "",
+          "description": "生态面板根地址（默认取 baseUrl；可指向任意本机网页生态）。"
+        },
+        "haCopilot.cloud.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "云端直连 LLM Base URL（OpenAI 兼容，如 https://api.deepseek.com/v1）。"
+        },
+        "haCopilot.cloud.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "云端直连 LLM API Key。"
+        },
+        "haCopilot.cloud.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "云端直连模型名。"
+        },
+        "haCopilot.cloud.providers": {
+          "type": "array",
+          "default": [],
+          "description": "外接云端 LLM 渠道列表（OpenAI 兼容）。每项：{name, baseUrl, apiKey, model}。",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "haCopilot.cloud.active": {
+          "type": "string",
+          "default": "",
+          "description": "当前启用的云端渠道名（对应 providers 中某项的 name）。"
+        },
+        "haCopilot.rules.system": {
+          "type": "string",
+          "default": "",
+          "description": "自定义系统规则（编 · 留空 = 按 rules.mode/rules.canon 使用内置本源规则）。"
+        },
+        "haCopilot.rules.mode": {
+          "type": "string",
+          "enum": [
+            "dao",
+            "plain"
+          ],
+          "default": "dao",
+          "description": "本源观照模式：dao=帛书经藏前置（道），plain=仅操作规则（官）。"
+        },
+        "haCopilot.rules.canon": {
+          "type": "string",
+          "enum": [
+            "laozi+yinfu",
+            "laozi",
+            "yinfu"
+          ],
+          "default": "laozi+yinfu",
+          "description": "经藏选择：帛书《老子》/道藏《阴符经》/二经合一。"
+        },
+        "haCopilot.rules.user": {
+          "type": "string",
+          "default": "",
+          "description": "用户自定义规则（追加在系统规则之后）。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package --no-dependencies"
+  }
+}
