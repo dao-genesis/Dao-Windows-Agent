@@ -18,17 +18,19 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-let hostState = null;
-try { ({ hostState } = require("../windsurf-shim")); } catch (_) {}
+// 宿主态取自通用底层中枢(零 IDE 依赖): 进程内共生单例优先, 否则回落 ~/.dao/windsurf-host.json,
+// 故本桥在纯 Node(无 vscode)环境亦可就绪 —— 只要机上官方 LS 会话已被捕获落盘或经 host-discover 发现。
+const { resolveHost } = require("./host-state");
 
 const SVC = "/exa.language_server_pb.LanguageServerService/";
 
 function ready() {
-  const h = hostState && hostState();
-  return h && h.lsPort && h.csrfToken ? h : null;
+  return resolveHost();
 }
 
-// 官方登录态 apiKey(windsurf_api_key): credentials.toml 为真源(官方 LS 鉴权用同一把钥匙)
+// 官方登录态 apiKey(windsurf_api_key): credentials.toml 为真源(官方 LS 鉴权用同一把钥匙);
+// 部分登录模式(弱加密/仅会话令牌)不落 credentials.toml, 此时回退读 IDE globalStorage
+// state.vscdb 里的 windsurfAuthStatus{apiKey}(sqlite 内明文存储, 直接按字节正则提取)。
 let _keyCache = { key: "", at: 0 };
 function apiKey() {
   if (_keyCache.key && Date.now() - _keyCache.at < 60000) return _keyCache.key;
@@ -37,6 +39,17 @@ function apiKey() {
     const m = t.match(/windsurf_api_key\s*=\s*"([^"]+)"/);
     if (m) { _keyCache = { key: m[1], at: Date.now() }; return m[1]; }
   } catch (_) {}
+  for (const app of ["Devin", "Windsurf", "Windsurf - Next", "Code", "VSCodium"]) {
+    try {
+      const db = fs.readFileSync(path.join(os.homedir(), ".config", app, "User", "globalStorage", "state.vscdb"));
+      const s = db.toString("latin1");
+      let i = -1;
+      while ((i = s.indexOf("windsurfAuthStatus", i + 1)) >= 0) {
+        const m = s.slice(i, i + 4096).match(/"apiKey":"([^"]+)"/);
+        if (m) { _keyCache = { key: m[1], at: Date.now() }; return m[1]; }
+      }
+    } catch (_) {}
+  }
   return "";
 }
 

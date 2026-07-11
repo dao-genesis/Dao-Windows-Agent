@@ -43,7 +43,7 @@ async function activateDaoAiBase(context, opts) {
   catch (e) { log("✗ windsurf 垫片失败: " + (e && e.stack ? e.stack : e)); }
 
   // ② Cascade 三模式面板(<ns>.cascade)。
-  try { out.provider = daoCascade.register(context, (m) => log("[cascade] " + m), { ns, domain: o.domain }); log("✓ Cascade 三模式面板就位 (" + ns + ".cascade)" + (o.domain ? " · 领域模式: " + (o.domain.name || o.domain.id) : "")); }
+  try { out.provider = daoCascade.register(context, (m) => log("[cascade] " + m), { ns }); log("✓ Cascade 三模式面板就位 (" + ns + ".cascade)"); }
   catch (e) { log("✗ Cascade 面板注册失败: " + (e && e.stack ? e.stack : e)); }
 
   // ③ 宿主已内建官方本体(codeium.windsurf) → 共生模式, 面板接宿主 LS, 不重复激活。
@@ -109,4 +109,8 @@ function genContributes(ns, title) {
   };
 }
 
-module.exports = { activateDaoAiBase, deactivateDaoAiBase, genContributes };
+module.exports = {
+  activateDaoAiBase, deactivateDaoAiBase, genContributes,
+  // 领域提示词塑形器(隔离/替换层): 领域插件注册后, 三模式发送前统一塑形。
+  setPromptShaper: daoCascade.setPromptShaper,
+};
