@@ -1,5 +1,8 @@
 build.sh
 package.json.pre-unify
+unify.js
+subplugins/**
+test/**
 .gitignore
 **/__pycache__/**
 **/*.pyc

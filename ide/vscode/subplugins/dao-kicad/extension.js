@@ -218,12 +218,20 @@ function activate(context) {
   // 深度融合: 在基底上注册 KiCad 模式塑形器(提示词隔离/替换) —— kicad 态把三模式
   // 整体塑形为 PCB 设计代理(领域 SP + 36 工具目录), native 态字节级直通原生编程体验。
   let kicadShaper = null;
+  const unified = globalThis.__DAO_UNIFIED_HOST__;
   try {
-    const daoAiBase = require("./dao-ai-base");
-    daoAiBase.activateDaoAiBase(context, { ns: "daoKicad", log: (m) => console.log("[dao-ai-base] " + m) });
     const kicadMode = require("./kicad-mode");
     kicadShaper = kicadMode.createShaper({ port: 9931, log: (m) => console.log("[kicad-mode] " + m) });
-    daoAiBase.setPromptShaper(kicadShaper);
+    if (unified) {
+      // 归一宿主: 全仓单一 Cascade 基底已就位, 不再另起 daoKicad.cascade 面板(免碎片化);
+      // 仅把 KiCad 塑形器登记到宿主分派器, kicad 模式(@kicad / domain:kicad)激活时自动塑形。
+      unified.registerDomainShaper("kicad", kicadShaper);
+    } else {
+      // 独立安装: 保留自带基底与塑形器(与其他领域插件同装亦互不相撞)。
+      const daoAiBase = require("./dao-ai-base");
+      daoAiBase.activateDaoAiBase(context, { ns: "daoKicad", log: (m) => console.log("[dao-ai-base] " + m) });
+      daoAiBase.setPromptShaper(kicadShaper);
+    }
   } catch (e) { console.error("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
   // 状态栏模式开关 + 命令: 一键在 KiCad 模式 / 原生模式间切换。
   const modeSb = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10001);

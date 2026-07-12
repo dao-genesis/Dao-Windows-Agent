@@ -393,10 +393,14 @@ vscodeApi.postMessage({type:'init'});
 
 function activate(context) {
   // AI 交互基底(dao-ai-base · Devin Desktop 同源): Cascade 三模式面板, 命名空间 daoLceda.cascade*。
-  try {
-    const daoAiBase = require("./dao-ai-base");
-    daoAiBase.activateDaoAiBase(context, { ns: "daoLceda", log: (m) => console.log("[dao-ai-base] " + m) });
-  } catch (e) { console.error("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
+  // 归一宿主内: 单一 Cascade 基底已统辖, 不再另起 daoLceda.cascade 面板(免碎片化);
+  // 嘉立创领域塑形经宿主模式枢纽(domain:lceda 画像现算)生效。独立安装才起自带基底。
+  if (!globalThis.__DAO_UNIFIED_HOST__) {
+    try {
+      const daoAiBase = require("./dao-ai-base");
+      daoAiBase.activateDaoAiBase(context, { ns: "daoLceda", log: (m) => console.log("[dao-ai-base] " + m) });
+    } catch (e) { console.error("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
+  }
   const treeProvider = new ProjectTreeProvider(context);
   const chatProvider = new ChatViewProvider(context);
   // 右下角状态栏按钮: 一键弹出 EDA 面板。

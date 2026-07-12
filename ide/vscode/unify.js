@@ -32,25 +32,34 @@ function copyDir(src, dst) {
   }
 }
 
+// 归一基底过滤: 折入宿主后各领域不再各起自己的 Cascade 基底面板(宿主 daoWin.cascade 单点统辖),
+// 故其 <ns>-cascade 容器 / <ns>.cascade* 视图与命令不合入宿主清单(免留死面板)。
+function isSubCascadeContainer(id) { return /-cascade$/.test(String(id || "")) && id !== "daoWin-cascade"; }
+function isSubCascadeItem(id) { return /^(?!daoWin\.)[A-Za-z0-9_-]+\.cascade(\.|$)/.test(String(id || "")); }
+
 // contributes 深合并: 按 command/view/container id 去重, 后到覆盖同 id 旧项。
 function mergeContributes(host, sub) {
   if (!sub) return;
   host.viewsContainers = host.viewsContainers || {};
   const hAct = (host.viewsContainers.activitybar = host.viewsContainers.activitybar || []);
   for (const v of (sub.viewsContainers && sub.viewsContainers.activitybar) || []) {
+    if (isSubCascadeContainer(v.id)) continue;
     const i = hAct.findIndex((x) => x.id === v.id);
     i >= 0 ? (hAct[i] = v) : hAct.push(v);
   }
   host.views = host.views || {};
   for (const [k, arr] of Object.entries(sub.views || {})) {
+    if (isSubCascadeContainer(k)) continue;
     const hv = (host.views[k] = host.views[k] || []);
     for (const v of arr) {
+      if (isSubCascadeItem(v.id)) continue;
       const i = hv.findIndex((x) => x.id === v.id);
       i >= 0 ? (hv[i] = v) : hv.push(v);
     }
   }
   host.commands = host.commands || [];
   for (const c of sub.commands || []) {
+    if (isSubCascadeItem(c.command)) continue;
     const i = host.commands.findIndex((x) => x.command === c.command);
     i >= 0 ? (host.commands[i] = c) : host.commands.push(c);
   }
@@ -58,6 +67,7 @@ function mergeContributes(host, sub) {
   for (const [k, arr] of Object.entries(sub.menus || {})) {
     const hm = (host.menus[k] = host.menus[k] || []);
     for (const m of arr) {
+      if (isSubCascadeItem(m.command)) continue;
       const i = hm.findIndex((x) => x.command === m.command && x.when === m.when);
       i >= 0 ? (hm[i] = m) : hm.push(m);
     }
