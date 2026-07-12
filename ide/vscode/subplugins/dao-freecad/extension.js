@@ -653,11 +653,12 @@ function activate(context) {
     } catch (e) { console.error("[dao-proxy-pro] 激活失败(不影响 FreeCAD/Cascade 主链路): " + (e && e.stack ? e.stack : e)); }
   }
   // 插件即本体：IDE 启动 → 内核自起（探到本机 FreeCAD 直接路由，缺失才按平台调度下载）
-  if (cfg().get("autoStart")) {
+  if (!unifiedHost && cfg().get("autoStart")) {
     ensureBridge(true).finally(startWatchdog);
   }
-  // 归一外壳随插件常驻(浏览器端同源可达)
-  ensureShell().catch((e) => console.error("[dao-shell] " + (e && e.message || e)));
+  if (!unifiedHost) {
+    ensureShell().catch((e) => console.error("[dao-shell] " + (e && e.message || e)));
+  }
   context.subscriptions.push(
     vscode.commands.registerCommand("dao-freecad.open", openWorkbench),
     vscode.commands.registerCommand("dao-freecad.openShell", openShell),

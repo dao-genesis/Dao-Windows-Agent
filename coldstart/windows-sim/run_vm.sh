@@ -19,8 +19,18 @@ DISK="$IMAGES/${name}.qcow2"
 [ -f "$DISK" ] || { echo "磁盘不存在: $DISK — 先跑 build_image.sh"; exit 1; }
 
 # KVM 下必须带 Hyper-V 启蒙(hv_*)：无启蒙时 Win11 常态启动 SYSTEM_THREAD_EXCEPTION_NOT_HANDLED 蓝屏循环（嵌套虚拟化实测）。
-ACCEL="tcg"; CPU="max"; [ -r /dev/kvm ] && [ -w /dev/kvm ] && { ACCEL="kvm"; CPU="host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_stimer,hv_synic,hv_vpindex,hv_runtime,hv_frequencies"; }
-[ "$ACCEL" = "tcg" ] && echo "[WARN] 无 KVM 权限，回退 tcg 软件模拟(慢)。可尝试: sudo setfacl -m u:\$USER:rw /dev/kvm"
+ACCEL="tcg"; CPU="max"; KVM_VIA_GROUP=0
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+  ACCEL="kvm"
+elif [ "$(id -u)" -ne 0 ] && getent group kvm | awk -F: -v u="$USER" '$4 ~ "(^|,)" u "(,|$)" { found=1 } END { exit !found }'; then
+  # usermod 后当前长寿命 shell 尚未刷新补充组时，以 sg 立即取得 kvm 组权限。
+  ACCEL="kvm"; KVM_VIA_GROUP=1
+fi
+if [ "$ACCEL" = "kvm" ]; then
+  CPU="host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time,hv_stimer,hv_synic,hv_vpindex,hv_runtime,hv_frequencies"
+else
+  echo "[WARN] 无 KVM 权限，回退 tcg 软件模拟(慢)。可尝试运行 install_qemu.sh 后重新登录。"
+fi
 
 # UEFI + TPM2（Win11 必需）
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"; [ -f "$OVMF_CODE" ] || OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
@@ -74,4 +84,8 @@ PYEOF
 fi
 
 echo "转发: RDP 127.0.0.1:13389 → guest:3389 ; 机控桥 127.0.0.1:19920 → guest:9920 ; VNC :$vnc ; QMP 127.0.0.1:4444"
+if [ "$KVM_VIA_GROUP" = "1" ]; then
+  printf -v qemu_cmd '%q ' "${args[@]}"
+  exec sg kvm -c "$qemu_cmd"
+fi
 exec "${args[@]}"

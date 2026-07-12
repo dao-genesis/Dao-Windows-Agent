@@ -69,6 +69,13 @@ def test_build_image_bundles_vsix():
     assert "dao-windows-agent-" in src and "vsix" in src
 
 
+def test_run_vm_uses_fresh_kvm_group_without_relogin():
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "run_vm.sh"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "KVM_VIA_GROUP" in src
+    assert "exec sg kvm -c" in src
+
+
 def test_firstlogon_provisions_vscode_extension():
     with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"), encoding="utf-8") as fh:
         src = fh.read()
@@ -83,6 +90,40 @@ def test_firstlogon_provisions_devin_desktop_extension():
     assert "win32-x64-user" in src
     assert "devin-desktop.cmd" in src
     assert "dao devin desktop extension installed" in src
+    assert "vc_redist.x64.exe" in src
+    assert "IsReadOnly = $false" in src
+
+
+def test_homeassistant_domain_shaper_uses_host_scope_tool_catalog():
+    path = os.path.join(
+        REPO,
+        "ide",
+        "vscode",
+        "subplugins",
+        "dao-ha",
+        "extension.js",
+    )
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    activate = src[src.index("function activate(context)"):]
+    assert "DOMAIN_TOOL_SUMMARIES.map" in activate
+    assert "AGENT_TOOLS.map" not in activate
+
+
+def test_unified_freecad_activation_is_lazy():
+    path = os.path.join(
+        REPO,
+        "ide",
+        "vscode",
+        "subplugins",
+        "dao-freecad",
+        "extension.js",
+    )
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    activate = src[src.index("function activate(context)"):]
+    assert 'if (!unifiedHost && cfg().get("autoStart"))' in activate
+    assert "if (!unifiedHost) {\n    ensureShell()" in activate
 
 
 def test_home_windows_master_control():

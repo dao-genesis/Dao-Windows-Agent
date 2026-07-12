@@ -25,6 +25,20 @@ const vscode = require("vscode");
 
 const SECRET_TOKEN = "haCopilot.token";
 const CFG = () => vscode.workspace.getConfiguration("haCopilot");
+const DOMAIN_TOOL_SUMMARIES = [
+  ["search_web", "联网搜索 Home Assistant 生态资料"],
+  ["search_tools", "检索确定性 Home Assistant 工具目录"],
+  ["describe_tool", "查看工具完整参数 schema"],
+  ["run_tool", "执行目录中的任意 Home Assistant 工具"],
+  ["list_dir", "列出 Home Assistant 配置目录"],
+  ["read_file", "读取 Home Assistant 配置文件"],
+  ["write_file", "写入 Home Assistant 配置文件"],
+  ["edit_file", "精准编辑 Home Assistant 配置文件"],
+  ["render_template", "执行 Jinja2 模板并读取实时状态"],
+  ["check_config", "校验 Home Assistant 配置"],
+  ["get_logs", "读取 Home Assistant 错误与警告日志"],
+  ["call_service", "调用任意 Home Assistant 服务"],
+];
 
 /** @type {vscode.ExtensionContext} */
 let ctx;
@@ -2033,7 +2047,7 @@ function activate(context) {
         "你现在处于「Home Assistant 模式」: 你是 DAO HA 归一智能家居代理, 全权代替用户驱动 Home Assistant 底层完成配置/自动化/设备控制。",
         "",
         "## 工具目录 (ha-copilot)",
-      ].concat(AGENT_TOOLS.map((t) => "- " + t.name + ": " + t.desc)).concat([
+      ].concat(DOMAIN_TOOL_SUMMARIES.map(([name, desc]) => "- " + name + ": " + desc)).concat([
         "",
         "## 操作纪律",
         "- 一切 HA 操作优先经上述工具面(或机控桥 @ha 领域动词: states/call_service/automation_create/check_config)执行, 不要凭记忆编造实体/服务。",

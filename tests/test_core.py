@@ -250,6 +250,32 @@ def test_uia_driver_binding_executes_plan():
     assert seen["desktop"] == "dao_vm_d_notepad"
 
 
+def test_osctl_binding_keeps_isolated_desktop_message_driver(monkeypatch):
+    """agentctl 只绑定视觉兜底；级别② 必须保留跨隔离桌面可用的消息级 driver。"""
+    seen = {}
+
+    def message_driver(desktop, plan):
+        seen["desktop"] = desktop
+        return {"driver": "message", "verb": plan["verb"]}
+
+    monkeypatch.setattr("core.adapter.uia_win.make_driver", lambda: message_driver)
+    monkeypatch.setattr("core.adapter.osctl_driver.load_osctl", lambda: object())
+    monkeypatch.setattr(
+        "core.adapter.osctl_driver.make_grounder",
+        lambda _osctl: lambda _desktop, _plan: {"x": 1, "y": 1},
+    )
+
+    reg = build_default_registry(bind_osctl=True)
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-osctl-isolation")
+    mgr.create("vm_iso")
+    mgr.open_app("vm_iso", "notepad")
+    result = mgr.invoke("vm_iso", "notepad", "read_text")
+
+    assert result.ok
+    assert result.value == {"driver": "message", "verb": "read_text"}
+    assert seen["desktop"] == "dao_vm_iso_notepad"
+
+
 def test_vision_dry_run_and_grounder_binding():
     """级别③：dry-run 产出视觉计划；注入 grounder 后交其执行；非法 op 拒绝。"""
     reg = build_default_registry()

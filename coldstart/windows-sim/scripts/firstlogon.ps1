@@ -44,9 +44,18 @@ foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\bridge\server.py") { $sr
 if ($src -and $py) {
   Copy-Item -Recurse -Force "$src\bridge" "$dst\bridge"
   Copy-Item -Recurse -Force "$src\core"   "$dst\core"
+  Get-ChildItem -Path $dst -Recurse -Force | ForEach-Object {
+    if (-not $_.PSIsContainer) { $_.IsReadOnly = $false }
+  }
   $token = if ($env:DAO_WIN_TOKEN) { $env:DAO_WIN_TOKEN } else { 'dao-win-lab' }
   # 级别② 实机 driver 依赖（装不上不阻断：bridge 自动退回 dry-run）
   # 必须装到全局 site-packages（user-site 的 pywin32 DLL 不落位，import 必败）
+  try {
+    $vcRedist = "$env:TEMP\vc_redist.x64.exe"
+    Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcRedist
+    Start-Process $vcRedist -ArgumentList '/install','/quiet','/norestart' -Wait
+    Log "vc++ runtime installed"
+  } catch { Log "vc++ runtime skipped: $_" }
   try { & $py -m pip install --quiet --no-user pywinauto; Log "pywinauto installed (level2 driver live)" } catch { Log "pywinauto skipped: $_" }
   New-NetFirewallRule -DisplayName 'DaoBridge9920' -Direction Inbound -Protocol TCP -LocalPort 9920 -Action Allow -ErrorAction SilentlyContinue | Out-Null
   # 登录自启：无界面常驻，绑 0.0.0.0:9920（宿主 hostfwd 19920→9920 可达）
