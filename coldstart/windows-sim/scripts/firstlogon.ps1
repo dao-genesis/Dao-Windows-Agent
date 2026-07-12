@@ -172,3 +172,8 @@ try {
 } catch { Log "vscode/extension provisioning failed: $_" }
 
 Log "== Dao first-logon done =="
+
+# 收尾：仅安装阶段（unattend 光盘仍挂载）自动关机，令宿主 up.sh 以 QEMU 正常退出为装机完成信号；
+# 常态启动无该光盘，不触发。
+$unattendDisk = Get-ChildItem 'D:\dao-windows-agent-*.vsix','E:\dao-windows-agent-*.vsix','F:\dao-windows-agent-*.vsix','G:\dao-windows-agent-*.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($unattendDisk) { Log "install-phase shutdown in 10s"; shutdown /s /t 10 /c "dao coldstart install done" }
