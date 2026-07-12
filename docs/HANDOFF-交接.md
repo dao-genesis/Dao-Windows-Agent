@@ -284,3 +284,76 @@ round-trip、双会话并行隔离（数据+PrintWindow 视觉双证，默认桌
 - guest 为 TCG 软件模拟，冷 PowerShell 首跑慢：`Get-Service` 全量需 >60s，故 `service` 默认 timeout 提到 180s。
 
 *道法自然 · 无为而无不为*
+
+## 十四、归一插件融合 + Devin Desktop 真机（本轮 · PR#17/18/19 · 实况交接）
+
+> 本轮聚焦：把 FreeCAD/KiCad/嘉立创EDA/Home Assistant 四领域**归一进单一 Windows 插件与单一 Cascade**，
+> 并在**真 Win11 QEMU/KVM guest + Devin Desktop** 内端到端验证。以下**严格区分 PASS / 部分 / 未验**，
+> 不夸大：整个流程**未全绿**，仍有实测缺口，交给下一个 Agent 继续。
+
+### 14.1 已合入 / 已开 PR
+
+| PR | 内容 | 状态 |
+|---|---|---|
+| #17 | 归一补全：FreeCAD/嘉立创/HA 领域塑形器登记进宿主分派器 `__DAO_UNIFIED_HOST__`；firstlogon 盘符自适应（D:–G: 扫描） | ✅ 已合 |
+| #18 | firstlogon.ps1 加 UTF-8 BOM（PS 5.1 无 BOM 按 ANSI 解析中文注释里 U+2014 尾字节致整脚本 ParserError，真机复现） | ✅ 已合 |
+| #19 | firstlogon Resolve-Python 排除 `\WindowsApps\` 商店占位 stub（Get-Command python 命中 0 字节别名致离线兜底被跳过、桥指向假 python，桥 9920 永不监听，真机复现） | ⬅️ 开·CI 6 绿·可合 |
+
+### 14.2 归一架构（代码层已落地，PR#17）
+
+- **单一宿主**：`ide/vscode` 主插件暴露 `globalThis.__DAO_UNIFIED_HOST__`；四领域子插件 `vendor/`
+  被 `build.sh` 自动收编进同一 VSIX（252 文件 1.77–1.85 MB）。
+- **单一 Cascade**：子插件检测到宿主存在即**只登记 `registerDomainShaper(app_id, {wrap,status,toggle})`**，
+  **不再另起第二个 Cascade**；宿主缺失时才回退独立基底（standalone 仍可用）。`unify.js` 过滤
+  `*-cascade`（≠`daoWin-cascade`）子容器与 `<ns>.cascade` 子项。
+- **动态领域模式**：`core/agent/modes.py` 按 registry 非通用 profile 生成 `domain:<app_id>`；
+  `~/.dao/mode.json` 持久化；`native`/`coding` **不注入领域 overlay**。
+- 四领域 app_id：`freecad` / `kicad` / `jlceda` / `homeassistant-ext`。
+
+### 14.3 真机实测结论（本轮·Win11 26100 guest）
+
+**离线自检（宿主 Linux，可复现）**：`python3 -m pytest tests -q` → **98 passed**；
+`bash ide/vscode/build.sh` → `dao-windows-agent-0.7.1.vsix` 打包成功。
+
+| 项 | 结果 | 证据/说明 |
+|---|---|---|
+| Win11 KVM guest 启动 + 桌面 | ✅ | Remmina VNC 127.0.0.1:5900 见 Win11 桌面（License expired 评估版，不影响功能） |
+| 冷启动桥自启（掉电重启后） | ✅ | VM 重启后 `DaoBridge` 计划任务拉起桥，15s 内 `/api/health` ok（apps=browser/freecad/jlceda/kicad/mspaint/notepad/system） |
+| 桥后端全链 | ✅ | health / mode.list / mode.set / 领域裁剪 / open_app 均通 |
+| 领域裁剪 domain:freecad | ✅ | allowed_apps 仅 [browser,freecad,system]；open_app kicad 被拒（"不开放应用"错误）——正确 |
+| coding 机控隔离 | ✅ | coding 下 allowed_apps 空、open notepad 被拒 |
+| Devin Desktop 安装 | ✅ | 静默装到 `%LOCALAPPDATA%\Programs\Devin\Devin.exe`（windsurf-stable latest 元数据端点） |
+| Devin Desktop 登录 | ✅ | yzyozwl49 账号登录成功（凭据经 guest 剪贴板传入，未落任何仓库/日志/报告） |
+| Devin Desktop 工作台 | ✅ | 清旧进程后 `devin://` 深链启动，Agent/Editor 工作台打开 |
+| **归一 VSIX 装入 Devin Desktop** | ✅ | `devin-desktop.cmd --install-extension dao-windows-agent-0.7.1.vsix` → "successfully installed"（VSIX 经宿主 http.server + slirp 10.0.2.2 传入 guest） |
+| **单一 Cascade（Devin Desktop 内）** | ✅（目视） | Editor 模式左侧仅一个 `DAO · AI 交互: Cascade · 三模式` 容器；底栏见 `DAO ide_7de70ab6 ● / 主模式 / HA 未连接 / 嘉立创EDA工程 / 道之对话(LCEDA AI)` 状态项，无重复 Cascade 面板 |
+| FreeCAD GUI | ⚠️ 部分 | 经桥起 FreeCAD 1.0.2 窗口可见并交互（Welcome 页），但 OpenGL 软渲染告警存在（KVM 无 GPU） |
+| Notepad UIA type_text | ❌ | Win11 新版 Notepad profile 与 UIA 不匹配：find/set_value 失败（桥通、profile 待适配） |
+| `native` 模式 | ⚠️ 缺失 | 动态模式列表无 `native`；现为 `primary`/`coding`/`windows`/`domain:*`，需确认 `native` 应否新增或 `primary` 即其替代 |
+| `homeassistant-ext` 能力 | ⚠️ 缺失 | guest `/api/apps` 未列 homeassistant-ext（塑形器已登记，但后端 registry 未暴露该 app）——待排查 |
+| KiCad / 嘉立创EDA / HA 完整 GUI 金路径 | ❌ 未验 | 仅后端可达，未做完整 GUI 工作流 |
+| MCP 注册/工具调用 · 桌面路由 · RDP(13389) · QGA | ❌ 未验 | 本轮未覆盖；QGA guest-ping 超时（socket 路径存在但无响应） |
+| 全新冷启动零人工（不手工触发任务/装 Python） | ❌ 未验 | 现有 guest 已修好；#19 修复需在**全新** unattended 装机跑一遍才算闭环 |
+
+### 14.4 交接给下一个 Agent（按优先级）
+
+1. **合 PR#19** 后，跑一次**全新** `coldstart/up.sh` 无人值守装机，验证 #17/#18/#19 三修复叠加下
+   桥**零人工**自启（真 Python + BOM + 盘符自适应全生效）。
+2. 排查 `homeassistant-ext` 未进 `/api/apps`：确认 HA profile 是否被 registry 加载（可能 profile
+   注册条件/依赖缺失），补齐后领域模式 `domain:homeassistant-ext` 才可用。
+3. 定夺 `native` 模式：要么在 `core/agent/modes.py` 新增，要么在文档/状态栏明确 `primary` 即通用替代。
+4. 适配 Win11 新版 Notepad 的 UIA profile（或改走消息级 driver），使 open→type_text→read_text 往返绿。
+5. KiCad / 嘉立创EDA / HA 完整 GUI 金路径 + 提示词隔离的 **Cascade UI 直证**（本轮仅后端证隔离）。
+6. MCP 注册/工具调用、桌面路由（guacamole 链路）、RDP(13389)、QGA 逐项真机验证。
+
+### 14.5 环境值增量（本轮）
+
+- 本 Devin VM 内存仅 7 GB、VM 用 4 GB：**QEMU 进程易被回收/掉电**；每次重启前务必
+  `sudo setfacl -m u:$USER:rw /dev/kvm`（否则回退 TCG → Win11 蓝屏循环），再
+  `bash coldstart/windows-sim/run_vm.sh`，桥约 15–45s 就绪。
+- Devin Desktop 装/登流程见 `devin-remote/cloud/coldstart/coldstart.ps1`；登录账号 yzyozwl49
+  （密码见账号总表，**不入仓**）。
+- VSIX 传 guest：宿主 `python3 -m http.server <port>` + guest `iwr http://10.0.2.2:<port>/xxx.vsix`
+  （比 base64 分块经桥更稳，本轮 base64 分块因 chunk 请求体过大 ok:false，改 http.server 一次成功）。
+
+*道法自然 · 无为而无不为*
