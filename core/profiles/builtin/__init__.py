@@ -11,7 +11,9 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
                            vision_grounder: Optional[Callable[[str, dict], Any]] = None,
                            discover_subplugins: bool = False,
                            bind_osctl: bool = False,
-                           autodetect_uia: bool = True) -> ProfileRegistry:
+                           autodetect_uia: bool = True,
+                           browser_factory: Optional[Callable[[], Any]] = None,
+                           cdp_evaluator: Optional[Callable[[str], Any]] = None) -> ProfileRegistry:
     """构建内置画像注册表。
 
     级别② 的 uia_driver：未显式传入时，尝试自动探测 guest 内实机 driver（纯 ctypes 消息级，
@@ -40,10 +42,11 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
 
     reg = ProfileRegistry()
     reg.register(system.PROFILE, lambda p: system._ADAPTER(p))
-    reg.register(browser.PROFILE, lambda p: browser._ADAPTER(p))
+    reg.register(browser.PROFILE,
+                 lambda p: browser._ADAPTER(p, browser_factory=browser_factory))
     reg.register(kicad.PROFILE, lambda p: kicad._ADAPTER(p))
     reg.register(freecad.PROFILE, lambda p: freecad._ADAPTER(p))
-    reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p))
+    reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p, evaluator=cdp_evaluator))
     reg.register(notepad.PROFILE, lambda p: notepad._ADAPTER(p, driver=uia_driver))
     reg.register(mspaint.PROFILE, lambda p: mspaint._ADAPTER(p, grounder=vision_grounder))
     if discover_subplugins:
