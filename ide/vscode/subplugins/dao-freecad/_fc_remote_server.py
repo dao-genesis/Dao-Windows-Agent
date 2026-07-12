@@ -1374,12 +1374,25 @@ def start_server(port=None, host=None):
     print(f"  {'='*56}")
     print(f"")
 
-    # 后台桥接形态：最小化主窗，不抢用户/IDE 焦点（FC_REMOTE_MINIMIZE=0 关闭）
+    # 后台桥接形态：最小化主窗，不抢用户/IDE 焦点（FC_REMOTE_MINIMIZE=0 关闭）。
+    # 主窗可能在本函数之后才完成渲染，首启对话框(OpenGL/欢迎页)也可能把窗口还原，
+    # 故除立即最小化外，再经 QTimer 延时补打几次。
     if os.environ.get("FC_REMOTE_MINIMIZE", "1") != "0":
+        def _minimize_main_window():
+            try:
+                mw = Gui.getMainWindow()
+                if mw and not mw.isMinimized():
+                    mw.showMinimized()
+            except Exception:
+                pass
+        _minimize_main_window()
         try:
-            mw = Gui.getMainWindow()
-            if mw:
-                mw.showMinimized()
+            try:
+                from PySide2 import QtCore as _QtCore
+            except ImportError:
+                from PySide import QtCore as _QtCore
+            for _delay in (1000, 3000, 8000):
+                _QtCore.QTimer.singleShot(_delay, _minimize_main_window)
         except Exception:
             pass
 
