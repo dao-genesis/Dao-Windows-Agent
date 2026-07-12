@@ -17,10 +17,12 @@ $qga = Get-ChildItem 'D:\guest-agent\qemu-ga-x86_64.msi','E:\guest-agent\qemu-ga
 if ($qga) { Start-Process msiexec -ArgumentList "/i `"$($qga.FullName)`" /qn" -Wait; Log "qemu-ga installed" }
 
 # 3) Python（winget，供机控桥与级别① 适配器在 guest 内运行）
-try { winget install -e --id Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements; Log "python installed (winget)" } catch { Log "winget python skipped: $_" }
+try { winget install -e --id Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements; if ($LASTEXITCODE -eq 0) { Log "python installed (winget)" } else { Log "winget python exit=$LASTEXITCODE" } } catch { Log "winget python skipped: $_" }
 function Resolve-Python {
   foreach ($p in @('C:\Program Files\Python312\python.exe','C:\Program Files\Python313\python.exe')) { if (Test-Path $p) { return $p } }
-  $c = Get-Command python -ErrorAction SilentlyContinue; if ($c) { return $c.Source }
+  # WindowsApps 下的 python.exe 是商店占位 stub（0 字节别名，执行只会弹商店），必须排除
+  $c = Get-Command python -ErrorAction SilentlyContinue
+  if ($c -and $c.Source -notmatch '\\WindowsApps\\') { return $c.Source }
   return $null
 }
 $py = Resolve-Python
