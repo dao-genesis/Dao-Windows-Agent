@@ -116,6 +116,22 @@ def test_coldstart_payload_cache_pipeline():
         assert "Get-Payload '%s'" % name in fl
 
 
+def test_firstlogon_log_is_pipeline_safe():
+    """真机踩坑回归：Log 绝不能用 Tee-Object 把日志行泄进管道——否则 Get-Payload 这类
+    '末句返回路径' 的函数会连同 Log 行返回成 System.Object[]，令 Start-Process/Expand-Archive
+    收到数组即 'Cannot convert System.Object[] to String'，全线离线安装与桥落地皆败。"""
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"),
+              encoding="utf-8") as fh:
+        src = fh.read()
+    log_line = next(l for l in src.splitlines() if l.strip().startswith("function Log("))
+    assert "Tee-Object" not in log_line, "Log 不得用 Tee-Object（会污染函数返回值/管道）"
+    assert "Add-Content" in log_line, "Log 应只写文件（Add-Content）+ 控制台，不进管道"
+    # Get-Payload 仍以 Log 记录并末句返回路径——正是被污染的高危形态，故上面的守卫必须成立
+    getp = src[src.index("function Get-Payload"):]
+    getp = getp[:getp.index("\n}") + 2]
+    assert "Log " in getp and "return $out" in getp
+
+
 def test_coldstart_runbook_handoff_doc():
     rb = os.path.join(REPO, "coldstart", "RUNBOOK.md")
     assert os.path.isfile(rb)
