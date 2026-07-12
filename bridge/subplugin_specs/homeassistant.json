@@ -13,28 +13,28 @@
       "summary": "列出实体状态（可按 domain 过滤）",
       "params": {"args": "附加参数，如 --domain light --brief"},
       "aliases": ["实体", "状态"],
-      "shell": "${{HACTL:-hactl}} states {args}"
+      "shell": "hactl states {args}"
     },
     {
       "name": "call_service",
       "summary": "调用 HA 服务（domain.service + JSON data）",
       "params": {"service": "如 light.turn_on", "data": "JSON 参数"},
       "aliases": ["call", "服务", "开灯", "控制"],
-      "shell": "${{HACTL:-hactl}} call {service} --data {data}"
+      "shell": "hactl call {service} --data {data}"
     },
     {
       "name": "automation_create",
       "summary": "创建自动化（config-editor 路径，同 HA UI）",
       "params": {"id": "自动化 id", "json": "自动化 JSON"},
       "aliases": ["自动化"],
-      "shell": "${{HACTL:-hactl}} automation-create {id} {json}"
+      "shell": "hactl automation-create {id} {json}"
     },
     {
       "name": "check_config",
       "summary": "校验配置并热重载",
       "params": {"args": "可选 --domain"},
       "aliases": ["校验", "重载"],
-      "shell": "${{HACTL:-hactl}} check && ${{HACTL:-hactl}} reload {args}"
+      "shell": "hactl check && hactl reload {args}"
     }
   ]
 }

@@ -230,6 +230,27 @@ try {
   }
 } catch { Log "devin desktop provisioning failed: $_" }
 
+# 8) 收编的领域软件本体：FreeCAD(3D) + KiCad(PCB)。winget 优先→官网静默兜底（装不上不阻断：
+#    对应 profile 的 verb 会返回「可执行文件不存在」，桥其余能力照常）。嘉立创EDA(jlceda) 走 EasyEDA
+#    Pro 扩展 API（sys_MessageBus/_EXTAPI_ROOT_），无独立 CLI，此处不装本体。
+function Test-Cmd($paths) { foreach ($p in $paths) { if (Test-Path $p) { return $true } }; return $false }
+# FreeCAD：桥探 FreeCADCmd.exe / FreeCAD.exe
+$freecadPaths = @("$env:ProgramFiles\FreeCAD 0.21\bin\FreeCADCmd.exe","$env:ProgramFiles\FreeCAD 1.0\bin\FreeCADCmd.exe","$env:ProgramFiles\FreeCAD\bin\FreeCADCmd.exe")
+if (-not (Test-Cmd $freecadPaths)) {
+  try { winget install -e --id FreeCAD.FreeCAD --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "freecad exit=$LASTEXITCODE" } catch { Log "winget freecad skipped: $_" }
+  if (-not (Test-Cmd $freecadPaths)) {
+    try {
+      $fc = Get-Payload 'FreeCAD-setup.exe' 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-py311.exe'
+      Start-Process $fc -ArgumentList '/S' -Wait; Log "freecad installed (offline)"
+    } catch { Log "offline freecad failed: $_" }
+  }
+} else { Log "freecad already present" }
+# KiCad：桥探 kicad-cli.exe
+$kicadPaths = @("$env:ProgramFiles\KiCad\8.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\9.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe")
+if (-not (Test-Cmd $kicadPaths)) {
+  try { winget install -e --id KiCad.KiCad --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "kicad exit=$LASTEXITCODE" } catch { Log "winget kicad skipped: $_" }
+} else { Log "kicad already present" }
+
 Log "== Dao first-logon done =="
 
 # 收尾：仅安装阶段（unattend 光盘仍挂载）自动关机，令宿主 up.sh 以 QEMU 正常退出为装机完成信号；
