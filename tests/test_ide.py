@@ -77,6 +77,14 @@ def test_firstlogon_provisions_vscode_extension():
     assert "--source winget" in src  # 防 msstore 源歧义（真机踩坑）
 
 
+def test_firstlogon_provisions_devin_desktop_extension():
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "win32-x64-user" in src
+    assert "devin-desktop.cmd" in src
+    assert "dao devin desktop extension installed" in src
+
+
 def test_home_windows_master_control():
     """归一主页 · Windows 总控：命令注册 + RDP 五页配置收编 + 账号/子板块管理面。"""
     with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:

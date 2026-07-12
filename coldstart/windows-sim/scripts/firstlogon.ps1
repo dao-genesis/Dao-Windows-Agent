@@ -179,6 +179,37 @@ try {
   }
 } catch { Log "vscode/extension provisioning failed: $_" }
 
+# 7) Devin Desktop + 同一归一 VSIX（官方稳定版 user installer，无需提权）
+try {
+  function Resolve-DevinCli {
+    foreach ($p in @("$env:LOCALAPPDATA\Programs\Devin\bin\devin-desktop.cmd",
+                     "$env:LOCALAPPDATA\Programs\Windsurf\bin\devin-desktop.cmd",
+                     "$env:ProgramFiles\Devin\bin\devin-desktop.cmd",
+                     "$env:ProgramFiles\Windsurf\bin\devin-desktop.cmd")) {
+      if (Test-Path $p) { return $p }
+    }
+    $c = Get-Command devin-desktop.cmd -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    return $null
+  }
+  $devinCli = Resolve-DevinCli
+  if (-not $devinCli) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $devinInst = "$env:TEMP\DevinUserSetup.exe"
+    $devinUrl = 'https://windsurf.com/api/windsurf/download-redirect?build=win32-x64-user&isNext=false'
+    Invoke-WebRequest -UseBasicParsing -Uri $devinUrl -OutFile $devinInst
+    Start-Process $devinInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
+    $devinCli = Resolve-DevinCli
+    Log "devin desktop installed (stable user installer)"
+  }
+  if ($devinCli -and $vsix) {
+    & $devinCli --install-extension $vsix.FullName --force
+    Log "dao devin desktop extension installed: $($vsix.Name)"
+  } else {
+    Log "devin desktop extension skipped (cli=$devinCli vsix=$vsix)"
+  }
+} catch { Log "devin desktop provisioning failed: $_" }
+
 Log "== Dao first-logon done =="
 
 # 收尾：仅安装阶段（unattend 光盘仍挂载）自动关机，令宿主 up.sh 以 QEMU 正常退出为装机完成信号；
