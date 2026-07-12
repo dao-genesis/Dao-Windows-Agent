@@ -126,6 +126,7 @@ def test_firstlogon_log_is_pipeline_safe():
     log_line = next(l for l in src.splitlines() if l.strip().startswith("function Log("))
     assert "Tee-Object" not in log_line, "Log 不得用 Tee-Object（会污染函数返回值/管道）"
     assert "Add-Content" in log_line, "Log 应只写文件（Add-Content）+ 控制台，不进管道"
+    assert "-Encoding UTF8" in log_line, "Log 须钉死 UTF8（PS5.1 默认 UTF-16LE，桥 read_file 读回乱码）"
     # Get-Payload 仍以 Log 记录并末句返回路径——正是被污染的高危形态，故上面的守卫必须成立
     getp = src[src.index("function Get-Payload"):]
     getp = getp[:getp.index("\n}") + 2]

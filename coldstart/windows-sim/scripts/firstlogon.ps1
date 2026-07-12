@@ -6,7 +6,9 @@ $log = "$env:SystemDrive\dao-firstlogon.log"
 # "最后一句返回路径" 的函数会连同 Log 行一起返回成 System.Object[]，后续
 # Start-Process -FilePath / Expand-Archive -Path 收到数组即报 "Cannot convert
 # System.Object[] to String"，导致所有离线载荷安装与桥落地全线失败。故只写文件+控制台。
-function Log($m){ $line = "$([DateTime]::Now.ToString('s')) $m"; Add-Content -Path $log -Value $line; Write-Host $line }
+# 编码钉死 UTF8：PS5.1 的 Add-Content 默认写 UTF-16LE，经机控桥 read_file(utf-8) 读回是
+# 满屏空格乱码——正是本次排障要看的日志，故统一 UTF8，运维/桥皆可直读。
+function Log($m){ $line = "$([DateTime]::Now.ToString('s')) $m"; Add-Content -Path $log -Value $line -Encoding UTF8; Write-Host $line }
 
 Log "== Dao first-logon start =="
 
