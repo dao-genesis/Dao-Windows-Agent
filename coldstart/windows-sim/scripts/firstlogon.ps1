@@ -87,6 +87,13 @@ if ($src -and $py) {
   $start = "$dst\start-bridge.ps1"
 @"
 `$env:DAO_WIN_TOKEN='$token'
+`$env:DAO_CDP_PORT='9222'
+# 浏览器画像 CDP 绑定：无头 Edge 先起（端口未活才拉），桥启动时探测 9222 即离开 dry-run
+`$edge = "`${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+if ((Test-Path `$edge) -and -not (Test-NetConnection 127.0.0.1 -Port 9222 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+  Start-Process `$edge -ArgumentList '--remote-debugging-port=9222','--user-data-dir=C:\dao_tmp\edgeprof','--headless=new','--no-first-run','about:blank'
+  Start-Sleep 5
+}
 Set-Location '$dst'
 & '$py' -m bridge.server --host 0.0.0.0 --port 9920 --subplugin-spec '$dst\bridge\subplugin_specs\homeassistant.json'
 "@ | Set-Content -Encoding UTF8 $start

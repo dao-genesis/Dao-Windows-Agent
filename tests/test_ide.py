@@ -116,6 +116,26 @@ def test_coldstart_payload_cache_pipeline():
         assert "Get-Payload '%s'" % name in fl
 
 
+def test_coldstart_domain_payloads_and_cdp_binding():
+    """真机踩坑回归：领域大件(FreeCAD/KiCad)须入缓存链；freecad_backend 须随盘落地；
+    浏览器画像须由 start-bridge 绑 CDP(DAO_CDP_PORT + 无头 Edge)，否则永远 dry-run。"""
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "fetch_payloads.sh"),
+              encoding="utf-8") as fh:
+        fetch = fh.read()
+    assert "FreeCAD-setup.exe" in fetch and "KiCad-setup.exe" in fetch
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "build_image.sh"),
+              encoding="utf-8") as fh:
+        build = fh.read()
+    assert "dao-freecad/tools" in build
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"),
+              encoding="utf-8") as fh:
+        fl = fh.read()
+    assert "Get-Payload 'FreeCAD-setup.exe'" in fl
+    assert "Get-Payload 'KiCad-setup.exe'" in fl
+    assert '"$src\\tools"' in fl
+    assert "DAO_CDP_PORT" in fl and "--remote-debugging-port=9222" in fl
+
+
 def test_firstlogon_log_is_pipeline_safe():
     """真机踩坑回归：Log 绝不能用 Tee-Object 把日志行泄进管道——否则 Get-Payload 这类
     '末句返回路径' 的函数会连同 Log 行返回成 System.Object[]，令 Start-Process/Expand-Archive
