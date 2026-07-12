@@ -1,4 +1,4 @@
-# 首登置备（无人值守安装末尾自动执行）。
+﻿# 首登置备（无人值守安装末尾自动执行）。
 # 装 virtio guest-agent、开 RDP、装 Python，落地机控桥（后续由 bridge/ 提供）。
 $ErrorActionPreference = 'SilentlyContinue'
 $log = "$env:SystemDrive\dao-firstlogon.log"
