@@ -5,58 +5,80 @@ KiCad 提供 kicad-cli 与 pcbnew Python API，全流程无需 GUI → 天然隔
 """
 from __future__ import annotations
 
+import glob
 import os
+import shutil
 
 from core.adapter.base import ActionResult
 from core.adapter.subprocess_api import SubprocessApiAdapter
 from core.profiles.schema import AppProfile, AutomationLevel, Verb
 
 
+def _kc_bin() -> str:
+    """解析 kicad-cli：先 PATH，再探 Windows 标准装机目录。
+
+    winget/官方 MSI 装到 `C:\\Program Files\\KiCad\\<版本>\\bin` 且不改 PATH，
+    仅靠 PATH 会漏找（真机冷启动实测）。"""
+    hit = shutil.which("kicad-cli")
+    if hit:
+        return "kicad-cli"
+    if os.name == "nt":
+        for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("LOCALAPPDATA", "") + r"\Programs"):
+            hits = sorted(glob.glob(os.path.join(base, "KiCad", "*", "bin", "kicad-cli.exe")),
+                          reverse=True)
+            if hits:
+                return hits[0]
+    return "kicad-cli"
+
+
 def _version(adapter, instance, **_):
-    return adapter.run_cli(["kicad-cli", "version"], instance)
+    return adapter.run_cli([_kc_bin(), "version"], instance)
 
 
 def _export_gerbers(adapter, instance, pcb: str, out_dir: str = "gerbers", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "export", "gerbers", "-o", out_dir, pcb], instance)
+    os.makedirs(out_dir, exist_ok=True)  # kicad-cli 不自建输出目录，缺则整批 Failed to plot（真机实测）
+    return adapter.run_cli([_kc_bin(), "pcb", "export", "gerbers", "-o", out_dir, pcb], instance)
 
 
 def _export_drill(adapter, instance, pcb: str, out_dir: str = "gerbers", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "export", "drill", "-o", out_dir + "/", pcb], instance)
+    os.makedirs(out_dir, exist_ok=True)
+    return adapter.run_cli([_kc_bin(), "pcb", "export", "drill", "-o", out_dir + "/", pcb], instance)
 
 
 def _export_pos(adapter, instance, pcb: str, out: str = "pos.csv", fmt: str = "csv", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "export", "pos", "-o", out, "--format", fmt, pcb], instance)
+    return adapter.run_cli([_kc_bin(), "pcb", "export", "pos", "-o", out, "--format", fmt, pcb], instance)
 
 
 def _export_step(adapter, instance, pcb: str, out: str = "board.step", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "export", "step", "-o", out, pcb], instance)
+    return adapter.run_cli([_kc_bin(), "pcb", "export", "step", "-o", out, pcb], instance)
 
 
 def _render_3d(adapter, instance, pcb: str, out: str = "board.png", width: int = 1200, height: int = 900, **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "render", "-o", out,
+    return adapter.run_cli([_kc_bin(), "pcb", "render", "-o", out,
                             "--width", str(width), "--height", str(height), pcb], instance)
 
 
 def _run_drc(adapter, instance, pcb: str, out: str = "drc.json", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "drc", "--format", "json", "-o", out, pcb], instance)
+    return adapter.run_cli([_kc_bin(), "pcb", "drc", "--format", "json", "-o", out, pcb], instance)
 
 
 def _export_bom(adapter, instance, sch: str, out: str = "bom.csv", **_):
-    return adapter.run_cli(["kicad-cli", "sch", "export", "bom", "-o", out, sch], instance)
+    return adapter.run_cli([_kc_bin(), "sch", "export", "bom", "-o", out, sch], instance)
 
 
 def _export_netlist(adapter, instance, sch: str, out: str = "netlist.net", fmt: str = "kicadsexpr", **_):
-    return adapter.run_cli(["kicad-cli", "sch", "export", "netlist",
+    return adapter.run_cli([_kc_bin(), "sch", "export", "netlist",
                             "--format", fmt, "-o", out, sch], instance)
 
 
 def _export_sch_pdf(adapter, instance, sch: str, out: str = "schematic.pdf", **_):
-    return adapter.run_cli(["kicad-cli", "sch", "export", "pdf", "-o", out, sch], instance)
+    return adapter.run_cli([_kc_bin(), "sch", "export", "pdf", "-o", out, sch], instance)
 
 
 def _export_pcb_svg(adapter, instance, pcb: str, out: str = "board.svg",
                     layers: str = "F.Cu,B.Cu,Edge.Cuts", **_):
-    return adapter.run_cli(["kicad-cli", "pcb", "export", "svg",
+    return adapter.run_cli([_kc_bin(), "pcb", "export", "svg",
                             "--layers", layers, "-o", out, pcb], instance)
 
 

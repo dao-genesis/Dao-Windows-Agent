@@ -17,6 +17,7 @@ MCP 外壳把上述动作包成工具，任意 Agent（Devin/Claude/本插件）
 from __future__ import annotations
 
 import os
+import socket
 from typing import Any, Optional
 
 from core.accounts import AccountManager
@@ -27,6 +28,36 @@ from core.handoff import HandoffFlow
 from core.profiles.builtin import build_default_registry
 from core.profiles.registry import ProfileRegistry
 from core.session.manager import SessionManager
+
+
+def _detect_cdp_bindings():
+    """按显式环境变量 DAO_CDP_PORT 绑定本机 Chrome CDP。
+
+    设置且端口可达 → 返回 (browser_factory, jlceda evaluator)：两者共享同一 CDP 浏览器
+    实例，evaluator 以 await 语义求值 handler 返回的 JS 表达式（_EXTAPI_ROOT_ 多为异步 API）。
+    未设置/不可达 → (None, None)，对应画像保持 dry-run（确定性：不隐式探测，
+    避免测试/CI 因环境碰巧开着调试端口而行为漂移）。"""
+    raw = os.environ.get("DAO_CDP_PORT", "").strip()
+    if not raw:
+        return None, None
+    port = int(raw)
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            pass
+    except OSError:
+        return None, None
+
+    from core.profiles.builtin.browser import make_browser_factory
+
+    factory = make_browser_factory(port)
+    _holder: list = []
+
+    def evaluator(js: str):
+        if not _holder:
+            _holder.append(factory())
+        return _holder[0].eval(js, await_promise=True, timeout=60)
+
+    return factory, evaluator
 
 
 class BridgeService:
@@ -42,8 +73,14 @@ class BridgeService:
     ) -> None:
         # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
         # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
-        self.registry = registry or build_default_registry(
-            discover_subplugins=True, bind_osctl=True)
+        # 本机若有可达的 Chrome CDP 端口（DAO_CDP_PORT，默认 29229），把 browser 画像
+        # 与 jlceda 的 CDP evaluator 绑到真浏览器；不可达则保持 dry-run（离线可校验）。
+        if registry is None:
+            factory, evaluator = _detect_cdp_bindings()
+            registry = build_default_registry(
+                discover_subplugins=True, bind_osctl=True,
+                browser_factory=factory, cdp_evaluator=evaluator)
+        self.registry = registry
         self.manager = manager or SessionManager(self.registry, root=root)
         self.accounts = accounts or AccountManager()
         self.router = MentionRouter(self.registry)

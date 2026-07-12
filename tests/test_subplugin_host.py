@@ -120,3 +120,23 @@ def test_shipped_specs_are_loadable():
         desc = host.descriptor()
         assert desc["app_id"] and desc["verbs"]
         host.stop()
+
+
+def test_shell_templates_are_cross_platform():
+    """shell 模板经 subprocess(shell=True) 执行：Windows 下是 cmd.exe，
+    bash 专属语法(${VAR:-default}) 会被当成非法路径。真机冷启动实测踩坑——
+    guest 内 HA states 曾报「filename/directory syntax incorrect」即此因。
+    源级护栏：禁止在随盘 spec 的 shell 模板里出现 bash 默认值展开。"""
+    import re
+    root = os.path.join(os.path.dirname(__file__), "..", "bridge", "subplugin_specs")
+    bashism = re.compile(r"\$\{\{?\w+:-")  # ${VAR:-x} 或 format 转义后的 ${{VAR:-x}}
+    for name in os.listdir(root):
+        if not name.endswith(".json"):
+            continue
+        spec = load_spec(os.path.join(root, name))
+        for verb in spec.get("verbs", []):
+            tmpl = verb.get("shell")
+            if tmpl:
+                assert not bashism.search(tmpl), (
+                    f"{name}:{verb['name']} shell 模板含 bash 专属语法，"
+                    f"Windows cmd.exe 无法解析: {tmpl}")

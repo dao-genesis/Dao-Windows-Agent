@@ -31,6 +31,9 @@ qemu-img create -f qcow2 "$DISK" "$size" >/dev/null
 AUTO_ISO="$IMAGES/${name}-unattend.iso"
 tmp="$(mktemp -d)"; cp "$UNATTEND_XML" "$tmp/autounattend.xml"
 cp "$HERE/scripts/firstlogon.ps1" "$tmp/firstlogon.ps1" 2>/dev/null || true
+# 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）随盘带入 → guest 落地 C:\dao_win\coldstart-auth。
+mkdir -p "$tmp/coldstart-auth"
+cp "$HERE/scripts/devin_auth.js" "$HERE/scripts/devin_inject_cdp.js" "$HERE/scripts/devin-login.ps1" "$tmp/coldstart-auth/" 2>/dev/null || true
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 for pkg in bridge core; do
   if [ -d "$REPO_ROOT/$pkg" ]; then
@@ -39,6 +42,18 @@ for pkg in bridge core; do
     find "$tmp/$pkg" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   fi
 done
+# FreeCAD 算子后端（freecad_backend·run_ops 依赖）随盘带入 → guest 落地 C:\dao_win\tools
+if [ -d "$REPO_ROOT/ide/vscode/subplugins/dao-freecad/tools" ]; then
+  mkdir -p "$tmp/tools"
+  cp "$REPO_ROOT"/ide/vscode/subplugins/dao-freecad/tools/*.py "$tmp/tools/" 2>/dev/null || true
+fi
+# 宿主缓存的置备载荷（fetch_payloads.sh 预下载）随盘带入：guest 首登优先取本地缓存，
+# 免每次装机重复下载 VC++/Python/VSCode/Devin Desktop/RDPWrap（数百 MB·数分钟级节省）。
+if [ -d "$MEDIA/payloads" ] && [ -n "$(ls -A "$MEDIA/payloads" 2>/dev/null)" ]; then
+  mkdir -p "$tmp/payloads"
+  cp "$MEDIA"/payloads/* "$tmp/payloads/" 2>/dev/null || true
+  echo "已捆入置备载荷缓存: $(ls "$tmp/payloads" | tr '\n' ' ')"
+fi
 # IDE 前端 .vsix 一并带入（firstlogon 装 VSCode 后离线安装；缺则现打，打不出不阻断）
 VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
 if [ -z "$VSIX" ] && command -v node >/dev/null 2>&1; then

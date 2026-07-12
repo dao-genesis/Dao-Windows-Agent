@@ -23,6 +23,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --cpus) cpus="$2"; shift 2;;
   --run-only) mode="run"; shift;;
   --status) mode="status"; shift;;
+  --login) mode="login"; shift;;
   *) echo "未知参数: $1"; exit 1;;
 esac; done
 
@@ -30,12 +31,16 @@ DISK="$IMAGES/${name}.qcow2"
 INSTALLED_FLAG="$IMAGES/${name}.installed"
 
 hr(){ echo "———————————————————————————————————————"; }
-step(){ hr; echo "☯ $1"; hr; }
+COLDSTART_T0=$(date +%s)
+elapsed(){ local s=$(( $(date +%s) - COLDSTART_T0 )); printf '%02d:%02d' $((s/60)) $((s%60)); }
+step(){ hr; echo "☯ [$(elapsed)] $1"; hr; }
 
 status(){
   echo "== 冷启动现状 (name=$name) =="
   [ -f "$MEDIA/${edition}.iso" ] && echo "  [OK]   安装 ISO: $MEDIA/${edition}.iso ($(du -h "$MEDIA/${edition}.iso"|cut -f1))" || echo "  [--]   安装 ISO 未就绪"
   [ -f "$MEDIA/virtio-win.iso" ] && echo "  [OK]   virtio-win.iso" || echo "  [--]   virtio-win.iso 未就绪"
+  local pn; pn=$(ls "$MEDIA/payloads" 2>/dev/null | wc -l)
+  [ "${pn:-0}" -gt 0 ] && echo "  [OK]   置备载荷缓存: $pn 个 (media/payloads/)" || echo "  [--]   置备载荷未缓存 (fetch_payloads.sh 可预下载·guest 会在线兜底)"
   [ -f "$DISK" ] && echo "  [OK]   磁盘镜像: $DISK ($(du -h "$DISK"|cut -f1))" || echo "  [--]   磁盘镜像未建"
   [ -f "$INSTALLED_FLAG" ] && echo "  [OK]   已完成无人值守装机" || echo "  [--]   未完成装机"
   local h; h=$(curl -s -m3 http://127.0.0.1:19920/api/health -H 'Authorization: Bearer dao-win-lab' 2>/dev/null || true)
@@ -62,21 +67,34 @@ run_vm_bg(){
   echo "桥暂未就绪（guest 可能仍在登录/置备），可稍后 curl 探活或 --status 复查。"
 }
 
+login_headless(){
+  step "无头登录换 auth1（rt-flow 本源·彻底规避 GUI·账密不落盘）"
+  if [ -z "${DEVIN_ACCOUNT_EMAIL:-}" ] || [ -z "${DEVIN_ACCOUNT_PASSWORD:-}" ]; then
+    echo "[--] 需设 DEVIN_ACCOUNT_EMAIL / DEVIN_ACCOUNT_PASSWORD（仅本会话内存·勿写盘）后重跑："
+    echo "     DEVIN_ACCOUNT_EMAIL=... DEVIN_ACCOUNT_PASSWORD=... bash coldstart/up.sh --login"
+    exit 2
+  fi
+  bash "$WSIM/scripts/devin_login.sh" "$HOME/.dao/devin_auth.json"
+  echo "auth 束就绪（仅 bearer·无密码·已 gitignore）。投递 guest 并注入（零 GUI）："
+  echo "  1) 经桥投递到 guest: curl -s -XPOST http://127.0.0.1:19920/api/file.write -H 'Authorization: Bearer dao-win-lab' \\"
+  echo "       --data-binary @<(jq -Rs '{path:\"C:/dao_win/devin_auth.json\",text:.}' \$HOME/.dao/devin_auth.json)"
+  echo "  2) guest 内注入: powershell -File C:\\dao_win\\coldstart-auth\\devin-login.ps1 -AuthJson C:\\dao_win\\devin_auth.json"
+}
+
 case "$mode" in
   status) status; exit 0;;
   run) run_vm_bg; exit 0;;
+  login) login_headless; exit 0;;
 esac
 
 step "1/6 预检 + 安装 QEMU/KVM（幂等）"
 bash "$WSIM/preflight.sh" || true
 command -v qemu-system-x86_64 >/dev/null 2>&1 || bash "$WSIM/install_qemu.sh"
 
-step "2/6 取 Windows 介质（评估版 ISO + virtio·已存在则跳过）"
-if [ -f "$MEDIA/${edition}.iso" ] && [ -f "$MEDIA/virtio-win.iso" ]; then
-  echo "介质已就绪，跳过下载。"
-else
-  bash "$WSIM/fetch_media.sh" --eval "$edition"
-fi
+step "2/6 取 Windows 介质 + 置备载荷缓存（已存在则跳过）"
+bash "$WSIM/fetch_media.sh" --eval "$edition"
+# 装机载荷（VC++/Python/VSCode/Devin Desktop/RDPWrap）预下到宿主缓存随盘带入；单项失败不阻断（guest 首登仍有在线兜底）。
+bash "$WSIM/fetch_payloads.sh" || echo "[WARN] 部分置备载荷未缓存成功，guest 首登将在线下载。"
 
 step "3/6 构建镜像 + 应答盘（捆入 bridge/core + IDE 插件 vsix·已建则跳过)"
 if [ -f "$DISK" ]; then
@@ -102,8 +120,8 @@ else
   done
   [ "$installed" = "1" ] || { echo "[FATAL] 装机三次均异常退出，不落哨兵。查 VNC:0 或 qemu 版本（当前 $(qemu-system-x86_64 --version | head -1)）。"; exit 1; }
   # 装机真伪校验：SIGTERM 下 QEMU 也以 0 退出，磁盘实占过小即未真装完，不落哨兵。
-  disk_bytes=$(stat -c %s "$DISK" 2>/dev/null || echo 0)
-  [ "$disk_bytes" -ge $((5*1024*1024*1024)) ] || { echo "[FATAL] 装机退出但磁盘仅 $disk_bytes 字节（<5GB），判为未装完（如被信号终止），不落哨兵。"; exit 1; }
+  disk_bytes=$(du -B1 "$DISK" 2>/dev/null | awk '{print $1}')
+  [ "${disk_bytes:-0}" -ge $((5*1024*1024*1024)) ] || { echo "[FATAL] 装机退出但磁盘实占仅 ${disk_bytes:-0} 字节（<5GB），判为未装完（如被信号终止），不落哨兵。"; exit 1; }
   touch "$INSTALLED_FLAG"
   echo "装机结束，落哨兵 $INSTALLED_FLAG"
 fi

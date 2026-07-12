@@ -13,6 +13,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from bridge.service import BridgeService
+from bridge.subplugin_host import SubpluginHost, load_spec
 
 _SERVICE = BridgeService()
 _TOKEN = ""
@@ -64,13 +65,28 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _TOKEN
+    global _SERVICE, _TOKEN
     ap = argparse.ArgumentParser(description="Dao-Windows-Agent 机控桥 REST 内核")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=9930)
     ap.add_argument("--token", default=os.environ.get("DAO_WIN_TOKEN", ""))
+    ap.add_argument("--subplugin-spec", default="",
+                    help="随桥托管一个子插件 spec，先写描述符再构建 registry")
+    ap.add_argument("--subplugin-discovery-dir", default=None,
+                    help="子插件描述符目录（默认 ~/.dao/subplugins）")
     args = ap.parse_args()
     _TOKEN = args.token
+    subplugin = None
+    if args.subplugin_spec:
+        from core.subplugin import default_discovery_dir
+        if args.subplugin_discovery_dir:
+            os.environ["DAO_SUBPLUGIN_DIR"] = args.subplugin_discovery_dir
+        subplugin = SubpluginHost(load_spec(args.subplugin_spec))
+        subplugin.start()
+        descriptor = subplugin.write_descriptor(
+            args.subplugin_discovery_dir or default_discovery_dir())
+        print(f"[bridge] 子插件就绪 {subplugin.invoke_url} · {descriptor}", flush=True)
+    _SERVICE = BridgeService()
     httpd = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(f"[bridge] REST 内核就绪 http://{args.host}:{args.port}/api/  "
           f"(token={'on' if _TOKEN else 'off'})", flush=True)
@@ -78,6 +94,9 @@ def main() -> None:
         httpd.serve_forever()
     except KeyboardInterrupt:
         httpd.shutdown()
+    finally:
+        if subplugin is not None:
+            subplugin.stop()
 
 
 if __name__ == "__main__":
