@@ -528,7 +528,7 @@ function registerSubplugin(log) {
         endpoint: "http://127.0.0.1:" + port,
         invoke_url: "http://127.0.0.1:" + port + "/exec",
         shell_url: "http://127.0.0.1:" + (shell.shellPort() || shellPort()) + "/shell",
-        verbs: verbs,
+        verbs: verbs.map((v) => (typeof v === "string" ? { name: v } : v)),
         updated: new Date().toISOString(),
       };
       fs.writeFileSync(file, JSON.stringify(spec, null, 2));
