@@ -72,11 +72,7 @@ bash "$WSIM/preflight.sh" || true
 command -v qemu-system-x86_64 >/dev/null 2>&1 || bash "$WSIM/install_qemu.sh"
 
 step "2/6 取 Windows 介质（评估版 ISO + virtio·已存在则跳过）"
-if [ -f "$MEDIA/${edition}.iso" ] && [ -f "$MEDIA/virtio-win.iso" ]; then
-  echo "介质已就绪，跳过下载。"
-else
-  bash "$WSIM/fetch_media.sh" --eval "$edition"
-fi
+bash "$WSIM/fetch_media.sh" --eval "$edition"
 
 step "3/6 构建镜像 + 应答盘（捆入 bridge/core + IDE 插件 vsix·已建则跳过)"
 if [ -f "$DISK" ]; then
@@ -102,8 +98,8 @@ else
   done
   [ "$installed" = "1" ] || { echo "[FATAL] 装机三次均异常退出，不落哨兵。查 VNC:0 或 qemu 版本（当前 $(qemu-system-x86_64 --version | head -1)）。"; exit 1; }
   # 装机真伪校验：SIGTERM 下 QEMU 也以 0 退出，磁盘实占过小即未真装完，不落哨兵。
-  disk_bytes=$(stat -c %s "$DISK" 2>/dev/null || echo 0)
-  [ "$disk_bytes" -ge $((5*1024*1024*1024)) ] || { echo "[FATAL] 装机退出但磁盘仅 $disk_bytes 字节（<5GB），判为未装完（如被信号终止），不落哨兵。"; exit 1; }
+  disk_bytes=$(du -B1 "$DISK" 2>/dev/null | awk '{print $1}')
+  [ "${disk_bytes:-0}" -ge $((5*1024*1024*1024)) ] || { echo "[FATAL] 装机退出但磁盘实占仅 ${disk_bytes:-0} 字节（<5GB），判为未装完（如被信号终止），不落哨兵。"; exit 1; }
   touch "$INSTALLED_FLAG"
   echo "装机结束，落哨兵 $INSTALLED_FLAG"
 fi

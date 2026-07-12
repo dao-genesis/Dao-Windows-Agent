@@ -161,7 +161,7 @@ function _maybeHotReloadCanon() {
 
 // ── 模式契约 (~/.dao/mode.json · Dao-Windows-Agent ModeManager 写入) ──
 //   三插件融合的枢纽联动: 模式切换层持久化当前模式 · 本引擎据此调整 SP:
-//   · coding  → 官方原貌 · 不道化 (invert 直接跳过)
+//   · coding/native → 官方原貌 · 不道化 (invert 直接跳过)
 //   · 其余模式若带 overlay → 经文之后追加该模式覆盖段 (仍以帛书为体)
 //   文件即唯一真源 · 与经藏热切同法: 节流读盘 · 无文件即无模式(不影响原行为)
 const MODE_STATE_PATH = path.join(os.homedir(), ".dao", "mode.json");
@@ -185,7 +185,7 @@ function _currentModeState() {
 }
 function _modeSkipsInvert() {
   const st = _currentModeState();
-  return !!(st && st.mode === "coding");
+  return !!(st && (st.mode === "coding" || st.mode === "native"));
 }
 function _modeOverlaySuffix() {
   const st = _currentModeState();

@@ -54,6 +54,12 @@ def test_coding_mode_passthrough(tmp_path):
     assert _invert_under_home(str(tmp_path)) == ""  # 官方原貌 · 引擎跳过道化
 
 
+def test_native_mode_passthrough(tmp_path):
+    mm = ModeManager(build_default_registry(), state_path=str(tmp_path / ".dao" / "mode.json"))
+    mm.set("native")
+    assert _invert_under_home(str(tmp_path)) == ""
+
+
 def test_windows_mode_inverts_with_overlay(tmp_path):
     mm = ModeManager(build_default_registry(), state_path=str(tmp_path / ".dao" / "mode.json"))
     mode = mm.set("windows")

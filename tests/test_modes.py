@@ -16,6 +16,7 @@ def test_builtin_and_domain_modes_enumerated(tmp_path):
     mm = _mm(tmp_path)
     ids = [m.mode_id for m in mm.modes()]
     assert ids[:3] == ["primary", "coding", "windows"]
+    assert "native" in ids
     assert "domain:kicad" in ids and "domain:freecad" in ids
     assert "domain:system" not in ids  # 通用层不生成专精模式
 
@@ -48,6 +49,9 @@ def test_tool_policy_slices_apps(tmp_path):
     assert set(mm.allowed_apps()) == all_apps  # primary=all
     mm.set("coding")
     assert mm.allowed_apps() == []
+    mm.set("native")
+    assert mm.allowed_apps() == []
+    assert mm.build_prompt([]) == ""
     mm.set("domain:kicad")
     allowed = set(mm.allowed_apps())
     assert "kicad" in allowed and "system" in allowed

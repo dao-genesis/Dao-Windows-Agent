@@ -54,7 +54,7 @@ if ($src -and $py) {
 @"
 `$env:DAO_WIN_TOKEN='$token'
 Set-Location '$dst'
-& '$py' -m bridge.server --host 0.0.0.0 --port 9920
+& '$py' -m bridge.server --host 0.0.0.0 --port 9920 --subplugin-spec '$dst\bridge\subplugin_specs\homeassistant.json'
 "@ | Set-Content -Encoding UTF8 $start
   # 交互会话(登录用户·session>0·WinSta0)自启：桥必须与其 CreateDesktop 出的隔离桌面同处一个
   # 窗口站，隔离桌面里的窗口才可枚举/消息级输入/PrintWindow。切勿跑 SYSTEM(session0·服务窗口站)——
@@ -65,8 +65,8 @@ Set-Location '$dst'
   $penv    = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
   Register-ScheduledTask -TaskName 'DaoBridge' -Action $action -Trigger $trigger -Settings $set -Principal $penv -Force | Out-Null
   # 立即拉起一次（本次登录即可用，无需等下次登录）
-  Start-Process $py -ArgumentList '-m','bridge.server','--host','0.0.0.0','--port','9920' -WorkingDirectory $dst -WindowStyle Hidden
-  Log "bridge deployed + scheduled (token=$token, port 9920)"
+  Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$start -WorkingDirectory $dst -WindowStyle Hidden
+  Log "bridge + homeassistant-ext deployed and scheduled (token=$token, port 9920)"
 } else {
   Log "bridge deploy skipped (src=$src py=$py)"
 }

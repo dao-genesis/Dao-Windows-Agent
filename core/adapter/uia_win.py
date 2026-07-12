@@ -109,11 +109,31 @@ class _WinMsgDriver:
     def _await_top(self, desktop: str, deadline: float) -> Optional[int]:
         while time.time() < deadline:
             wins = win_desktop.enum_windows(desktop)
-            # 取带标题的最新顶层窗口（排除无标题的系统弹层）
             titled = [h for h, t in wins if t]
+            for hwnd in reversed(titled):
+                if self._pid and win_desktop.window_process_id(hwnd) == self._pid:
+                    return hwnd
+            for hwnd in reversed(titled):
+                if win_desktop.find_edit_control(hwnd):
+                    return hwnd
             if titled:
                 return titled[-1]
             time.sleep(0.3)
+        return None
+
+    def _find_edit(self, desktop: str) -> Optional[int]:
+        candidates = []
+        if self._top:
+            candidates.append(self._top)
+        candidates.extend(
+            hwnd for hwnd, title in reversed(win_desktop.enum_windows(desktop))
+            if title and hwnd != self._top
+        )
+        for hwnd in candidates:
+            edit = win_desktop.find_edit_control(hwnd)
+            if edit:
+                self._top = hwnd
+                return edit
         return None
 
     def _find(self, desktop: str, step: dict) -> dict:
@@ -124,10 +144,9 @@ class _WinMsgDriver:
             if self._top is None:
                 self._top = self._await_top(desktop, deadline=time.time() + 0.5)
             if by == "control_type" and value in ("Edit", "Document", "Text"):
-                if self._top:
-                    self._edit = win_desktop.find_edit_control(self._top)
-                    if self._edit:
-                        return {"found": True, "hwnd": self._edit, "kind": "edit"}
+                self._edit = self._find_edit(desktop)
+                if self._edit:
+                    return {"found": True, "hwnd": self._edit, "kind": "edit"}
             elif by == "name" and value:
                 # 名称匹配：先在顶层窗口标题里找（如另存为对话框），再取其编辑控件
                 hwnd = win_desktop.find_top_window(desktop, title_contains=value)
@@ -163,7 +182,11 @@ class _WinMsgDriver:
             return {"set": False, "reason": "编辑控件未定位"}
         text = step.get("text", "")
         win_desktop.set_text(hwnd, text)
-        return {"set": True, "hwnd": hwnd}
+        actual = win_desktop.get_text(hwnd)
+        if actual != text:
+            win_desktop.replace_text(hwnd, text)
+            actual = win_desktop.get_text(hwnd)
+        return {"set": actual == text, "hwnd": hwnd, "text": actual}
 
     def _get_text(self, step: dict) -> dict:
         hwnd = self._resolve(step.get("target", {}))
