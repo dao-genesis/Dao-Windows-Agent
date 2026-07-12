@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from typing import Any, Callable, Optional
 
 _VENDOR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gui", "agentctl"))
@@ -48,9 +49,10 @@ def _spec_kw(spec) -> dict:
 
 
 # 文本编辑区在不同代 Windows 控件型不同：经典应用是 Edit，Win11 新 Notepad/WinUI 是
-# Document(RichEdit)，部分是 Text——画像写任意一种都视为“编辑区”逐个尝试（与
-# uia_win 适配器的 find_edit_control 同义）。
-_EDIT_KINDS = ("Edit", "Document", "Text")
+# Document(RichEdit)——画像写任意一种都视为“编辑区”逐个尝试（与 uia_win 适配器的
+# find_edit_control 同义）。静态 Text 不是编辑区：把它列为候选会命中窗口内任意说明文字
+# （如 Win11 Notepad 首启的 SubtitleTextBlock），故不在此列。
+_EDIT_KINDS = ("Edit", "Document")
 
 
 def _kw_variants(kw: dict) -> list[dict]:
@@ -101,11 +103,16 @@ class OsctlExecutor:
         kw = _spec_kw(step)
         if step.get("control_type"):
             kw.setdefault("ctype", step["control_type"])
+        deadline = time.time() + float(step.get("timeout", 0))
         rect = None
-        for k in _kw_variants(kw):
-            rect = self.os.uia_find(self._win.get(desktop), **k)
-            if rect:
+        while True:
+            for k in _kw_variants(kw):
+                rect = self.os.uia_find(self._win.get(desktop), **k)
+                if rect:
+                    break
+            if rect or time.time() >= deadline:
                 break
+            time.sleep(0.5)
         return {"op": "find", "ok": rect is not None, "rect": rect}
 
     def _op_click(self, desktop: str, step: dict) -> dict:
