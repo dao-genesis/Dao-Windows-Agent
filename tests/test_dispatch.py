@@ -122,6 +122,22 @@ def test_profile_from_descriptor_requires_verb():
         raise AssertionError("缺 verb 应报错")
 
 
+def test_subplugin_string_verbs_and_bad_descriptor_do_not_crash(tmp_path):
+    # verbs 允许纯字符串；坏描述符跳过不炸整体（曾致真机桥启动即崩）
+    _write_desc(tmp_path, "s.json", {
+        "app_id": "strv", "mention": "sv", "invoke_url": "http://x/invoke",
+        "verbs": ["ping", {"name": "pong"}, 42],
+    })
+    _write_desc(tmp_path, "bad.json", {
+        "app_id": "badv", "invoke_url": "http://x/invoke",
+        "verbs": [{"nested": {"deep": True}}],
+    })
+    reg = build_default_registry()
+    added = register_subplugins(reg, str(tmp_path), transport=lambda *a: {"ok": True})
+    assert added == ["strv"]
+    assert [v.name for v in reg.get("strv").verbs] == ["ping", "pong"]
+
+
 def test_remote_adapter_surfaces_rpc_error(tmp_path):
     _write_desc(tmp_path, "k.json", {
         "app_id": "kx", "mention": "kx", "invoke_url": "http://x/invoke",

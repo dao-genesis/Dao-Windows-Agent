@@ -55,6 +55,10 @@ def profile_from_descriptor(desc: dict) -> AppProfile:
         raise ValueError("子插件描述符缺 app_id")
     verbs: list[Verb] = []
     for v in desc.get("verbs") or []:
+        if isinstance(v, str):
+            v = {"name": v}
+        elif not isinstance(v, dict):
+            continue
         name = str(v.get("name") or "").strip()
         if not name:
             continue
@@ -112,7 +116,7 @@ def register_subplugins(registry: ProfileRegistry,
     for desc in load_descriptors(discovery_dir):
         try:
             prof = profile_from_descriptor(desc)
-        except ValueError:
+        except Exception:  # 描述符坏的跳过，不炸整体
             continue
         if prof.app_id in existing:
             continue
