@@ -75,20 +75,26 @@ Set-Location '$dst'
 try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $rdpwrapDir = "$env:ProgramFiles\RDP Wrapper"
+  # 关键（真机踩坑）：Defender 把 rdpwrap.dll 判为 HackTool 即时清除 → 装完 dll 立刻消失、
+  # 表象是"装了但没装上"。故安装前先加排除目录，否则 26100.x 上必然 dll=no。
+  try { Add-MpPreference -ExclusionPath $rdpwrapDir -ErrorAction SilentlyContinue } catch {}
+  try { Add-MpPreference -ExclusionPath "$env:TEMP\rdpwrap" -ErrorAction SilentlyContinue } catch {}
   if (-not (Test-Path "$rdpwrapDir\rdpwrap.dll")) {
     Log "installing rdpwrap..."
     $rdpZip = "$env:TEMP\RDPWrap.zip"
     Invoke-WebRequest -Uri 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' -OutFile $rdpZip
     Expand-Archive -Path $rdpZip -DestinationPath "$env:TEMP\rdpwrap" -Force
-    # 静默装：直接调 RDPWInst.exe -i -s（install.bat 末尾有 pause，-Wait 会永久挂起·真机踩坑）。
+    # 直接调 RDPWInst.exe -i -o（install.bat 末尾有 pause，-Wait 会永久挂起·真机踩坑）。
+    # -o = 即使当前 termsrv 版本"不受支持"也强制装（新 build 如 26100.x 必需，否则直接拒装 → dll=no）。
     # 无 RDPWInst 则回退 install.bat，但用 cmd /c 并喂空 stdin 让 pause 立即返回。
     $rdpwinst = Join-Path "$env:TEMP\rdpwrap" 'RDPWInst.exe'
     if (Test-Path $rdpwinst) {
-      Start-Process $rdpwinst -ArgumentList '-i','-s' -Wait -WindowStyle Hidden
+      Start-Process $rdpwinst -ArgumentList '-i','-o' -Wait -WindowStyle Hidden
     } else {
       Start-Process cmd.exe -ArgumentList '/c','"'+"$env:TEMP\rdpwrap\install.bat"+'" < NUL' -Wait -WindowStyle Hidden
     }
-    Log "rdpwrap installed"
+    if (Test-Path "$rdpwrapDir\rdpwrap.dll") { Log "rdpwrap installed (dll present)" }
+    else { Log "WARN: rdpwrap.dll missing after install — 检查 Defender 排除是否生效" }
   } else {
     Log "rdpwrap already present"
   }
