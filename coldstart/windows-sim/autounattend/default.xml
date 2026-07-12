@@ -92,7 +92,7 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>powershell -ExecutionPolicy Bypass -NoProfile -File E:\firstlogon.ps1</CommandLine>
+          <CommandLine>powershell -ExecutionPolicy Bypass -NoProfile -Command "$p='D','E','F','G'|ForEach-Object{$_+':\firstlogon.ps1'}|Where-Object{Test-Path $_}|Select-Object -First 1; if($p){powershell -ExecutionPolicy Bypass -NoProfile -File $p} else {Set-Content C:\dao-firstlogon.log 'firstlogon.ps1 not found on D:-G:'}"</CommandLine>
           <Description>Dao first-logon provisioning</Description>
         </SynchronousCommand>
       </FirstLogonCommands>

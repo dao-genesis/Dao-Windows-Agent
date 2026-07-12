@@ -2023,6 +2023,39 @@ async function cmdExportChat() {
 function activate(context) {
   ctx = context;
 
+  // 归一宿主: 登记 HA 领域塑形器(键 = 机控桥子插件画像 app_id "homeassistant-ext"),
+  // domain:homeassistant-ext 模式激活时由单一 Cascade 基底自动塑形(每会话首条注入领域 SP)。
+  const unifiedHost = globalThis.__DAO_UNIFIED_HOST__;
+  if (unifiedHost && typeof unifiedHost.registerDomainShaper === "function") {
+    try {
+      let injected = new Set();
+      const sp = [
+        "你现在处于「Home Assistant 模式」: 你是 DAO HA 归一智能家居代理, 全权代替用户驱动 Home Assistant 底层完成配置/自动化/设备控制。",
+        "",
+        "## 工具目录 (ha-copilot)",
+      ].concat(AGENT_TOOLS.map((t) => "- " + t.name + ": " + t.desc)).concat([
+        "",
+        "## 操作纪律",
+        "- 一切 HA 操作优先经上述工具面(或机控桥 @ha 领域动词: states/call_service/automation_create/check_config)执行, 不要凭记忆编造实体/服务。",
+        "- 改配置后必 check_config 校验; 动作后 render_template/states 读回验证再声明完成。",
+        "- 回答用简体中文, 结论先行; 道法自然, 无为而无不为。",
+      ]).join("\n");
+      unifiedHost.registerDomainShaper("homeassistant-ext", {
+        wrap(text, wctx) {
+          const key = ((wctx && wctx.agent) || "?") + ":" + ((wctx && wctx.epoch) || 0);
+          if (injected.has(key)) return "[HA 模式] " + text;
+          injected.add(key);
+          return "<dao_ha_mode>\n" + sp + "\n</dao_ha_mode>\n\n" + text;
+        },
+        status() {
+          return { mode: "homeassistant-ext", label: "☯ HA",
+            hint: "Home Assistant 领域模式: 配置/自动化/设备走 @ha 工具面", spChars: sp.length };
+        },
+        toggle() { injected = new Set(); },
+      });
+    } catch (e) { console.error("[dao-ha] 领域塑形器登记失败: " + (e && e.stack ? e.stack : e)); }
+  }
+
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
   statusBar.command = "haCopilot.connect";
   context.subscriptions.push(statusBar);

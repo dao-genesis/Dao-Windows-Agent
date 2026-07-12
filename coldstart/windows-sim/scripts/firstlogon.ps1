@@ -13,7 +13,7 @@ Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 Log "RDP enabled"
 
 # 2) QEMU guest agent（virtio-win.iso 内），供宿主 QMP 无头管控
-$qga = Get-ChildItem 'E:\guest-agent\qemu-ga-x86_64.msi','F:\guest-agent\qemu-ga-x86_64.msi' -ErrorAction SilentlyContinue | Select-Object -First 1
+$qga = Get-ChildItem 'D:\guest-agent\qemu-ga-x86_64.msi','E:\guest-agent\qemu-ga-x86_64.msi','F:\guest-agent\qemu-ga-x86_64.msi','G:\guest-agent\qemu-ga-x86_64.msi' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($qga) { Start-Process msiexec -ArgumentList "/i `"$($qga.FullName)`" /qn" -Wait; Log "qemu-ga installed" }
 
 # 3) Python（winget，供机控桥与级别① 适配器在 guest 内运行）
