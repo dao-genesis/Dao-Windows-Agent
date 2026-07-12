@@ -37,10 +37,12 @@ def _version(adapter, instance, **_):
 
 
 def _export_gerbers(adapter, instance, pcb: str, out_dir: str = "gerbers", **_):
+    os.makedirs(out_dir, exist_ok=True)  # kicad-cli 不自建输出目录，缺则整批 Failed to plot（真机实测）
     return adapter.run_cli([_kc_bin(), "pcb", "export", "gerbers", "-o", out_dir, pcb], instance)
 
 
 def _export_drill(adapter, instance, pcb: str, out_dir: str = "gerbers", **_):
+    os.makedirs(out_dir, exist_ok=True)
     return adapter.run_cli([_kc_bin(), "pcb", "export", "drill", "-o", out_dir + "/", pcb], instance)
 
 

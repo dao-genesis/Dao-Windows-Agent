@@ -69,6 +69,7 @@ if ($src -and $py) {
   Copy-Item -Recurse -Force "$src\core"   "$dst\core"
   # 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）落地，供运行时零键鼠登录 Devin。
   if (Test-Path "$src\coldstart-auth") { Copy-Item -Recurse -Force "$src\coldstart-auth" "$dst\coldstart-auth"; Log "coldstart-auth (headless login) deployed" }
+  if (Test-Path "$src\tools") { Copy-Item -Recurse -Force "$src\tools" "$dst\tools"; Log "freecad_backend tools deployed" }
   Get-ChildItem -Path $dst -Recurse -Force | ForEach-Object {
     if (-not $_.PSIsContainer) { $_.IsReadOnly = $false }
   }

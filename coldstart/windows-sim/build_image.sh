@@ -42,6 +42,11 @@ for pkg in bridge core; do
     find "$tmp/$pkg" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   fi
 done
+# FreeCAD 算子后端（freecad_backend·run_ops 依赖）随盘带入 → guest 落地 C:\dao_win\tools
+if [ -d "$REPO_ROOT/ide/vscode/subplugins/dao-freecad/tools" ]; then
+  mkdir -p "$tmp/tools"
+  cp "$REPO_ROOT"/ide/vscode/subplugins/dao-freecad/tools/*.py "$tmp/tools/" 2>/dev/null || true
+fi
 # 宿主缓存的置备载荷（fetch_payloads.sh 预下载）随盘带入：guest 首登优先取本地缓存，
 # 免每次装机重复下载 VC++/Python/VSCode/Devin Desktop/RDPWrap（数百 MB·数分钟级节省）。
 if [ -d "$MEDIA/payloads" ] && [ -n "$(ls -A "$MEDIA/payloads" 2>/dev/null)" ]; then

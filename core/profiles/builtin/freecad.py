@@ -82,7 +82,13 @@ def _run_ops(adapter, instance, ops=None, **_):
     with open(cmd_path, "w", encoding="utf-8") as fh:
         _json.dump({"ops": ops}, fh, ensure_ascii=True)
     script = (
-        "import json\n"
+        "import json, os, sys\n"
+        # freecad_backend 随冷启动落地 <部署根>\tools；FreeCADCmd 的 sys.path 不含它，须自补
+        "for _p in (os.environ.get('DAO_FREECAD_TOOLS', ''),\n"
+        "           os.path.join(os.environ.get('DAO_WIN_HOME', r'C:\\dao_win'), 'tools'),\n"
+        "           os.path.join(os.getcwd(), 'tools')):\n"
+        "    if _p and os.path.isdir(_p) and _p not in sys.path:\n"
+        "        sys.path.insert(0, _p)\n"
         "from freecad_backend import run_ops\n"
         f"_c = json.load(open(r'{cmd_path}', encoding='utf-8'))\n"
         "print(json.dumps(run_ops(_c.get('ops', [])), ensure_ascii=True))\n"
