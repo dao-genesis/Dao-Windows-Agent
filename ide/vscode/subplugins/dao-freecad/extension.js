@@ -606,7 +606,32 @@ function activate(context) {
   // 归一宿主内: 单一 Cascade 基底已统辖, 不再另起 daoFreecad.cascade 面板(免碎片化);
   // FreeCAD 领域塑形经宿主模式枢纽(domain:freecad 画像现算)生效。独立安装才起自带基底。
   const unifiedHost = globalThis.__DAO_UNIFIED_HOST__;
-  if (!unifiedHost) {
+  if (unifiedHost) {
+    // 归一宿主: 把 FreeCAD 领域画像适配成塑形器登记到宿主分派器,
+    // domain:freecad 模式激活时由单一 Cascade 基底自动塑形(每会话首条注入全量 SP)。
+    try {
+      const dom = freecadDomain();
+      let sp = "";
+      let injected = new Set();
+      const refresh = () => Promise.resolve(dom.systemPrompt(true))
+        .then((s) => { if (typeof s === "string" && s) sp = s; }).catch(() => {});
+      refresh();
+      unifiedHost.registerDomainShaper("freecad", {
+        wrap(text, ctx) {
+          const key = ((ctx && ctx.agent) || "?") + ":" + ((ctx && ctx.epoch) || 0);
+          if (injected.has(key)) return "[FreeCAD 模式] " + text;
+          injected.add(key); refresh();
+          const body = sp || FC_REMINDER.replace("<port>", String(cfg().get("port")));
+          return "<dao_freecad_mode>\n" + body + "\n</dao_freecad_mode>\n\n" + text;
+        },
+        status() {
+          return { mode: "freecad", label: "☯ FreeCAD",
+            hint: "FreeCAD 领域模式: 建模/装配/测量走 dao-freecad 工具面", spChars: sp.length };
+        },
+        toggle() { injected = new Set(); refresh(); },
+      });
+    } catch (e) { console.error("[dao-freecad] 领域塑形器登记失败: " + (e && e.stack ? e.stack : e)); }
+  } else {
     try {
       const daoAiBase = require("./dao-ai-base");
       daoAiBase.activateDaoAiBase(context, { ns: "daoFreecad", log: (m) => console.log("[dao-ai-base] " + m), domain: freecadDomain() });

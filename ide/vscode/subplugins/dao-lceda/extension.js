@@ -395,7 +395,36 @@ function activate(context) {
   // AI 交互基底(dao-ai-base · Devin Desktop 同源): Cascade 三模式面板, 命名空间 daoLceda.cascade*。
   // 归一宿主内: 单一 Cascade 基底已统辖, 不再另起 daoLceda.cascade 面板(免碎片化);
   // 嘉立创领域塑形经宿主模式枢纽(domain:lceda 画像现算)生效。独立安装才起自带基底。
-  if (!globalThis.__DAO_UNIFIED_HOST__) {
+  const unifiedHost = globalThis.__DAO_UNIFIED_HOST__;
+  if (unifiedHost) {
+    // 归一宿主: 登记嘉立创领域塑形器(键 = 机控桥画像 app_id "jlceda"),
+    // domain:jlceda 模式激活时由单一 Cascade 基底自动塑形(每会话首条注入领域 SP)。
+    try {
+      let injected = new Set();
+      const sp = [
+        "你现在处于「嘉立创EDA 模式」: 你是 DAO 嘉立创EDA 归一电子设计代理, 全权代替用户驱动嘉立创EDA 完成原理图/PCB 设计。",
+        "",
+        "## 操作纪律",
+        "- 一切 EDA 操作优先经工具面执行: 本插件桥接 http://127.0.0.1:" + (cfg().get("port") || 9940) + " (doc.open / project.open / 截图 / 工程树), 或机控桥 @lceda 领域动词(先 describe_app jlceda 看目录再 session.invoke)。",
+        "- 不要以读写文件方式改工程本体; 感知→动作→验证闭环, 动作后截图/读回验证再声明完成。",
+        "- 器件/封装/资料检索不凭记忆编造, 桥接离线时先 daoLceda.restartBridge 或提示用户启动。",
+        "- 回答用简体中文, 结论先行; 道法自然, 无为而无不为。",
+      ].join("\n");
+      unifiedHost.registerDomainShaper("jlceda", {
+        wrap(text, ctx) {
+          const key = ((ctx && ctx.agent) || "?") + ":" + ((ctx && ctx.epoch) || 0);
+          if (injected.has(key)) return "[嘉立创EDA 模式] " + text;
+          injected.add(key);
+          return "<dao_lceda_mode>\n" + sp + "\n</dao_lceda_mode>\n\n" + text;
+        },
+        status() {
+          return { mode: "jlceda", label: "☯ 嘉立创EDA",
+            hint: "嘉立创EDA 领域模式: 原理图/PCB 走 @lceda 工具面", spChars: sp.length };
+        },
+        toggle() { injected = new Set(); },
+      });
+    } catch (e) { console.error("[dao-lceda] 领域塑形器登记失败: " + (e && e.stack ? e.stack : e)); }
+  } else {
     try {
       const daoAiBase = require("./dao-ai-base");
       daoAiBase.activateDaoAiBase(context, { ns: "daoLceda", log: (m) => console.log("[dao-ai-base] " + m) });
