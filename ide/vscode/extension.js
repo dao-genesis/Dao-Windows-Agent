@@ -1045,6 +1045,55 @@ function subContext(ctx, subDir) {
 
 const _vendorLoaded = [];
 
+// ── 归一塑形分派器 ─────────────────────────────────────────────────────────
+// 单一 Cascade 基底服务一切领域: 各领域子模块把本领域塑形器(wrap/status/toggle 或
+// 领域画像 systemPrompt)登记进来, 宿主据活动模式(~/.dao/mode.json → domain:<app_id>)
+// 择一分派; 无领域态或 native 时字节级直通(道并行而不相惖)。
+const _domainShapers = new Map();
+function _activeDomainApp() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(require("os").homedir(), ".dao", "mode.json"), "utf-8"));
+    const id = j && j.mode && j.mode.id ? j.mode.id : j && j.mode;
+    if (typeof id === "string" && id.indexOf("domain:") === 0) return id.slice("domain:".length);
+  } catch (_) {}
+  return null;
+}
+function installUnifiedShaperDispatcher(daoAiBase, log) {
+  if (typeof daoAiBase.setPromptShaper !== "function") return;
+  const dispatcher = {
+    wrap(text, ctx) {
+      const app = _activeDomainApp();
+      const s = app && _domainShapers.get(app);
+      if (!s) return text;
+      try {
+        if (typeof s.wrap === "function") { const o = s.wrap(text, ctx || {}); return typeof o === "string" ? o : text; }
+      } catch (_) {}
+      return text;
+    },
+    status() {
+      const app = _activeDomainApp();
+      const s = app && _domainShapers.get(app);
+      if (s && typeof s.status === "function") { try { return s.status(); } catch (_) {} }
+      return { mode: app ? "domain:" + app : "native", label: app ? "@" + app : "" };
+    },
+    toggle() {
+      const app = _activeDomainApp();
+      const s = app && _domainShapers.get(app);
+      if (s && typeof s.toggle === "function") { try { return s.toggle(); } catch (_) {} }
+    },
+  };
+  daoAiBase.setPromptShaper(dispatcher);
+  // 领域子模块经此全局登记塑形器(折入模式下不再各自另起基底)。
+  globalThis.__DAO_UNIFIED_HOST__ = {
+    registerDomainShaper(app, shaper) {
+      if (!app || !shaper) return;
+      _domainShapers.set(app, shaper);
+      log("✓ [归一分派] 领域塑形器登记: @" + app);
+    },
+  };
+  log("✓ 归一塑形分派器就位 (单一 Cascade 基底 · 按模式分派领域)");
+}
+
 // 扫 vendor/*/extension.js 并依次折入激活(装了哪个领域模块就自动多出哪一路面板);
 // 单个子引擎失败不阻断主体与其他子引擎。
 async function activateVendorModules(context) {
@@ -1070,9 +1119,13 @@ async function activate(context) {
   log("DAO Windows Agent \u6fc0\u6d3b \u00b7 \u672c\u7a97\u53e3 = " + sessionId);
   setStatus(sessionId, "\u70b9\u51fb\u6253\u5f00 DAO \u684c\u9762");
   // AI 交互基底(dao-ai-base · Devin Desktop 同源): Cascade 三模式面板, 命名空间 daoWin.cascade*。
+  // 归一枢纽: 全仓只此一个 Cascade 基底(得一以为天下正)。各领域子模块(FreeCAD/KiCad/嘉立创)
+  // 折入时不再各自另起基底/代理(避免多面板碎片化), 而是把本领域塑形器登记到下方分派器,
+  // 由宿主按活动模式(~/.dao/mode.json 的 domain:<app_id>)分派——一个基底, 一切领域随模式流转。
   try {
     const daoAiBase = require("./dao-ai-base");
     daoAiBase.activateDaoAiBase(context, { ns: "daoWin", log: (m) => log("[dao-ai-base] " + m) });
+    installUnifiedShaperDispatcher(daoAiBase, log);
   } catch (e) { log("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
   // 提示词隔离替换引擎(dao-proxy-pro · Proxy Pro 同源薄片): 读 ~/.dao/mode.json 契约道化 SP。
   try {
