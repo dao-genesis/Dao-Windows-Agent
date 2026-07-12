@@ -2,7 +2,7 @@
   "name": "dao-windows-agent",
   "displayName": "DAO Windows Agent · 桌面级路由",
   "description": "IDE 装上本插件 → 面板里直接就是整台 Windows 桌面本体（类多 RDP）。每个 IDE 窗口 = 一路独立完整的 RDP 会话，canvas 渲染进 Webview，鼠键直操。",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "dao",
   "license": "MIT",
   "engines": {

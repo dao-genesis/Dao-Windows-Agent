@@ -265,22 +265,32 @@ function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnel
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-font-family);height:100vh;display:flex;flex-direction:column}
-#bar{padding:4px 10px;background:#24242a;display:flex;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid #333;flex-shrink:0}
+#bar{padding:4px 10px;background:#24242a;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid #333;flex-shrink:0}
 #bar button{padding:3px 8px;border:none;border-radius:3px;background:var(--vscode-button-background,#3c8dbc);color:var(--vscode-button-foreground,#fff);cursor:pointer;font-size:11px}
+#tabs{display:flex;gap:4px;align-items:center;overflow-x:auto;max-width:45%}
+.tab{padding:2px 8px;border-radius:3px;background:#333;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px;font-size:11px;border:1px solid transparent}
+.tab.on{background:#2a4a63;border-color:#3c8dbc}
+.tab .dot{width:7px;height:7px;border-radius:50%;background:#999;flex-shrink:0}
+.tab .x{opacity:.5;cursor:pointer;padding:0 1px}
+.tab .x:hover{opacity:1;color:#ff6666}
 #status{flex:1;text-align:right;opacity:.7}
 #desktop{flex:1;overflow:hidden;position:relative}
-#desktop>div{position:absolute!important;top:0;left:0}
+.inst{position:absolute;top:0;left:0;right:0;bottom:0;display:none}
+.inst.on{display:block}
+.inst>div{position:absolute!important;top:0;left:0}
 #overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;font-size:14px;opacity:.6}
 </style></head><body>
 <div id="bar">
   <b>\u2630 DAO \u684c\u9762</b>
   <select id="acct" title="\u8d26\u53f7\uff08\u591a RDP \u4e00\u8def\u4e00\u684c\u9762\uff09" onchange="onAcctChange()"></select>
+  <div id="tabs"></div>
+  <button onclick="addInstance()" title="\u540c\u8d26\u53f7\u518d\u5f00\u4e00\u8def\u72ec\u7acb\u684c\u9762\u4f1a\u8bdd\uff08\u591a RDP \u5206\u8eab\uff0c\u5e76\u884c\u4e92\u4e0d\u5e72\u6270\uff09">\uff0b\u5206\u8eab</button>
   <button onclick="doConnect()">\u8fde\u63a5</button>
   <button onclick="doDisconnect()">\u65ad\u5f00</button>
   <button onclick="doFullscreen()">\u2922</button>
   <span id="status">\u672a\u8fde\u63a5</span>
 </div>
-<div id="desktop"><div id="overlay">\u70b9\u51fb\u300c\u8fde\u63a5\u300d\u5373\u53ef\u770b\u5230 Windows \u684c\u9762</div></div>
+<div id="desktop"><div id="overlay">\u70b9\u51fb\u300c\u8fde\u63a5\u300d\u5373\u53ef\u770b\u5230 Windows \u684c\u9762\uff1b\u300c\uff0b\u5206\u8eab\u300d\u53ef\u5728\u672c\u7a97\u53e3\u5185\u5e76\u884c\u591a\u8def\u684c\u9762</div></div>
 <script src="${guacUri}"></script>
 <script>
 const TUNNEL_HTTP = ${JSON.stringify(tunnelHttpUrl)};
@@ -292,16 +302,17 @@ const vscodeApi = acquireVsCodeApi();
 const container = document.getElementById('desktop');
 const statusEl = document.getElementById('status');
 const acctEl = document.getElementById('acct');
-let client = null;
-let connecting = false;
-let userDisconnected = false;
-let retries = 0;
-let retryTimer = null;
+const tabsEl = document.getElementById('tabs');
 const MAX_RETRIES = 5;
+
+// \u591a\u5b9e\u4f8b\u5206\u8eab\uff1a\u4e00\u4e2a IDE \u7a97\u53e3\u5185\u5e76\u884c\u591a\u8def\u540c\u8d26\u53f7\u72ec\u7acb\u684c\u9762\u4f1a\u8bdd\uff08\u7c7b\u591a RDP\uff09\u3002
+// \u6bcf\u8def\u5206\u8eab = \u72ec\u7acb Guacamole client + \u72ec\u7acb\u753b\u5e03\uff1b\u952e\u76d8/\u526a\u8d34\u677f\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\u3002
+let instances = [];   // {id, label, el, client, display, connecting, userDisconnected, retries, retryTimer, state}
+let activeId = null;
+let nextId = 1;
 let lastLocalClip = null;
 let lastRemoteClip = null;
 
-// \u586b\u5145\u8d26\u53f7\u4e0b\u62c9\uff1b\u9009\u4e2d\u672c\u9762\u677f\u7ed1\u5b9a\u8d26\u53f7\uff0c\u5207\u5230\u5176\u4ed6\u8d26\u53f7\u5219\u65b0\u5f00/\u5207\u5230\u90a3\u4e00\u8def\u9762\u677f\u3002
 (function initAccounts(){
   var names = (ACCOUNTS && ACCOUNTS.length) ? ACCOUNTS.map(function(a){return a.name;}) : [];
   if (ACCOUNT && names.indexOf(ACCOUNT) < 0) names.unshift(ACCOUNT);
@@ -314,56 +325,107 @@ function onAcctChange(){
   var sel = acctEl.value;
   if (sel === ACCOUNT) return;
   vscodeApi.postMessage({type:'openAccount', account: sel});
-  acctEl.value = ACCOUNT; // \u672c\u9762\u677f\u4ecd\u7ed1\u5b9a\u539f\u8d26\u53f7
+  acctEl.value = ACCOUNT;
 }
 
+function active(){ for (var i=0;i<instances.length;i++) if (instances[i].id===activeId) return instances[i]; return null; }
 function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
+function stateColor(s){ return ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'][s] || '#999'; }
+function showActiveStatus(){
+  var it = active(); if (!it) { setStatus('\u672a\u8fde\u63a5'); return; }
+  var names = ['\u7a7a\u95f2','\u6b63\u5728\u8fde\u63a5...','\u7b49\u5f85\u4e2d...','\u5df2\u8fde\u63a5 \u25cf','\u6b63\u5728\u65ad\u5f00...','\u5df2\u65ad\u5f00'];
+  setStatus(it.label + ' \u00b7 ' + (names[it.state] || '\u672a\u8fde\u63a5'), stateColor(it.state));
+}
+function renderTabs(){
+  tabsEl.innerHTML = '';
+  instances.forEach(function(it){
+    var t = document.createElement('div');
+    t.className = 'tab' + (it.id===activeId ? ' on' : '');
+    var dot = document.createElement('span'); dot.className='dot'; dot.style.background = stateColor(it.state);
+    var nm = document.createElement('span'); nm.textContent = it.label;
+    var x = document.createElement('span'); x.className='x'; x.textContent='\u00d7'; x.title='\u5173\u95ed\u8fd9\u8def\u5206\u8eab';
+    x.onclick = function(ev){ ev.stopPropagation(); closeInstance(it.id); };
+    t.appendChild(dot); t.appendChild(nm); t.appendChild(x);
+    t.onclick = function(){ switchInstance(it.id); };
+    tabsEl.appendChild(t);
+  });
+}
+function switchInstance(id){
+  activeId = id;
+  instances.forEach(function(it){ it.el.className = 'inst' + (it.id===id ? ' on' : ''); });
+  renderTabs(); showActiveStatus();
+  var it = active();
+  if (it && it.client) vscodeApi.postMessage({type:'readClipboard'});
+}
+function newInstance(){
+  var id = nextId++;
+  var el = document.createElement('div'); el.className = 'inst';
+  container.appendChild(el);
+  var it = { id: id, label: '\u5206\u8eab' + id, el: el, client: null, display: null,
+             connecting: false, userDisconnected: false, retries: 0, retryTimer: null, state: 0 };
+  instances.push(it);
+  switchInstance(id);
+  return it;
+}
+function addInstance(){ var it = newInstance(); connectInstance(it); }
+function closeInstance(id){
+  var idx = instances.findIndex(function(x){ return x.id===id; });
+  if (idx < 0) return;
+  var it = instances[idx];
+  it.userDisconnected = true;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
+  try { container.removeChild(it.el); } catch(e) {}
+  instances.splice(idx, 1);
+  if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
+  instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
+  renderTabs(); showActiveStatus();
+}
 
-async function doConnect() {
-  if (connecting) return;
-  connecting = true;
-  userDisconnected = false;
-  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-  doDisconnect(true);
-  setStatus('\u53d6 token...', '#ffcc00');
+async function connectInstance(it) {
+  if (!it || it.connecting) return;
+  it.connecting = true;
+  it.userDisconnected = false;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
+  setStatus(it.label + ' \u00b7 \u53d6 token...', '#ffcc00');
   const w = container.clientWidth;
   const h = container.clientHeight;
   let tokenData;
   try {
+    // \u6bcf\u6b21\u94f8\u65b0 token = \u65b0\u5f00\u4e00\u8def\u72ec\u7acb RDP \u8fde\u63a5\uff08guest \u5173\u5355\u4f1a\u8bdd\u9650\u5236\u540e\u5373\u5404\u6210\u4e00\u8def\u72ec\u7acb\u4f1a\u8bdd\uff09
     const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + IDE_SESSION);
     const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
     tokenData = await r.json();
-    if (tokenData.error) { setStatus('\u4ee4\u724c: ' + tokenData.error, '#ff4444'); connecting = false; return; }
-  } catch (e) { setStatus('\u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); connecting = false; return; }
+    if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
+  } catch (e) { setStatus(it.label + ' \u00b7 \u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); it.connecting = false; return; }
   let wsHost = '127.0.0.1', wsScheme = 'ws';
   try { const tu = new URL(TUNNEL_HTTP); wsHost = tu.hostname || wsHost; wsScheme = (tu.protocol === 'https:') ? 'wss' : 'ws'; } catch (e) {}
   const wsUrl = wsScheme + '://' + wsHost + ':' + TUNNEL_WS_PORT + '/?token=' + encodeURIComponent(tokenData.token);
-  setStatus('\u5efa\u7acb WS \u96a7\u9053...', '#ffcc00');
+  setStatus(it.label + ' \u00b7 \u5efa\u7acb WS \u96a7\u9053...', '#ffcc00');
   const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
-  client = new Guacamole.Client(tunnel);
+  const client = new Guacamole.Client(tunnel);
+  it.client = client;
   const display = client.getDisplay();
+  it.display = display;
   var ov = document.getElementById('overlay'); if (ov) ov.remove();
-  container.innerHTML = '';
-  container.appendChild(display.getElement());
-  // \u9f20\u6807（\u6309\u663e\u793a\u7f29\u653e\u6362\u7b97\u56de\u771f\u5b9e\u5750\u6807）
+  it.el.innerHTML = '';
+  it.el.appendChild(display.getElement());
+  // \u9f20\u6807（\u6309\u663e\u793a\u7f29\u653e\u6362\u7b97\u56de\u771f\u5b9e\u5750\u6807）——\u53ea\u4f5c\u7528\u4e8e\u672c\u5206\u8eab\u81ea\u5df1\u7684\u753b\u5e03
   const mouse = new Guacamole.Mouse(display.getElement());
   mouse.onEach(['mousedown','mousemove','mouseup'], function(e) {
-    if (!client) return;
+    if (!it.client) return;
     var s = display.getScale() || 1;
     var st = e.state;
     if (s !== 1) st = new Guacamole.Mouse.State(st.x / s, st.y / s, st.left, st.middle, st.right, st.up, st.down);
-    client.sendMouseState(st, true);
+    it.client.sendMouseState(st, true);
   });
-  // \u952e\u76d8
-  const keyboard = new Guacamole.Keyboard(document);
-  keyboard.onkeydown = function(k) { if (client) client.sendKeyEvent(1, k); };
-  keyboard.onkeyup = function(k) { if (client) client.sendKeyEvent(0, k); };
   // \u81ea\u9002\u5e94\u7f29\u653e
   display.onresize = function(dw, dh) {
     const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
     display.scale(scale);
   };
-  // \u526a\u8d34\u677f\uff1a\u8fdc\u7aef\u2192\u672c\u5730\uff08\u7ecf\u6269\u5c55\u5bbf\u4e3b\u5199 vscode \u526a\u8d34\u677f\uff09
+  // \u526a\u8d34\u677f\uff1a\u8fdc\u7aef\u2192\u672c\u5730\uff08\u4ec5\u6d3b\u52a8\u5206\u8eab\u56de\u5199\uff0c\u907f\u514d\u591a\u8def\u4e92\u8e29\uff09
   client.onclipboard = function(stream, mimetype) {
     // 注意：本段位于模板字面量内，\\/ 会被吞成 /，禁用含斜杠的正则字面量（真机踩坑：SyntaxError 令整段脚本报废）。
     if (mimetype.indexOf('text/') !== 0) { try { stream.sendAck('OK', 0); } catch(e) {} return; }
@@ -371,45 +433,54 @@ async function doConnect() {
     var data = '';
     reader.ontext = function(t) { data += t; };
     reader.onend = function() {
+      if (it.id !== activeId) return;
       if (data && data !== lastLocalClip) { lastRemoteClip = data; vscodeApi.postMessage({type:'clipboard', text: data}); }
     };
   };
   client.onstatechange = function(state) {
-    var names = ['\u7a7a\u95f2','\u6b63\u5728\u8fde\u63a5...','\u7b49\u5f85\u4e2d...','\u5df2\u8fde\u63a5 \u25cf','\u6b63\u5728\u65ad\u5f00...','\u5df2\u65ad\u5f00'];
-    var colors = ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'];
-    setStatus(names[state] || state, colors[state]);
-    vscodeApi.postMessage({type:'state', state: state});
-    if (state === 3) { retries = 0; vscodeApi.postMessage({type:'readClipboard'}); }
-    // \u975e\u7528\u6237\u4e3b\u52a8\u65ad\u5f00 \u2192 \u9000\u907f\u91cd\u8fde
-    if (state === 5 && !userDisconnected) {
-      if (retries < MAX_RETRIES) {
-        var delay = Math.min(2000 * Math.pow(2, retries), 15000);
-        retries++;
-        setStatus('\u65ad\u7ebf\uff0c' + (delay/1000) + 's \u540e\u91cd\u8fde(' + retries + '/' + MAX_RETRIES + ')...', '#ff8800');
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = setTimeout(function(){ doConnect(); }, delay);
-      } else {
-        setStatus('\u5df2\u65ad\u5f00\uff08\u91cd\u8fde\u6b21\u6570\u8017\u5c3d\uff0c\u70b9\u300c\u8fde\u63a5\u300d\u624b\u52a8\u91cd\u8bd5\uff09', '#ff4444');
+    it.state = state;
+    renderTabs();
+    if (it.id === activeId) showActiveStatus();
+    vscodeApi.postMessage({type:'state', state: state, instance: it.id});
+    if (state === 3) { it.retries = 0; if (it.id === activeId) vscodeApi.postMessage({type:'readClipboard'}); }
+    if (state === 5 && !it.userDisconnected) {
+      if (it.retries < MAX_RETRIES) {
+        var delay = Math.min(2000 * Math.pow(2, it.retries), 15000);
+        it.retries++;
+        if (it.id === activeId) setStatus(it.label + ' \u00b7 \u65ad\u7ebf\uff0c' + (delay/1000) + 's \u540e\u91cd\u8fde(' + it.retries + '/' + MAX_RETRIES + ')...', '#ff8800');
+        if (it.retryTimer) clearTimeout(it.retryTimer);
+        it.retryTimer = setTimeout(function(){ connectInstance(it); }, delay);
+      } else if (it.id === activeId) {
+        setStatus(it.label + ' \u00b7 \u5df2\u65ad\u5f00\uff08\u91cd\u8fde\u6b21\u6570\u8017\u5c3d\uff0c\u70b9\u300c\u8fde\u63a5\u300d\u624b\u52a8\u91cd\u8bd5\uff09', '#ff4444');
       }
     }
   };
-  client.onerror = function(s) { setStatus('\u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
-  tunnel.onerror = function(s) { setStatus('\u96a7\u9053\u9519\u8bef: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
+  client.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' \u00b7 \u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
+  tunnel.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' \u00b7 \u96a7\u9053\u9519\u8bef: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
   client.connect();
-  connecting = false;
+  it.connecting = false;
 }
 
-function doDisconnect(isReconnect) {
-  if (!isReconnect) { userDisconnected = true; if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } }
-  if (client) { try { client.disconnect(); } catch(e) {} client = null; }
+function doConnect(){ var it = active() || newInstance(); connectInstance(it); }
+function doDisconnect(){
+  var it = active(); if (!it) return;
+  it.userDisconnected = true;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
 }
 
-// \u526a\u8d34\u677f\uff1a\u672c\u5730\u2192\u8fdc\u7aef\uff08\u6269\u5c55\u5bbf\u4e3b\u56de\u4f20 vscode \u526a\u8d34\u677f\u5185\u5bb9\uff09
+// \u952e\u76d8\uff1a\u5168\u5c40\u4e00\u4efd\uff0c\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\uff08\u591a\u8def\u5e76\u884c\u4e92\u4e0d\u4e32\u952e\uff09
+const keyboard = new Guacamole.Keyboard(document);
+keyboard.onkeydown = function(k) { var it = active(); if (it && it.client) it.client.sendKeyEvent(1, k); };
+keyboard.onkeyup = function(k) { var it = active(); if (it && it.client) it.client.sendKeyEvent(0, k); };
+
+// \u526a\u8d34\u677f\uff1a\u672c\u5730\u2192\u8fdc\u7aef\uff08\u53ea\u53d1\u7ed9\u6d3b\u52a8\u5206\u8eab\uff09
 function sendClipboard(text) {
-  if (!client || typeof text !== 'string' || !text || text === lastRemoteClip) return;
+  var it = active();
+  if (!it || !it.client || typeof text !== 'string' || !text || text === lastRemoteClip) return;
   lastLocalClip = text;
   try {
-    var stream = client.createClipboardStream('text/plain');
+    var stream = it.client.createClipboardStream('text/plain');
     var writer = new Guacamole.StringWriter(stream);
     writer.sendText(text);
     writer.sendEnd();
@@ -418,13 +489,13 @@ function sendClipboard(text) {
 window.addEventListener('message', function(ev) {
   var msg = ev.data || {};
   if (msg.type === 'clipboardData') sendClipboard(msg.text);
+  if (msg.type === 'addInstance') addInstance();
 });
-// \u9762\u677f\u91cd\u65b0\u83b7\u7126\u65f6\u540c\u6b65\u672c\u5730\u526a\u8d34\u677f\u5230\u8fdc\u7aef
-window.addEventListener('focus', function() { if (client) vscodeApi.postMessage({type:'readClipboard'}); });
+window.addEventListener('focus', function() { var it = active(); if (it && it.client) vscodeApi.postMessage({type:'readClipboard'}); });
 
 function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 
-// \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u63a5
+// \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u7b2c\u4e00\u8def\u5206\u8eab
 setTimeout(doConnect, 300);
 </script></body></html>`;
 }
