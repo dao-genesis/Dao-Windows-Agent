@@ -43,6 +43,29 @@ Devin Desktop（官方 win32-x64-user 静默装）+ 归一 VSIX。
 所有安装包**优先取应答盘 `payloads\` 缓存**（步骤 2b 预下），缺才在线下载。
 日志：guest 内 `C:\dao-firstlogon.log`。
 
+## 无头登录注入（rt-flow 本源移植·彻底规避 GUI）
+
+Devin 登录不再靠人肉在 guest 里敲账密。两段式，**账密只经环境变量传入，永不入 ISO/命令行/日志/仓库**：
+
+```bash
+# 段一（宿主）：官方 password 端点换 auth1（不绕过·不伪造），产出 auth 束（仅 bearer·无密码·0600·已 gitignore）
+DEVIN_ACCOUNT_EMAIL=... DEVIN_ACCOUNT_PASSWORD=... bash coldstart/up.sh --login
+# → $HOME/.dao/devin_auth.json  （auth1 / userId / orgId / orgName·多账号各自隔离缓存·绝不串号）
+```
+
+段二（guest）：把 auth 束经桥投递到 `C:\dao_win\devin_auth.json`，再零键鼠注入：
+
+```powershell
+powershell -File C:\dao_win\coldstart-auth\devin-login.ps1 -AuthJson C:\dao_win\devin_auth.json
+# 以远程调试口拉起浏览器/Devin Desktop → CDP 于 app.devin.ai 真源注入 auth1_session localStorage → 秒登
+```
+
+三件套（`coldstart/windows-sim/scripts/`，随盘落地 `C:\dao_win\coldstart-auth`）：
+- `devin_auth.js`：官方 login + post-auth 取 org；`buildAuthBridge` 键名 1:1 对齐 `devin-remote/core/rt-flow/devin_proxy.js`（`auth1_session` + 迁移/known-org/last-internal-org/post-auth-v3 守卫键）。
+- `devin_inject_cdp.js`：零依赖 Node WS 客户端连 CDP，导航真源→注入→复核 `hasAuth`。
+- `devin_login.sh` / `devin-login.ps1`：宿主/guest 编排。
+> 诚实边界：注入登录的是 Devin **网页/webview**（全功能）；Devin Desktop 原生 welcome-gate 仍需官方 first-party session，脚本不伪造不绕过。`file://` 写 localStorage 再跳转**无效**（源隔离），必须 CDP 真源注入或同源反代。
+
 ## 已趟过的坑（改动前必读）
 
 1. **KVM 组不生效**：长寿命 shell 不刷新补充组 → `run_vm.sh` 自动经 `sg kvm -c` 启动；误退 TCG 会慢一个数量级。

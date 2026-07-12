@@ -31,6 +31,9 @@ qemu-img create -f qcow2 "$DISK" "$size" >/dev/null
 AUTO_ISO="$IMAGES/${name}-unattend.iso"
 tmp="$(mktemp -d)"; cp "$UNATTEND_XML" "$tmp/autounattend.xml"
 cp "$HERE/scripts/firstlogon.ps1" "$tmp/firstlogon.ps1" 2>/dev/null || true
+# 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）随盘带入 → guest 落地 C:\dao_win\coldstart-auth。
+mkdir -p "$tmp/coldstart-auth"
+cp "$HERE/scripts/devin_auth.js" "$HERE/scripts/devin_inject_cdp.js" "$HERE/scripts/devin-login.ps1" "$tmp/coldstart-auth/" 2>/dev/null || true
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 for pkg in bridge core; do
   if [ -d "$REPO_ROOT/$pkg" ]; then

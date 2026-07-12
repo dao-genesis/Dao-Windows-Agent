@@ -23,6 +23,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --cpus) cpus="$2"; shift 2;;
   --run-only) mode="run"; shift;;
   --status) mode="status"; shift;;
+  --login) mode="login"; shift;;
   *) echo "未知参数: $1"; exit 1;;
 esac; done
 
@@ -66,9 +67,24 @@ run_vm_bg(){
   echo "桥暂未就绪（guest 可能仍在登录/置备），可稍后 curl 探活或 --status 复查。"
 }
 
+login_headless(){
+  step "无头登录换 auth1（rt-flow 本源·彻底规避 GUI·账密不落盘）"
+  if [ -z "${DEVIN_ACCOUNT_EMAIL:-}" ] || [ -z "${DEVIN_ACCOUNT_PASSWORD:-}" ]; then
+    echo "[--] 需设 DEVIN_ACCOUNT_EMAIL / DEVIN_ACCOUNT_PASSWORD（仅本会话内存·勿写盘）后重跑："
+    echo "     DEVIN_ACCOUNT_EMAIL=... DEVIN_ACCOUNT_PASSWORD=... bash coldstart/up.sh --login"
+    exit 2
+  fi
+  bash "$WSIM/scripts/devin_login.sh" "$HOME/.dao/devin_auth.json"
+  echo "auth 束就绪（仅 bearer·无密码·已 gitignore）。投递 guest 并注入（零 GUI）："
+  echo "  1) 经桥投递到 guest: curl -s -XPOST http://127.0.0.1:19920/api/file.write -H 'Authorization: Bearer dao-win-lab' \\"
+  echo "       --data-binary @<(jq -Rs '{path:\"C:/dao_win/devin_auth.json\",text:.}' \$HOME/.dao/devin_auth.json)"
+  echo "  2) guest 内注入: powershell -File C:\\dao_win\\coldstart-auth\\devin-login.ps1 -AuthJson C:\\dao_win\\devin_auth.json"
+}
+
 case "$mode" in
   status) status; exit 0;;
   run) run_vm_bg; exit 0;;
+  login) login_headless; exit 0;;
 esac
 
 step "1/6 预检 + 安装 QEMU/KVM（幂等）"

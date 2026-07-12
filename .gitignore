@@ -11,5 +11,11 @@ node_modules/
 # 账号注册表（含明文 RDP 口令，运行时生成，勿入库；样例见 accounts.example.json）
 desktop/accounts.json
 
+# 无头登录产出的 auth 束（含 bearer token，运行时生成，勿入库）
+*.dao-auth.json
+.dao/
+devin_auth*.json
+devin_login*.html
+
 # 二合一构建装配产物(unify.js 折入的领域子模块, 构建时生成)
 ide/vscode/vendor/

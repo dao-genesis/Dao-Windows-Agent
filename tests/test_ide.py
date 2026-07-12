@@ -205,3 +205,74 @@ def test_mcp_node_selftest():
     r = subprocess.run([node, os.path.join(IDE, "test", "dao-mcp.test.js")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# ☯ 冷启动·无头登录注入（rt-flow 本源移植·彻底规避 GUI）契约测试
+COLD_SCRIPTS = os.path.join(REPO, "coldstart", "windows-sim", "scripts")
+
+
+def test_headless_auth_scripts_exist():
+    """无头登录三件套齐备：登录核心 / CDP 注入 / 宿主编排。"""
+    for name in ("devin_auth.js", "devin_inject_cdp.js", "devin_login.sh"):
+        p = os.path.join(COLD_SCRIPTS, name)
+        assert os.path.exists(p), f"缺无头登录脚本 {name}"
+
+
+def test_headless_auth_official_endpoints():
+    """登录端点 1:1 对齐 devin-remote/rt-flow 官方流（无自造/无绕过）。"""
+    with open(os.path.join(COLD_SCRIPTS, "devin_auth.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    assert "https://windsurf.com/_devin-auth/password/login" in src
+    assert "https://app.devin.ai/api" in src
+    assert "/users/post-auth" in src
+
+
+def test_headless_auth_injection_keys():
+    """注入桥键名 1:1 对齐 rt-flow buildAuthBridge（auth1_session + post-auth 守卫键）。"""
+    for name in ("devin_auth.js", "devin_inject_cdp.js"):
+        with open(os.path.join(COLD_SCRIPTS, name), encoding="utf-8") as fh:
+            src = fh.read()
+        assert "auth1_session" in src, f"{name} 缺 auth1_session"
+        assert "migrated-to-unscoped-auth0-token-2025-12-18" in src, f"{name} 缺迁移键"
+        assert "known-org-ids-" in src, f"{name} 缺 known-org-ids"
+        assert "last-internal-org-for-external-org-v1-null" in src, f"{name} 缺 org 键"
+
+
+def test_headless_auth_no_hardcoded_credentials():
+    """铁律：脚本源码不得内嵌任何明文密码/凭据（账密只经环境变量传入）。"""
+    import re as _re
+    for name in ("devin_auth.js", "devin_inject_cdp.js", "devin_login.sh"):
+        with open(os.path.join(COLD_SCRIPTS, name), encoding="utf-8") as fh:
+            src = fh.read()
+        assert "@outlook.com" not in src, f"{name} 疑似内嵌账号"
+        # 宿主编排必须从环境读密码，不得写死
+    with open(os.path.join(COLD_SCRIPTS, "devin_login.sh"), encoding="utf-8") as fh:
+        sh = fh.read()
+    assert "DEVIN_ACCOUNT_PASSWORD" in sh and "DEVIN_ACCOUNT_EMAIL" in sh
+    # 密码不得出现在 echo/日志行
+    for line in sh.splitlines():
+        s = line.strip()
+        if s.startswith("echo") or s.startswith("Log"):
+            assert "PASSWORD" not in s, f"疑似日志泄密: {line}"
+
+
+def test_headless_auth_bundle_gitignored():
+    """auth 束（含 bearer）落盘路径必须已 gitignore，绝不入库。"""
+    with open(os.path.join(REPO, ".gitignore"), encoding="utf-8") as fh:
+        gi = fh.read()
+    assert "devin_auth" in gi and ".dao/" in gi
+
+
+def test_headless_auth_node_selftest():
+    """devin_auth 纯逻辑 node 自检（离线·bridge 键/逃逸/形状）。"""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node 不可用")
+    r = subprocess.run(
+        [node, os.path.join(COLD_SCRIPTS, "test", "devin_auth.test.js")],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
