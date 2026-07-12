@@ -94,6 +94,37 @@ def test_firstlogon_provisions_devin_desktop_extension():
     assert "IsReadOnly = $false" in src
 
 
+def test_coldstart_payload_cache_pipeline():
+    """载荷缓存链：宿主预下(fetch_payloads) → 应答盘捆入(build_image) → guest 缓存优先(firstlogon)。"""
+    fp = os.path.join(REPO, "coldstart", "windows-sim", "fetch_payloads.sh")
+    assert os.path.isfile(fp)
+    with open(fp, encoding="utf-8") as fh:
+        fetch = fh.read()
+    for payload in ("vc_redist.x64.exe", "py312.exe", "VSCodeSetup.exe",
+                    "DevinUserSetup.exe", "RDPWrap.zip", "rdpwrap_community.ini"):
+        assert payload in fetch
+    with open(os.path.join(REPO, "coldstart", "up.sh"), encoding="utf-8") as fh:
+        assert "fetch_payloads.sh" in fh.read()
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "build_image.sh"), encoding="utf-8") as fh:
+        assert "payloads" in fh.read()
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"), encoding="utf-8") as fh:
+        fl = fh.read()
+    assert "Get-Payload" in fl
+    # 全部大件安装包都必须走缓存优先取数（在线只是兜底）
+    for name in ("py312.exe", "vc_redist.x64.exe", "VSCodeSetup.exe",
+                 "DevinUserSetup.exe", "RDPWrap.zip", "rdpwrap_community.ini"):
+        assert "Get-Payload '%s'" % name in fl
+
+
+def test_coldstart_runbook_handoff_doc():
+    rb = os.path.join(REPO, "coldstart", "RUNBOOK.md")
+    assert os.path.isfile(rb)
+    with open(rb, encoding="utf-8") as fh:
+        src = fh.read()
+    for key in ("up.sh", "--status", "payloads", "winlab.installed", "19920", "13389"):
+        assert key in src
+
+
 def test_homeassistant_domain_shaper_uses_host_scope_tool_catalog():
     path = os.path.join(
         REPO,

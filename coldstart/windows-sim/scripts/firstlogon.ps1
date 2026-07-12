@@ -6,6 +6,24 @@ function Log($m){ "$([DateTime]::Now.ToString('s')) $m" | Tee-Object -FilePath $
 
 Log "== Dao first-logon start =="
 
+# 置备载荷缓存（fetch_payloads.sh 预下到应答盘 payloads\）：先取随盘缓存，缺才在线下载。
+$payloadDir = $null
+foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\payloads") { $payloadDir = "$d\payloads"; break } }
+if ($payloadDir) { Log "payload cache found: $payloadDir" }
+function Get-Payload($name, $url) {
+  if ($payloadDir -and (Test-Path "$payloadDir\$name")) {
+    $out = "$env:TEMP\$name"
+    Copy-Item -Force "$payloadDir\$name" $out
+    Log "payload $name from media cache"
+    return $out
+  }
+  $out = "$env:TEMP\$name"
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out
+  Log "payload $name downloaded"
+  return $out
+}
+
 # 1) 确保 RDP 开、NLA 关（便于 Agent 从宿主 loopback RDP 接入隔离会话）
 Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
 Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 0
@@ -29,8 +47,7 @@ $py = Resolve-Python
 if (-not $py) {
   # winget 不可用时离线兜底：官网静默安装
   try {
-    $inst = "$env:TEMP\py312.exe"
-    Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' -OutFile $inst
+    $inst = Get-Payload 'py312.exe' 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe'
     Start-Process $inst -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_test=0' -Wait
     $py = Resolve-Python; Log "python installed (offline)"
   } catch { Log "offline python failed: $_" }
@@ -51,8 +68,7 @@ if ($src -and $py) {
   # 级别② 实机 driver 依赖（装不上不阻断：bridge 自动退回 dry-run）
   # 必须装到全局 site-packages（user-site 的 pywin32 DLL 不落位，import 必败）
   try {
-    $vcRedist = "$env:TEMP\vc_redist.x64.exe"
-    Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcRedist
+    $vcRedist = Get-Payload 'vc_redist.x64.exe' 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
     Start-Process $vcRedist -ArgumentList '/install','/quiet','/norestart' -Wait
     Log "vc++ runtime installed"
   } catch { Log "vc++ runtime skipped: $_" }
@@ -92,8 +108,7 @@ try {
   try { Add-MpPreference -ExclusionPath "$env:TEMP\rdpwrap" -ErrorAction SilentlyContinue } catch {}
   if (-not (Test-Path "$rdpwrapDir\rdpwrap.dll")) {
     Log "installing rdpwrap..."
-    $rdpZip = "$env:TEMP\RDPWrap.zip"
-    Invoke-WebRequest -Uri 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' -OutFile $rdpZip
+    $rdpZip = Get-Payload 'RDPWrap.zip' 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip'
     Expand-Archive -Path $rdpZip -DestinationPath "$env:TEMP\rdpwrap" -Force
     # 直接调 RDPWInst.exe -i -o（install.bat 末尾有 pause，-Wait 会永久挂起·真机踩坑）。
     # -o = 即使当前 termsrv 版本"不受支持"也强制装（新 build 如 26100.x 必需，否则直接拒装 → dll=no）。
@@ -118,8 +133,7 @@ try {
   $iniOk = $false
   for ($i = 1; $i -le 3 -and -not $iniOk; $i++) {
     try {
-      $tmpIni = "$env:TEMP\rdpwrap_community.ini"
-      Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini' -OutFile $tmpIni
+      $tmpIni = Get-Payload 'rdpwrap_community.ini' 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini'
       if ((Select-String -Path $tmpIni -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)) {
         # 文件被 wrapper 占用，需先停服务再替换
         Stop-Service TermService -Force -ErrorAction SilentlyContinue
@@ -167,9 +181,7 @@ try {
   if (-not $codeCli) {
     # winget 不可用时离线兜底（Enterprise Eval 镜像常无 winget/msstore）：官网系统级静默安装
     try {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      $codeInst = "$env:TEMP\VSCodeSetup.exe"
-      Invoke-WebRequest -UseBasicParsing -Uri 'https://update.code.visualstudio.com/latest/win32-x64/stable' -OutFile $codeInst
+      $codeInst = Get-Payload 'VSCodeSetup.exe' 'https://update.code.visualstudio.com/latest/win32-x64/stable'
       Start-Process $codeInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
       foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
                        "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
@@ -203,10 +215,7 @@ try {
   }
   $devinCli = Resolve-DevinCli
   if (-not $devinCli) {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $devinInst = "$env:TEMP\DevinUserSetup.exe"
-    $devinUrl = 'https://windsurf.com/api/windsurf/download-redirect?build=win32-x64-user&isNext=false'
-    Invoke-WebRequest -UseBasicParsing -Uri $devinUrl -OutFile $devinInst
+    $devinInst = Get-Payload 'DevinUserSetup.exe' 'https://windsurf.com/api/windsurf/download-redirect?build=win32-x64-user&isNext=false'
     Start-Process $devinInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
     $devinCli = Resolve-DevinCli
     Log "devin desktop installed (stable user installer)"

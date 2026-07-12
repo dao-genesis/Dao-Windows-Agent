@@ -30,12 +30,16 @@ DISK="$IMAGES/${name}.qcow2"
 INSTALLED_FLAG="$IMAGES/${name}.installed"
 
 hr(){ echo "———————————————————————————————————————"; }
-step(){ hr; echo "☯ $1"; hr; }
+COLDSTART_T0=$(date +%s)
+elapsed(){ local s=$(( $(date +%s) - COLDSTART_T0 )); printf '%02d:%02d' $((s/60)) $((s%60)); }
+step(){ hr; echo "☯ [$(elapsed)] $1"; hr; }
 
 status(){
   echo "== 冷启动现状 (name=$name) =="
   [ -f "$MEDIA/${edition}.iso" ] && echo "  [OK]   安装 ISO: $MEDIA/${edition}.iso ($(du -h "$MEDIA/${edition}.iso"|cut -f1))" || echo "  [--]   安装 ISO 未就绪"
   [ -f "$MEDIA/virtio-win.iso" ] && echo "  [OK]   virtio-win.iso" || echo "  [--]   virtio-win.iso 未就绪"
+  local pn; pn=$(ls "$MEDIA/payloads" 2>/dev/null | wc -l)
+  [ "${pn:-0}" -gt 0 ] && echo "  [OK]   置备载荷缓存: $pn 个 (media/payloads/)" || echo "  [--]   置备载荷未缓存 (fetch_payloads.sh 可预下载·guest 会在线兜底)"
   [ -f "$DISK" ] && echo "  [OK]   磁盘镜像: $DISK ($(du -h "$DISK"|cut -f1))" || echo "  [--]   磁盘镜像未建"
   [ -f "$INSTALLED_FLAG" ] && echo "  [OK]   已完成无人值守装机" || echo "  [--]   未完成装机"
   local h; h=$(curl -s -m3 http://127.0.0.1:19920/api/health -H 'Authorization: Bearer dao-win-lab' 2>/dev/null || true)
@@ -71,8 +75,10 @@ step "1/6 预检 + 安装 QEMU/KVM（幂等）"
 bash "$WSIM/preflight.sh" || true
 command -v qemu-system-x86_64 >/dev/null 2>&1 || bash "$WSIM/install_qemu.sh"
 
-step "2/6 取 Windows 介质（评估版 ISO + virtio·已存在则跳过）"
+step "2/6 取 Windows 介质 + 置备载荷缓存（已存在则跳过）"
 bash "$WSIM/fetch_media.sh" --eval "$edition"
+# 装机载荷（VC++/Python/VSCode/Devin Desktop/RDPWrap）预下到宿主缓存随盘带入；单项失败不阻断（guest 首登仍有在线兜底）。
+bash "$WSIM/fetch_payloads.sh" || echo "[WARN] 部分置备载荷未缓存成功，guest 首登将在线下载。"
 
 step "3/6 构建镜像 + 应答盘（捆入 bridge/core + IDE 插件 vsix·已建则跳过)"
 if [ -f "$DISK" ]; then

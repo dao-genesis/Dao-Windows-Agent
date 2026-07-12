@@ -39,6 +39,13 @@ for pkg in bridge core; do
     find "$tmp/$pkg" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   fi
 done
+# 宿主缓存的置备载荷（fetch_payloads.sh 预下载）随盘带入：guest 首登优先取本地缓存，
+# 免每次装机重复下载 VC++/Python/VSCode/Devin Desktop/RDPWrap（数百 MB·数分钟级节省）。
+if [ -d "$MEDIA/payloads" ] && [ -n "$(ls -A "$MEDIA/payloads" 2>/dev/null)" ]; then
+  mkdir -p "$tmp/payloads"
+  cp "$MEDIA"/payloads/* "$tmp/payloads/" 2>/dev/null || true
+  echo "已捆入置备载荷缓存: $(ls "$tmp/payloads" | tr '\n' ' ')"
+fi
 # IDE 前端 .vsix 一并带入（firstlogon 装 VSCode 后离线安装；缺则现打，打不出不阻断）
 VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
 if [ -z "$VSIX" ] && command -v node >/dev/null 2>&1; then
