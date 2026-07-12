@@ -26,5 +26,8 @@ fetch VSCodeSetup.exe 'https://update.code.visualstudio.com/latest/win32-x64/sta
 fetch DevinUserSetup.exe 'https://windsurf.com/api/windsurf/download-redirect?build=win32-x64-user&isNext=false' || rc=1
 fetch RDPWrap.zip 'https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip' || rc=1
 fetch rdpwrap_community.ini 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini' || rc=1
+# 领域软件本体（大件·全离线装机）：guest 常无外网/winget，缺缓存即装不上（真机踩坑）
+fetch FreeCAD-setup.exe 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-installer-1.exe' || rc=1
+fetch KiCad-setup.exe 'https://kicad-downloads.s3.cern.ch/windows/stable/kicad-8.0.9-x86_64.exe' || rc=1
 echo "现有载荷:"; ls -lh "$PAY" 2>/dev/null || true
 exit $rc

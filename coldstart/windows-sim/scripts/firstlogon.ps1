@@ -246,7 +246,8 @@ if (-not (Test-Cmd $freecadPaths)) {
   try { winget install -e --id FreeCAD.FreeCAD --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "freecad exit=$LASTEXITCODE" } catch { Log "winget freecad skipped: $_" }
   if (-not (Test-Cmd $freecadPaths)) {
     try {
-      $fc = Get-Payload 'FreeCAD-setup.exe' 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-py311.exe'
+      # 官方 1.0.0 资产名为 ...-installer-1.exe（NSIS，/S 静默）；旧 py311.exe 命名不存在（404）
+      $fc = Get-Payload 'FreeCAD-setup.exe' 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-installer-1.exe'
       Start-Process $fc -ArgumentList '/S' -Wait; Log "freecad installed (offline)"
     } catch { Log "offline freecad failed: $_" }
   }
@@ -255,6 +256,12 @@ if (-not (Test-Cmd $freecadPaths)) {
 $kicadPaths = @("$env:ProgramFiles\KiCad\8.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\9.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe")
 if (-not (Test-Cmd $kicadPaths)) {
   try { winget install -e --id KiCad.KiCad --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "kicad exit=$LASTEXITCODE" } catch { Log "winget kicad skipped: $_" }
+  if (-not (Test-Cmd $kicadPaths)) {
+    try {
+      $kc = Get-Payload 'KiCad-setup.exe' 'https://kicad-downloads.s3.cern.ch/windows/stable/kicad-8.0.9-x86_64.exe'
+      Start-Process $kc -ArgumentList '/S' -Wait; Log "kicad installed (offline)"
+    } catch { Log "offline kicad failed: $_" }
+  }
 } else { Log "kicad already present" }
 
 Log "== Dao first-logon done =="
