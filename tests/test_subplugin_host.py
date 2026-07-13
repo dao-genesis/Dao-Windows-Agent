@@ -111,6 +111,59 @@ def test_end_to_end_discovery_and_bridge_invoke():
         host.stop()
 
 
+def test_collect_spec_paths_merges_dir_and_singles_dedup():
+    from bridge.server import collect_spec_paths
+    tmp = tempfile.mkdtemp()
+    a = os.path.join(tmp, "a.json")
+    b = os.path.join(tmp, "b.json")
+    for p in (a, b):
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+    with open(os.path.join(tmp, "readme.md"), "w", encoding="utf-8") as fh:
+        fh.write("x")
+    # 目录展开全部 *.json + 单 spec 追加；目录内已含者去重
+    assert collect_spec_paths([a], tmp) == [a, b]
+    extra = os.path.join(tmp, "sub")
+    os.makedirs(extra)
+    c = os.path.join(extra, "c.json")
+    with open(c, "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    assert collect_spec_paths([c, ""], tmp) == [a, b, c]
+    assert collect_spec_paths(None, None) == []
+    assert collect_spec_paths([a], os.path.join(tmp, "不存在")) == [a]
+
+
+def test_multi_spec_hosts_all_reach_api_apps():
+    """多 spec 并托：目录内全部子插件写出描述符 → registry 一并收编。"""
+    from bridge.server import BUNDLED_SPECS_DIR, collect_spec_paths
+    echo2 = dict(_SPEC, app_id="echo2-ext", mention="echo2",
+                 verbs=[dict(v) for v in _SPEC["verbs"]])
+    tmp = tempfile.mkdtemp()
+    sdir = os.path.join(tmp, "specs")
+    os.makedirs(sdir)
+    for spec in (_SPEC, echo2):
+        with open(os.path.join(sdir, spec["app_id"] + ".json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(spec, fh, ensure_ascii=False)
+    ddir = os.path.join(tmp, "subplugins")
+    hosts = []
+    try:
+        for path in collect_spec_paths([], sdir):
+            host = SubpluginHost(load_spec(path))
+            host.start()
+            host.write_descriptor(ddir)
+            hosts.append(host)
+        reg = build_default_registry()
+        got = register_subplugins(reg, discovery_dir=ddir)
+        assert got == ["echo-ext", "echo2-ext"]
+    finally:
+        for host in hosts:
+            host.stop()
+    # 随桥捆入目录本身可被默认展开（homeassistant 等随盘 spec 全数在列）
+    bundled = collect_spec_paths([], BUNDLED_SPECS_DIR)
+    assert any(p.endswith("homeassistant.json") for p in bundled)
+
+
 def test_shipped_specs_are_loadable():
     root = os.path.join(os.path.dirname(__file__), "..", "bridge", "subplugin_specs")
     specs = [f for f in os.listdir(root) if f.endswith(".json")]
