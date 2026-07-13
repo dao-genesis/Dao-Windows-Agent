@@ -251,27 +251,32 @@ try {
 # 8) 收编的领域软件本体：FreeCAD(3D) + KiCad(PCB)。winget 优先→官网静默兜底（装不上不阻断：
 #    对应 profile 的 verb 会返回「可执行文件不存在」，桥其余能力照常）。嘉立创EDA(jlceda) 走 EasyEDA
 #    Pro 扩展 API（sys_MessageBus/_EXTAPI_ROOT_），无独立 CLI，此处不装本体。
-function Test-Cmd($paths) { foreach ($p in $paths) { if (Test-Path $p) { return $true } }; return $false }
+function Test-Cmd($paths) { foreach ($p in $paths) { if (Test-Path $p) { return $true } }; return $false }  # 支持通配符
 # FreeCAD：桥探 FreeCADCmd.exe / FreeCAD.exe
-$freecadPaths = @("$env:ProgramFiles\FreeCAD 0.21\bin\FreeCADCmd.exe","$env:ProgramFiles\FreeCAD 1.0\bin\FreeCADCmd.exe","$env:ProgramFiles\FreeCAD\bin\FreeCADCmd.exe")
+$freecadPaths = @("$env:ProgramFiles\FreeCAD*\bin\FreeCADCmd.exe","$env:LOCALAPPDATA\Programs\FreeCAD*\bin\FreeCADCmd.exe")
 if (-not (Test-Cmd $freecadPaths)) {
   try { winget install -e --id FreeCAD.FreeCAD --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "freecad exit=$LASTEXITCODE" } catch { Log "winget freecad skipped: $_" }
   if (-not (Test-Cmd $freecadPaths)) {
     try {
       # 官方 1.0.0 资产名为 ...-installer-1.exe（NSIS，/S 静默）；旧 py311.exe 命名不存在（404）
       $fc = Get-Payload 'FreeCAD-setup.exe' 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-installer-1.exe'
-      Start-Process $fc -ArgumentList '/S' -Wait; Log "freecad installed (offline)"
+      $p = Start-Process $fc -ArgumentList '/S' -Wait -PassThru
+      if (Test-Cmd $freecadPaths) { Log "freecad installed (offline exit=$($p.ExitCode))" }
+      else { Log "offline freecad NOT verified (exit=$($p.ExitCode))" }
     } catch { Log "offline freecad failed: $_" }
   }
 } else { Log "freecad already present" }
-# KiCad：桥探 kicad-cli.exe
-$kicadPaths = @("$env:ProgramFiles\KiCad\8.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\9.0\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe")
+# KiCad：桥探 kicad-cli.exe（含 winget 用户域 LOCALAPPDATA\Programs 与任意版本号）
+$kicadPaths = @("$env:ProgramFiles\KiCad\*\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe","$env:LOCALAPPDATA\Programs\KiCad\*\bin\kicad-cli.exe")
 if (-not (Test-Cmd $kicadPaths)) {
-  try { winget install -e --id KiCad.KiCad --silent --accept-source-agreements --accept-package-agreements --scope machine; Log "kicad exit=$LASTEXITCODE" } catch { Log "winget kicad skipped: $_" }
+  try { winget install -e --id KiCad.KiCad --silent --source winget --accept-source-agreements --accept-package-agreements; Log "kicad winget exit=$LASTEXITCODE" } catch { Log "winget kicad skipped: $_" }
   if (-not (Test-Cmd $kicadPaths)) {
     try {
       $kc = Get-Payload 'KiCad-setup.exe' 'https://kicad-downloads.s3.cern.ch/windows/stable/kicad-8.0.9-x86_64.exe'
-      Start-Process $kc -ArgumentList '/S' -Wait; Log "kicad installed (offline)"
+      $p = Start-Process $kc -ArgumentList '/S' -Wait -PassThru
+      # 实机踩坑：安装器秒退也会走到这里，必须以落盘探测为准，禁止假成功日志
+      if (Test-Cmd $kicadPaths) { Log "kicad installed (offline exit=$($p.ExitCode))" }
+      else { Log "offline kicad NOT verified (exit=$($p.ExitCode))：kicad-cli 未落盘" }
     } catch { Log "offline kicad failed: $_" }
   }
 } else { Log "kicad already present" }
