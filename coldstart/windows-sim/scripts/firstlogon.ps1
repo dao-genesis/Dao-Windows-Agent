@@ -36,7 +36,11 @@ Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStat
 Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
 Log "RDP enabled"
 
-# 2) QEMU guest agent（virtio-win.iso 内），供宿主 QMP 无头管控
+# 2) QEMU guest agent（virtio-win.iso 内），供宿主 QMP 无头管控。
+#    必须先装 vioserial 驱动：qemu-ga MSI 不带它，PCI VEN_1AF4&DEV_1003 无驱动则
+#    org.qemu.guest_agent.0 通道不通，宿主 guest-ping 恒超时（真机实测踩坑）。
+$vioser = Get-ChildItem 'D:\vioserial\w11\amd64\vioser.inf','E:\vioserial\w11\amd64\vioser.inf','F:\vioserial\w11\amd64\vioser.inf','G:\vioserial\w11\amd64\vioser.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($vioser) { pnputil /add-driver "$($vioser.FullName)" /install | Out-Null; Log "vioserial driver installed" } else { Log "vioserial inf not found on any drive" }
 $qga = Get-ChildItem 'D:\guest-agent\qemu-ga-x86_64.msi','E:\guest-agent\qemu-ga-x86_64.msi','F:\guest-agent\qemu-ga-x86_64.msi','G:\guest-agent\qemu-ga-x86_64.msi' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($qga) { Start-Process msiexec -ArgumentList "/i `"$($qga.FullName)`" /qn" -Wait; Log "qemu-ga installed" }
 
