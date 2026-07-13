@@ -59,11 +59,20 @@ class _WinMsgDriver:
         self._pid: Optional[int] = None
         self._top: Optional[int] = None   # 当前顶层窗口 hwnd
         self._edit: Optional[int] = None  # 当前编辑控件 hwnd
+        # 打包应用(UWP/MSIX，如 Win11 记事本)不吃 lpDesktop，窗口逃逸到 Default 桌面；
+        # 按隔离桌面名记住其 hwnd，后续动词仍消息级直达（不抢焦点，但不再隔离）。
+        self._escaped: dict[str, int] = {}
 
     def __call__(self, desktop: str, plan: dict) -> dict:
         results: list[Any] = []
         self._top = None
         self._edit = None
+        esc = self._escaped.get(desktop)
+        if esc:
+            if win_desktop.is_window(esc):
+                self._top = esc
+            else:
+                del self._escaped[desktop]
         with win_desktop.attached(desktop):
             for step in plan.get("steps", []):
                 results.append(self._run_step(desktop, step))
@@ -101,21 +110,36 @@ class _WinMsgDriver:
         # CreateProcessW + STARTUPINFOW.lpDesktop 真正把进程起到隔离桌面。
         parts = [_quote(step["exe"]), *[_quote(a) for a in step.get("args", [])]]
         cmdline = " ".join(parts)
+        match_class = step.get("match_class") or ""
+        pre: set = (win_desktop.snapshot_class_windows("Default", match_class)
+                    if match_class else set())
         self._pid = win_desktop.launch_on_desktop(desktop, cmdline)
         # 等窗口出现（起进程后窗口异步创建）
         self._top = self._await_top(desktop, deadline=time.time() + 8)
-        return {"pid": self._pid, "desktop": desktop, "hwnd": self._top}
+        isolated = self._top is not None
+        if self._top is None and match_class:
+            # 隔离桌面上无窗口 = 打包应用逃逸 → 在 Default 桌面按类名比对新窗口接管
+            deadline = time.time() + 6
+            while time.time() < deadline:
+                hw = win_desktop.find_new_class_window("Default", match_class, pre)
+                if hw:
+                    self._top = hw
+                    self._escaped[desktop] = hw
+                    break
+                time.sleep(0.3)
+        return {"pid": self._pid, "desktop": desktop, "hwnd": self._top,
+                "isolated": isolated}
 
     def _await_top(self, desktop: str, deadline: float) -> Optional[int]:
         while time.time() < deadline:
             wins = win_desktop.enum_windows(desktop)
-            titled = [h for h, t in wins if t]
-            for hwnd in reversed(titled):
+            for hwnd, _t in reversed(wins):
                 if self._pid and win_desktop.window_process_id(hwnd) == self._pid:
                     return hwnd
-            for hwnd in reversed(titled):
+            for hwnd, _t in reversed(wins):
                 if win_desktop.find_edit_control(hwnd):
                     return hwnd
+            titled = [h for h, t in wins if t]
             if titled:
                 return titled[-1]
             time.sleep(0.3)

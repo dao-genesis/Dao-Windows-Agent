@@ -250,6 +250,18 @@ def test_uia_driver_binding_executes_plan():
     assert seen["desktop"] == "dao_vm_d_notepad"
 
 
+def test_notepad_open_plan_carries_match_class():
+    """打包应用(Win11 记事本)不吃 lpDesktop：open 计划须带 match_class 供 driver 兜底接管。"""
+    reg = build_default_registry(autodetect_uia=False)
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-uia-mc")
+    mgr.create("vm_mc")
+    assert mgr.open_app("vm_mc", "notepad").ok
+    r = mgr.invoke("vm_mc", "notepad", "open")
+    assert r.ok
+    step0 = r.value["plan"]["steps"][0]
+    assert step0["op"] == "launch" and step0["match_class"] == "Notepad"
+
+
 def test_osctl_binding_keeps_isolated_desktop_message_driver(monkeypatch):
     """agentctl 只绑定视觉兜底；级别② 必须保留跨隔离桌面可用的消息级 driver。"""
     seen = {}
