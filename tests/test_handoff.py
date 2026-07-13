@@ -105,3 +105,12 @@ def test_search_verbs_semantic_bridge():
     # 别名直命中显著加权
     hits = reg.search_verbs("检查 模型树")
     assert any(h["app_id"] == "freecad" and "inspect" in h["verb"] for h in hits[:3])
+
+
+def test_create_accepts_string_stages():
+    flow = HandoffFlow(build_default_registry(), root=tempfile.mkdtemp())
+    st = flow.create("strp", "g", ["甲", "乙"])
+    assert st["status"] == "active"
+    assert st["stages"][0]["goal"] == "甲" and st["stages"][0]["app_id"] == ""
+    bad = flow.create("strp2", "g", [42])
+    assert "error" in bad and "形状非法" in bad["error"]
