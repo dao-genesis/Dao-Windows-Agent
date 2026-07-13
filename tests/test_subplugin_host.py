@@ -42,6 +42,17 @@ def test_render_shell_quotes_params():
     assert _render_shell("x {missing}", {}) == "x "
 
 
+def test_render_shell_list_multi_token():
+    cmd = _render_shell("hactl states {args}", {"args": ["--domain", "light", "--brief"]})
+    if os.name == "nt":
+        assert cmd == 'hactl states "--domain" "light" "--brief"'
+    else:
+        assert cmd == "hactl states --domain light --brief"
+    cmd2 = _render_shell("hactl states {args}", {"args": ["a b", "; rm -rf /"]})
+    expected = '"a b" "; rm -rf /"' if os.name == "nt" else "'a b' '; rm -rf /'"
+    assert expected in cmd2
+
+
 def test_host_real_http_invoke_and_auth():
     host = _up(_SPEC)
     try:

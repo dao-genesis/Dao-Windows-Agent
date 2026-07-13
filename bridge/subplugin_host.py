@@ -57,12 +57,21 @@ def _quote(value: str) -> str:
 
 
 def _render_shell(template: str, params: dict) -> str:
-    """把 {param} 占位安全渲染进命令模板（值经平台引用，防注入）。"""
+    """把 {param} 占位安全渲染进命令模板（值经平台引用，防注入）。
+
+    列表/元组值按多 token 逐个引用后空格连接（透传型参数如 args=["--domain","light"]），
+    标量值整体作为单 token 引用。
+    """
     class _Q(dict):
         def __missing__(self, key: str) -> str:
             return ""
 
-    quoted = _Q({k: _quote(str(v)) for k, v in params.items()})
+    def _render(v) -> str:
+        if isinstance(v, (list, tuple)):
+            return " ".join(_quote(str(x)) for x in v)
+        return _quote(str(v))
+
+    quoted = _Q({k: _render(v) for k, v in params.items()})
     return template.format_map(quoted)
 
 

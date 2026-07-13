@@ -28,6 +28,7 @@ UIA_OPS = (
     "invoke",       # 触发默认动作(按钮等)：{op, target}
     "menu",         # 走菜单路径：{op, path:["文件","另存为"]}
     "keys",         # 发送按键(控件焦点内)：{op, keys:"^s"}
+    "save_text",    # 读编辑区文本直接落盘：{op, path}（隔离桌面无法驱动另存为对话框）
     "tree",         # 导出控件树(感知)：{op, depth?}
     "screenshot",   # 隔离桌面截图(级别③兜底前的证据)：{op}
 )
@@ -68,8 +69,12 @@ class UiaDesktopAdapter(AppAdapter):
                 {"dry_run": True, "desktop": desk, "plan": plan},
                 logs=["未绑定 UIA driver，返回待执行动作计划（离线校验）"],
             )
-        return ActionResult.good(self.driver(desk, plan),
-                                 logs=[f"UIA on {desk}: {plan.get('verb', verb)}"])
+        res = self.driver(desk, plan)
+        logs = [f"UIA on {desk}: {plan.get('verb', verb)}"]
+        if isinstance(res, dict) and res.get("ok") is False:
+            return ActionResult(ok=False, value=res,
+                                error="UIA 计划未全部命中(见 value.results)", logs=logs)
+        return ActionResult.good(res, logs=logs)
 
     def shutdown(self, instance: Instance) -> None:
         instance.alive = False

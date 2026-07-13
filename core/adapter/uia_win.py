@@ -43,6 +43,20 @@ def _quote(arg: str) -> str:
     return f'"{arg}"' if (" " in arg and not arg.startswith('"')) else arg
 
 
+def _step_ok(r: Any) -> bool:
+    """单步结果是否成功：error/reason 或任一动作标志为 False 即失败（假成功防线）。"""
+    if not isinstance(r, dict):
+        return True
+    if "error" in r or "reason" in r:
+        return False
+    for k in ("found", "set", "clicked", "saved"):
+        if r.get(k) is False:
+            return False
+    if "hwnd" in r and r.get("hwnd") is None:
+        return False
+    return True
+
+
 def available() -> bool:
     """当前环境能否真正执行级别②：仅需 Windows + 隔离桌面能力（纯 ctypes，无第三方依赖）。"""
     return win_desktop.available()
@@ -76,7 +90,9 @@ class _WinMsgDriver:
         with win_desktop.attached(desktop):
             for step in plan.get("steps", []):
                 results.append(self._run_step(desktop, step))
-        return {"verb": plan.get("verb"), "desktop": desktop, "results": results}
+        ok = all(_step_ok(r) for r in results)
+        return {"verb": plan.get("verb"), "desktop": desktop, "ok": ok,
+                "results": results}
 
     # --- 单步执行 ---
     def _run_step(self, desktop: str, step: dict) -> Any:
@@ -87,6 +103,8 @@ class _WinMsgDriver:
             return self._find(desktop, step)
         if op == "set_value":
             return self._set_value(step)
+        if op == "save_text":
+            return self._save_text(desktop, step)
         if op == "get_text":
             return self._get_text(step)
         if op in ("click", "invoke"):
@@ -101,7 +119,7 @@ class _WinMsgDriver:
             # 菜单路径依赖 UIA/焦点，隔离桌面上不可靠；本源路以消息级/快捷键替代
             return {"menu": step.get("path"), "note": "消息级不驱动菜单；请用 keys 快捷键或直接文件落盘"}
         if op == "tree":
-            return self._tree(step)
+            return self._tree(desktop, step)
         if op == "screenshot":
             return self._screenshot(desktop, step)
         return {"skipped_op": op}
@@ -212,6 +230,27 @@ class _WinMsgDriver:
             actual = win_desktop.get_text(hwnd)
         return {"set": actual == text, "hwnd": hwnd, "text": actual}
 
+    def _save_text(self, desktop: str, step: dict) -> dict:
+        # 消息级“保存”：读回编辑区文本直接落盘（隔离桌面无法可靠驱动另存为对话框）。
+        if self._top is None:
+            self._top = self._await_top(desktop, deadline=time.time() + 3)
+        hwnd = self._edit or self._find_edit(desktop)
+        if not hwnd:
+            return {"saved": False, "reason": "编辑控件未定位"}
+        path = step.get("path", "")
+        if not path:
+            return {"saved": False, "reason": "save_text 缺 path"}
+        text = win_desktop.get_text(hwnd)
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        except Exception as exc:  # noqa: BLE001
+            return {"saved": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"saved": True, "path": path, "chars": len(text)}
+
     def _get_text(self, step: dict) -> dict:
         hwnd = self._resolve(step.get("target", {}))
         if not hwnd:
@@ -225,9 +264,12 @@ class _WinMsgDriver:
         if hwnd and keys and not keys.startswith(("^", "%", "+", "{")):
             win_desktop.send_chars(hwnd, keys)
             return {"keys": keys, "sent": "wm_char"}
-        return {"keys": keys, "note": "组合/功能键依赖输入焦点，隔离桌面上不经此路；文本请用 set_value"}
+        return {"keys": keys, "error": "组合/功能键依赖输入焦点，隔离桌面消息级不可达；"
+                                     "文本请用 set_value，保存请用 save_text"}
 
-    def _tree(self, step: dict) -> dict:
+    def _tree(self, desktop: str, step: dict) -> dict:
+        if not self._top:
+            self._top = self._await_top(desktop, deadline=time.time() + 3)
         if not self._top:
             return {"tree": [], "reason": "无顶层窗口"}
         kids = win_desktop.list_children(self._top)

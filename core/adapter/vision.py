@@ -59,8 +59,12 @@ class VisionAdapter(AppAdapter):
                 {"dry_run": True, "desktop": desk, "plan": plan},
                 logs=["未绑定 vision grounder，返回待执行视觉计划（离线校验）"],
             )
-        return ActionResult.good(self.grounder(desk, plan),
-                                 logs=[f"VISION on {desk}: {plan.get('verb', verb)}"])
+        res = self.grounder(desk, plan)
+        logs = [f"VISION on {desk}: {plan.get('verb', verb)}"]
+        if isinstance(res, dict) and res.get("ok") is False:
+            return ActionResult(ok=False, value=res,
+                                error="视觉计划未全部命中(见 value.results)", logs=logs)
+        return ActionResult.good(res, logs=logs)
 
     def shutdown(self, instance: Instance) -> None:
         instance.alive = False

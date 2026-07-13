@@ -152,6 +152,24 @@ class OsctlExecutor:
         self.os.hotkey(step.get("keys", ""))
         return {"op": "keys", "ok": True}
 
+    def _op_save_text(self, desktop: str, step: dict) -> dict:
+        path = step.get("path", "")
+        if not path:
+            return {"op": "save_text", "ok": False, "error": "save_text 缺 path"}
+        txt = None
+        for k in _kw_variants({"ctype": "Edit"}):
+            txt = self.os.uia_text(self._win.get(desktop), **k)
+            if txt is not None:
+                break
+        if txt is None:
+            return {"op": "save_text", "ok": False, "error": "编辑区未定位"}
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(txt)
+        return {"op": "save_text", "ok": True, "path": path, "chars": len(txt)}
+
     def _op_tree(self, desktop: str, step: dict) -> dict:
         children = self.os.uia_children(self._win.get(desktop))
         return {"op": "tree", "ok": True, "children": children}
@@ -250,6 +268,7 @@ _OPS: dict[str, Callable[[OsctlExecutor, str, dict], dict]] = {
     "invoke": OsctlExecutor._op_invoke,
     "menu": OsctlExecutor._op_menu,
     "keys": OsctlExecutor._op_keys,
+    "save_text": OsctlExecutor._op_save_text,
     "tree": OsctlExecutor._op_tree,
     "screenshot": OsctlExecutor._op_screenshot,
     "observe": OsctlExecutor._op_observe,
