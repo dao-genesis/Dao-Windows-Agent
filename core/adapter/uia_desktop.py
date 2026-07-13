@@ -20,7 +20,7 @@ from core.profiles.schema import AutomationLevel
 
 # UIA 动作原语：driver 须实现下列 op，均按控件定位（绝不用绝对坐标）。
 UIA_OPS = (
-    "launch",       # 在隔离桌面起进程：{op, exe, args?}
+    "launch",       # 在隔离桌面起进程：{op, exe, args?, match_class?(打包应用逃逸兜底)}
     "find",         # 定位控件：{op, by:name|automation_id|control_type, value, timeout?}
     "click",        # 点击已定位控件：{op, target}
     "set_value",    # 写入文本框：{op, target, text}

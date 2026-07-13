@@ -15,7 +15,7 @@ _EDIT = {"by": "control_type", "value": "Edit"}
 def _open(adapter, instance, file: str = "", **_):
     args = [file] if file else []
     return adapter.build_plan("open", [
-        {"op": "launch", "exe": "notepad.exe", "args": args},
+        {"op": "launch", "exe": "notepad.exe", "args": args, "match_class": "Notepad"},
         {"op": "find", **_EDIT, "timeout": 10},
     ])
 
