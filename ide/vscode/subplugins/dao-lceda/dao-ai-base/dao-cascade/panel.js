@@ -724,9 +724,10 @@ class CascadePanelProvider {
     this._watchCascadeSummaries();
     let acp = [];
     try {
-      await this._ensureAcp();
-      const res = await this._acp.listSessions();
-      acp = (res && res.sessions) || [];
+      if (await this._ensureAcp() && this._acp) {
+        const res = await this._acp.listSessions();
+        acp = (res && res.sessions) || [];
+      }
     } catch (e) { this._log("[sessions] " + e.message); }
     const cx = await this._cascadeSessions();
     const all = acp.concat(cx).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
@@ -907,7 +908,8 @@ class CascadePanelProvider {
       catch (e) { return this._post({ type: "error", text: "加载 Cascade 轨迹失败: " + e.message }); }
     }
     try {
-      await this._ensureAcp();
+      if (!(await this._ensureAcp()) || !this._acp)
+        return this._post({ type: "error", text: "加载会话失败: ACP 未就绪(未登录或启动退避中)" });
       this._post({ type: "history-clear" });
       this._replaying = true;
       this._activeId = "r" + Date.now();
@@ -927,9 +929,10 @@ class CascadePanelProvider {
     try {
       let sessions = [];
       try {
-        await this._ensureAcp();
-        const res = await this._acp.listSessions();
-        sessions = (res && res.sessions) || [];
+        if (await this._ensureAcp() && this._acp) {
+          const res = await this._acp.listSessions();
+          sessions = (res && res.sessions) || [];
+        }
       } catch (_) {}
       sessions = sessions.concat(await this._cascadeSessions())
         .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
@@ -1955,7 +1958,7 @@ class CascadePanelProvider {
     this._post({ type: "history-clear", home: true });
     this._post({ type: "arena-avail", ok: true, reason: "" });
     try {
-      await this._ensureAcp();
+      if (!(await this._ensureAcp()) || !this._acp) throw new Error("ACP 未就绪(未登录或启动退避中)");
       const res = await this._acp.newSession();
       this._pushSessionMeta(res);
       this._post({ type: "history-done" });
@@ -2013,7 +2016,7 @@ class CascadePanelProvider {
       }
       try {
         this._activeId = msg.id;
-        await this._ensureAcp();
+        if (!(await this._ensureAcp()) || !this._acp) throw new Error("ACP 未就绪(未登录或启动退避中)");
         await this._acp.prompt(msg.text);
         return this._post({ type: "assistant-done", id: msg.id });
       } catch (e) {
@@ -2451,11 +2454,11 @@ class CascadePanelProvider {
         <button id="imgBtn" title="附加图片（支持粘贴）">🖼</button>
         <button id="arenaBtn" title="Arena 模式：同题双轨候选，择优续行（新会话/会话中途均可）">⚔</button>
         <button id="wtBtn" title="Worktree 模式：新会话在隔离 git worktree 中运行，改动不直接落入主工作区，可随后合并">⎇</button>
+        <span class="pill" id="daoModePill" title="领域模式切换(提示词隔离/替换)" style="display:none"></span>
         <span class="pill" id="modeWrap" title="Session Mode">&lt;&gt;<button id="modeBtn" type="button"></button></span>
         <span class="pill" id="modelWrap" title="Model"><button id="modelBtn" type="button"></button></span>
         <span class="spacer"></span>
         <span id="tokCount" title="输入 token / 上限 (GetMessageTokenCount)" style="font-size:10.5px;color:var(--dim);"></span>
-        <span class="pill" id="daoModePill" title="领域模式切换(提示词隔离/替换)" style="display:none"></span>
         <span class="pill" id="agentWrap" title="切换 agent (Ctrl+')"><span id="agentIcon">⬡</span><button id="agentBtn" type="button"></button><span class="badge" id="badge"></span></span>
         <button class="send" id="send" title="发送 (Enter)">↑</button>
       </div>
