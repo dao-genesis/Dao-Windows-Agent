@@ -210,6 +210,19 @@ class BridgeService:
             return {"error": str(exc)}
         return {"current": mode.describe(), "allowed_apps": self.modes.allowed_apps()}
 
+    # --- 工程交接（螺旋递进：领域工程完成后交接下一环节） ---
+    def project_create(self, project_id: str, goal: str = "", stages: Optional[list] = None) -> dict:
+        return self.handoff.create(project_id, goal, stages or [])
+
+    def project_advance(self, project_id: str, artifacts: Optional[list] = None, note: str = "") -> dict:
+        return self.handoff.advance(project_id, artifacts, note)
+
+    def project_status(self, project_id: str) -> dict:
+        return self.handoff.status(project_id)
+
+    def project_list(self) -> dict:
+        return self.handoff.list()
+
     # --- 账号（Windows 多账号类虚拟机·扩展本源） ---
     def account_create(self, name: str, password: Optional[str] = None, admin: bool = False) -> dict:
         return self.accounts.create(name, password=password, admin=admin)
@@ -272,18 +285,18 @@ class BridgeService:
                 return 200, self.mode_set(mode_id)
             if method == "POST" and path == "/api/project.create":
                 pid = _require(payload, "project_id")
-                return 200, self.handoff.create(
+                return 200, self.project_create(
                     pid, str(payload.get("goal") or ""),
                     payload.get("stages") or [])
             if method == "POST" and path == "/api/project.advance":
                 pid = _require(payload, "project_id")
-                return 200, self.handoff.advance(
+                return 200, self.project_advance(
                     pid, payload.get("artifacts"), str(payload.get("note") or ""))
             if method == "POST" and path == "/api/project.status":
                 pid = _require(payload, "project_id")
-                return 200, self.handoff.status(pid)
+                return 200, self.project_status(pid)
             if method == "GET" and path == "/api/project.list":
-                return 200, self.handoff.list()
+                return 200, self.project_list()
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":
