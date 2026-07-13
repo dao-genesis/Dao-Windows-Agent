@@ -95,7 +95,7 @@ if ((Test-Path `$edge) -and -not (Test-NetConnection 127.0.0.1 -Port 9222 -Infor
   Start-Sleep 5
 }
 Set-Location '$dst'
-& '$py' -m bridge.server --host 0.0.0.0 --port 9920 --subplugin-spec '$dst\bridge\subplugin_specs\homeassistant.json'
+& '$py' -m bridge.server --host 0.0.0.0 --port 9920 --subplugin-specs-dir '$dst\bridge\subplugin_specs'
 "@ | Set-Content -Encoding UTF8 $start
   # 交互会话(登录用户·session>0·WinSta0)自启：桥必须与其 CreateDesktop 出的隔离桌面同处一个
   # 窗口站，隔离桌面里的窗口才可枚举/消息级输入/PrintWindow。切勿跑 SYSTEM(session0·服务窗口站)——
