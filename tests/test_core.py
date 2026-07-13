@@ -250,6 +250,32 @@ def test_uia_driver_binding_executes_plan():
     assert seen["desktop"] == "dao_vm_d_notepad"
 
 
+def test_uia_driver_plan_failure_propagates():
+    """driver 回报 ok=False 时外层不得吞成成功（假成功防线）。"""
+    def failing_driver(desktop, plan):
+        return {"verb": plan["verb"], "ok": False,
+                "results": [{"op": "find", "ok": False, "error": "未命中"}]}
+
+    reg = build_default_registry(uia_driver=failing_driver)
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-uia-fail")
+    mgr.create("vm_f")
+    mgr.open_app("vm_f", "notepad")
+    r = mgr.invoke("vm_f", "notepad", "type_text", text="x")
+    assert not r.ok
+    assert r.value["results"][0]["error"] == "未命中"
+
+
+def test_vision_grounder_plan_failure_propagates():
+    """grounder 回报 ok=False 时外层不得吞成成功（假成功防线）。"""
+    reg = build_default_registry(
+        vision_grounder=lambda d, p: {"verb": p["verb"], "ok": False, "results": []})
+    mgr = SessionManager(reg, root="/tmp/dao-win/test-vis-fail")
+    mgr.create("vm_g")
+    mgr.open_app("vm_g", "mspaint")
+    r = mgr.invoke("vm_g", "mspaint", "observe")
+    assert not r.ok
+
+
 def test_notepad_open_plan_carries_match_class():
     """打包应用(Win11 记事本)不吃 lpDesktop：open 计划须带 match_class 供 driver 兜底接管。"""
     reg = build_default_registry(autodetect_uia=False)

@@ -36,10 +36,7 @@ def _read_text(adapter, instance, **_):
 
 def _save_as(adapter, instance, path: str, **_):
     return adapter.build_plan("save_as", [
-        {"op": "keys", "keys": "^+s"},
-        {"op": "find", "by": "name", "value": "文件名:", "timeout": 5},
-        {"op": "set_value", "target": {"by": "name", "value": "文件名:"}, "text": path},
-        {"op": "keys", "keys": "{ENTER}"},
+        {"op": "save_text", "path": path},
     ])
 
 
