@@ -339,7 +339,10 @@ def handle_request(req: dict) -> dict | None:
     elif method == "tools/call":
         name = params.get("name", "")
         arguments = params.get("arguments") or {}
-        payload = _call_tool(name, arguments)
+        try:
+            payload = _call_tool(name, arguments)
+        except Exception as exc:  # 处理器异常绝不掀翻整个 MCP 服务；如实降级为 isError
+            payload = {"error": f"{type(exc).__name__}: {exc}"}
         result = {
             "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
             "isError": bool(isinstance(payload, dict) and payload.get("error")),

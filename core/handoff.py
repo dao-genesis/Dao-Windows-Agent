@@ -63,6 +63,11 @@ class HandoffFlow:
         known = set(self.registry.app_ids())
         norm: list[dict] = []
         for i, st in enumerate(stages):
+            # 容错：MCP/CLI 常传纯字符串阶段（["甲","乙"]），归一为 {app_id:"", goal:字符串}
+            if isinstance(st, str):
+                st = {"app_id": "", "goal": st}
+            elif not isinstance(st, dict):
+                return {"error": f"阶段{i + 1} 形状非法: 需字符串或对象，得 {type(st).__name__}"}
             app_id = str(st.get("app_id") or "").strip()
             if app_id and app_id not in known:
                 return {"error": f"阶段{i + 1} 领域未注册: {app_id}（可用: {sorted(known)}）"}

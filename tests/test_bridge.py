@@ -184,3 +184,17 @@ def test_mcp_mode_and_project_tools():
                                       "arguments": {"project_id": "_no_such_project_"}}})
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload.get("error")
+
+
+def test_mcp_handler_exception_returns_error_not_crash():
+    from bridge import mcp as _mcp
+    _mcp._TOOLS["_boom"] = {"description": "x", "properties": {}, "required": [],
+                            "handler": lambda a: (_ for _ in ()).throw(RuntimeError("炸"))}
+    try:
+        resp = handle_request({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                               "params": {"name": "_boom", "arguments": {}}})
+        assert resp["result"]["isError"]
+        payload = json.loads(resp["result"]["content"][0]["text"])
+        assert "RuntimeError" in payload["error"]
+    finally:
+        del _mcp._TOOLS["_boom"]

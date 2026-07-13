@@ -32,6 +32,20 @@ def _kc_bin() -> str:
     return "kicad-cli"
 
 
+def _kc_python() -> str:
+    """解析 pcbnew 可用的 Python：优先 KiCad 装机目录自带解释器（bin 下或其子目录），
+    系统 python 通常无 pcbnew 模块（真机冷启动实测），仅作最后退路。"""
+    kc = _kc_bin()
+    if os.path.isabs(kc):
+        bin_dir = os.path.dirname(kc)
+        for cand in (os.path.join(bin_dir, "python.exe"),
+                     *sorted(glob.glob(os.path.join(bin_dir, "**", "python.exe"),
+                                       recursive=True))):
+            if os.path.isfile(cand):
+                return cand
+    return "python"
+
+
 def _version(adapter, instance, **_):
     return adapter.run_cli([_kc_bin(), "version"], instance)
 
@@ -95,8 +109,8 @@ def _pcb_python(adapter, instance, script: str = "", macro_path: str = "", **_):
         macro_path = os.path.join(instance.workdir, "dao_pcb_macro.py")
         with open(macro_path, "w", encoding="utf-8") as fh:
             fh.write(script)
-    # KiCad 自带解释器：Windows 装机后 kicad-cli 同目录的 python；退回系统 python 也可（已装 pcbnew）
-    return adapter.run_cli(["python", macro_path], instance, timeout=180)
+    # KiCad 自带解释器优先（系统 python 通常无 pcbnew）
+    return adapter.run_cli([_kc_python(), macro_path], instance, timeout=180)
 
 
 PROFILE = AppProfile(
