@@ -73,6 +73,16 @@ async function main() {
 
   // ③ 编辑器实例登录页：填 code 并提交（毫秒级·稳过 60s）
   const e = await attach(editorCdp, /show-auth-code|windsurf|app\.devin\.ai|welcome/i);
+  // welcome-gate 默认只有「Sign up / Log in」按钮，token 输入框需先点「Enter your auth token manually」展开。
+  const reveal =
+    '(function(){var el=[].slice.call(document.querySelectorAll(\'a,button,[role=button],span,div\')).find(function(x){return /auth token manually|enter your auth token|having trouble/i.test((x.textContent||\'\').trim());});if(el){el.click();return \'revealed\';}return \'no-link\';})()';
+  for (let i = 0; i < 8; i++) {
+    const rv = await e.cmd('Runtime.evaluate', { expression: reveal, returnByValue: true });
+    if (val(rv) === 'revealed') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await new Promise((r) => setTimeout(r, 800));
+  let fr;
   const fill =
     '(function(){try{' +
     "var inp=document.querySelector('input[type=text],input:not([type]),input[placeholder*=oken],input[placeholder*=Token]');" +
@@ -82,7 +92,7 @@ async function main() {
     "inp.dispatchEvent(new Event('input',{bubbles:true}));" +
     "inp.dispatchEvent(new Event('change',{bubbles:true}));" +
     "return 'filled';}catch(e){return String(e);}})()";
-  const fr = await e.cmd('Runtime.evaluate', { expression: fill, returnByValue: true });
+  fr = await e.cmd('Runtime.evaluate', { expression: fill, returnByValue: true });
   if (val(fr) !== 'filled') { process.stderr.write('填入失败: ' + val(fr) + '\n'); process.exit(1); }
   await new Promise((r) => setTimeout(r, 300));
   const click =

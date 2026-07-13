@@ -34,6 +34,13 @@ cp "$HERE/scripts/firstlogon.ps1" "$tmp/firstlogon.ps1" 2>/dev/null || true
 # 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）随盘带入 → guest 落地 C:\dao_win\coldstart-auth。
 mkdir -p "$tmp/coldstart-auth"
 cp "$HERE/scripts/devin_auth.js" "$HERE/scripts/devin_inject_cdp.js" "$HERE/scripts/devin-login.ps1" "$tmp/coldstart-auth/" 2>/dev/null || true
+# 原生登录闭环三件套（Devin Desktop welcome-gate·零 GUI·CDP 铸造→填码）也随盘带入。
+cp "$HERE/scripts/devin_desktop_login.js" "$HERE/scripts/devin_fetch_code.js" "$HERE/scripts/cdp_ui.js" "$tmp/coldstart-auth/" 2>/dev/null || true
+# Windows PowerShell 5.1 把无 BOM 的 .ps1 按 ANSI 读 → 中文注释乱码可致解析失败；统一补 UTF-8 BOM。
+for f in "$tmp/firstlogon.ps1" "$tmp/coldstart-auth"/*.ps1; do
+  [ -f "$f" ] || continue
+  head -c 3 "$f" | grep -q $'\xef\xbb\xbf' || { printf '\xef\xbb\xbf' | cat - "$f" > "$f.bom" && mv "$f.bom" "$f"; }
+done
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 for pkg in bridge core; do
   if [ -d "$REPO_ROOT/$pkg" ]; then
