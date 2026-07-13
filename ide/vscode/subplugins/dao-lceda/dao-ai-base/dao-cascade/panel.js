@@ -372,27 +372,59 @@ class CascadePanelProvider {
     });
   }
 
+  // 单飞 + 失败退避 + 先停旧再起新:任何失败路径都不留孤儿 `devin acp` 子进程。
   async _ensureAcp() {
     if (this._acpReady && this._acp) return true;
+    if (this._acpStarting) return this._acpStarting;
+    if (this._acpFailAt && Date.now() - this._acpFailAt < (this._acpBackoff || 0)) return false;
     const bin = this._bin();
     if (!bin) return false;
     this._permPending = this._permPending || new Map();
-    this._acp = new AcpClient({
-      bin,
-      cwd: (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
-        && vscode.workspace.workspaceFolders[0].uri.fsPath) || process.cwd(),
-      log: this._log,
-      onUpdate: (params) => this._onAcpUpdate(params),
-      onPermission: (params) => this._askPermission(params),
-    });
-    this._acp.start();
-    await this._acp.initialize();
-    // 自持凭据:CLI 本地已登录时无需 ACP authenticate(实测 session/new 直接可用)。
-    const res = await this._acp.newSession();
-    this._pushSessionMeta(res);
-    this._acpReady = true;
-    this._handleSessionsList();
-    return true;
+    this._acpStarting = (async () => {
+      if (this._acp) { try { this._acp.stop(); } catch (_) {} this._acp = null; }
+      const acp = new AcpClient({
+        bin,
+        cwd: (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
+          && vscode.workspace.workspaceFolders[0].uri.fsPath) || process.cwd(),
+        log: this._log,
+        onUpdate: (params) => this._onAcpUpdate(params),
+        onPermission: (params) => this._askPermission(params),
+        onExit: () => { if (this._acp === acp) { this._acp = null; this._acpReady = false; } },
+      });
+      try {
+        acp.start();
+        await acp.initialize();
+        // 自持凭据:CLI 本地已登录时 session/new 直接可用;仅会话令牌等未落
+        // credentials.toml 的登录态下 ACP host 会要求先 authenticate(meta.api_key),
+        // 此时用官方登录态 apiKey(ls-bridge 同源: credentials.toml→globalStorage)补鉴权。
+        let res;
+        try {
+          res = await acp.newSession();
+        } catch (e) {
+          if (!/authenticat/i.test(String(e && e.message || e))) throw e;
+          const key = (() => { try { return require("./ls-bridge").apiKey(); } catch (_) { return ""; } })();
+          if (!key) throw new Error("ACP 需鉴权且未取得 apiKey(credentials.toml/globalStorage 均空),请先登录");
+          this._log("[acp] session/new 需鉴权 → authenticate(windsurf-api-key) 后重试");
+          await acp.authenticate("windsurf-api-key", key);
+          res = await acp.newSession();
+        }
+        this._acp = acp;
+        this._acpReady = true;
+        this._acpFailAt = 0; this._acpBackoff = 0;
+        this._pushSessionMeta(res);
+        this._handleSessionsList();
+        return true;
+      } catch (e) {
+        try { acp.stop(); } catch (_) {}
+        this._acpFailAt = Date.now();
+        this._acpBackoff = Math.min(Math.max((this._acpBackoff || 0) * 2, 5000), 300000);
+        this._log("[acp] 启动失败(退避 " + this._acpBackoff + "ms): " + String(e && e.message || e));
+        return false;
+      } finally {
+        this._acpStarting = null;
+      }
+    })();
+    return this._acpStarting;
   }
 
   _pushSessionMeta(res) {
