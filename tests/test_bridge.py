@@ -153,3 +153,34 @@ def test_mcp_tool_call_roundtrip():
 
     # 通知（无 id）不回包
     assert handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+
+
+def test_mcp_mode_and_project_tools():
+    """三插件融合枢纽（模式切换）与工程交接须经 MCP 外壳可达（Cascade/Devin 原生调度面）。"""
+    resp = handle_request({"jsonrpc": "2.0", "id": 20, "method": "tools/list"})
+    names = {t["name"] for t in resp["result"]["tools"]}
+    assert {"mode_list", "mode_get", "mode_set",
+            "project_create", "project_advance", "project_status", "project_list"} <= names
+
+    resp = handle_request({"jsonrpc": "2.0", "id": 21, "method": "tools/call",
+                           "params": {"name": "mode_list", "arguments": {}}})
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    mode_ids = {m["mode_id"] for m in payload["modes"]}
+    assert {"primary", "coding", "windows", "native"} <= mode_ids
+    assert payload["current"] in mode_ids
+
+    # 切到当前模式（幂等·不扰动持久态）也应闭环成功
+    resp = handle_request({"jsonrpc": "2.0", "id": 22, "method": "tools/call",
+                           "params": {"name": "mode_set",
+                                      "arguments": {"mode": payload["current"]}}})
+    out = json.loads(resp["result"]["content"][0]["text"])
+    assert out["current"]["mode_id"] == payload["current"] and out["allowed_apps"] is not None
+
+    resp = handle_request({"jsonrpc": "2.0", "id": 23, "method": "tools/call",
+                           "params": {"name": "project_list", "arguments": {}}})
+    assert not resp["result"]["isError"]
+    resp = handle_request({"jsonrpc": "2.0", "id": 24, "method": "tools/call",
+                           "params": {"name": "project_status",
+                                      "arguments": {"project_id": "_no_such_project_"}}})
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload.get("error")
