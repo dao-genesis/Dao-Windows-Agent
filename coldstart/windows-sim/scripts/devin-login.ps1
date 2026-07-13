@@ -24,23 +24,16 @@ function Log($m) { "$([DateTime]::Now.ToString('s')) $m" | Tee-Object -FilePath 
 
 if (-not (Test-Path $AuthJson)) { Log "auth 束缺失: $AuthJson（应由宿主经 bridge 于运行时投递·仅含 bearer）"; exit 2 }
 
-# 解析 node（Devin Desktop / VSCode 自带；不额外装）。
+# 解析 node：优先独立 node.exe；否则用 Electron 宿主（Code.exe/Devin.exe）+ ELECTRON_RUN_AS_NODE=1
+# （Electron 应用不带独立 node.exe，但其主 exe 置 ELECTRON_RUN_AS_NODE=1 即为纯 node 运行时）。
 function Resolve-Node {
   $c = Get-Command node.exe -ErrorAction SilentlyContinue
-  if ($c) { return $c.Source }
+  if ($c) { return @{ exe = $c.Source; electron = $false } }
   foreach ($p in @(
-    "$env:LOCALAPPDATA\Programs\Devin\resources\app\node_modules\.bin\node.exe",
-    "$env:LOCALAPPDATA\Programs\Devin\node.exe",
-    "$env:LOCALAPPDATA\Programs\Microsoft VS Code\node.exe",
-    "$env:ProgramFiles\Microsoft VS Code\node.exe")) {
-    if (Test-Path $p) { return $p }
-  }
-  # 兜底：从 Devin/VSCode 安装目录递归找一枚 node.exe
-  foreach ($base in @("$env:LOCALAPPDATA\Programs\Devin","$env:LOCALAPPDATA\Programs\Microsoft VS Code")) {
-    if (Test-Path $base) {
-      $f = Get-ChildItem -Path $base -Recurse -Filter node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-      if ($f) { return $f.FullName }
-    }
+    "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
+    "$env:ProgramFiles\Microsoft VS Code\Code.exe",
+    "$env:LOCALAPPDATA\Programs\Devin\Devin.exe")) {
+    if (Test-Path $p) { return @{ exe = $p; electron = $true } }
   }
   return $null
 }
@@ -66,7 +59,7 @@ function Resolve-Chromium($target) {
 }
 
 $node = Resolve-Node
-if (-not $node) { Log "未找到 node（Devin Desktop/VSCode 未装？）—无法注入"; exit 3 }
+if (-not $node) { Log "未找到 node/Electron 宿主（Devin Desktop/VSCode 未装？）—无法注入"; exit 3 }
 $exe = Resolve-Chromium $Target
 if (-not $exe) { Log "未找到可用浏览器/Devin Desktop（target=$Target）"; exit 4 }
 
@@ -78,8 +71,9 @@ $proc = Start-Process -FilePath $exe -ArgumentList $args -PassThru
 Start-Sleep -Seconds 6
 
 $inject = Join-Path $PSScriptRoot 'devin_inject_cdp.js'
-Log "CDP 注入登录态 …"
-& $node $inject $AuthJson "127.0.0.1:$DebugPort" $Webapp 2>&1 | Tee-Object -FilePath $log -Append
+Log "CDP 注入登录态 …（runtime=$($node.exe) electron=$($node.electron)）"
+if ($node.electron) { $env:ELECTRON_RUN_AS_NODE = '1' }
+& $node.exe $inject $AuthJson "127.0.0.1:$DebugPort" $Webapp 2>&1 | Tee-Object -FilePath $log -Append
 $rc = $LASTEXITCODE
 if ($rc -eq 0) { Log "== 无头登录注入成功（零 GUI）==" } else { Log "注入返回码 $rc" }
 exit $rc
