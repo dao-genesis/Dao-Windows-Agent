@@ -5,6 +5,7 @@
 
     node plugins/dao-ai-base/sync.js <本插件目录>
 
-同步时间: 2026-07-13T14:30:00Z（上游 R68·19c96eb：acp-client onExit+SIGTERM→SIGKILL 杀净、panel _ensureAcp 单飞+退避+authenticate(windsurf-api-key) 补鉴权 —— R67 孤儿进程 OOM 根因修复与 R68 Devin Local ACP 鉴权均已并入）
+同步时间: 2026-07-13T16:57:53.845Z
+同步基线: 上游 1f7e59c（R70 ACP null 客户端防护 + v2.20.2 apiKey 多候选探测覆盖自定义 --user-data-dir）
 
 本仓补丁: dao-cascade/panel.js 回植领域提示词塑形器钩子(setPromptShaper/_shapeText/mode-status/daoModePill/exports)——上游真源尚缺此钩子, 每次重新 vendor 后须重打(待回灌上游真源)。
