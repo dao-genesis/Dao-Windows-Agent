@@ -75,6 +75,29 @@ class RemoteBridge:
     def capabilities(self):
         return self._req("GET", "/api/capabilities")
 
+    def mode_list(self):
+        return self._req("GET", "/api/mode.list")
+
+    def mode_get(self):
+        return self._req("GET", "/api/mode.get")
+
+    def mode_set(self, mode_id: str):
+        return self._req("POST", "/api/mode.set", {"mode": mode_id})
+
+    def project_create(self, project_id: str, goal: str = "", stages=None):
+        return self._req("POST", "/api/project.create",
+                         {"project_id": project_id, "goal": goal, "stages": stages or []})
+
+    def project_advance(self, project_id: str, artifacts=None, note: str = ""):
+        return self._req("POST", "/api/project.advance",
+                         {"project_id": project_id, "artifacts": artifacts, "note": note})
+
+    def project_status(self, project_id: str):
+        return self._req("POST", "/api/project.status", {"project_id": project_id})
+
+    def project_list(self):
+        return self._req("GET", "/api/project.list")
+
     def account_create(self, name: str, password=None, admin: bool = False):
         return self._req("POST", "/api/account.create",
                          {"name": name, "password": password, "admin": admin})
@@ -185,6 +208,58 @@ _TOOLS: dict[str, dict] = {
         "properties": {},
         "required": [],
         "handler": lambda a: _SERVICE.capabilities(),
+    },
+    "mode_list": {
+        "description": "列出全部可切换模式（primary/coding/windows/native/domain:<app_id>…）及当前模式。"
+                       "模式 = 提示词覆盖 + 工具面裁剪（Proxy Pro 联动的三插件融合枢纽）。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.mode_list(),
+    },
+    "mode_get": {
+        "description": "查看当前模式与该模式下开放的 app 工具面（allowed_apps）。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.mode_get(),
+    },
+    "mode_set": {
+        "description": "切换模式（态持久化到 ~/.dao/mode.json，Proxy Pro/dao-desktop 同装联动）。"
+                       "route/invoke 提示被模式挡住时，先切到对应模式再执行。",
+        "properties": {"mode": {"type": "string", "description": "模式 id，如 windows / coding / domain:kicad"}},
+        "required": ["mode"],
+        "handler": lambda a: _SERVICE.mode_set(a["mode"]),
+    },
+    "project_create": {
+        "description": "创建一条跨领域工程交接流水（螺旋递进：各领域工作层完成后交接下一环节）。",
+        "properties": {
+            "project_id": {"type": "string"},
+            "goal": {"type": "string", "description": "工程总目标"},
+            "stages": {"type": "array", "description": "阶段清单，每项 {app_id, goal}"},
+        },
+        "required": ["project_id"],
+        "handler": lambda a: _SERVICE.project_create(a["project_id"], a.get("goal", ""), a.get("stages")),
+    },
+    "project_advance": {
+        "description": "完成当前阶段并交接下一环节（可附产物路径与备注）。",
+        "properties": {
+            "project_id": {"type": "string"},
+            "artifacts": {"type": "array", "description": "本阶段产物（文件路径等）"},
+            "note": {"type": "string"},
+        },
+        "required": ["project_id"],
+        "handler": lambda a: _SERVICE.project_advance(a["project_id"], a.get("artifacts"), a.get("note", "")),
+    },
+    "project_status": {
+        "description": "查看某工程流水的阶段进度与交接提示。",
+        "properties": {"project_id": {"type": "string"}},
+        "required": ["project_id"],
+        "handler": lambda a: _SERVICE.project_status(a["project_id"]),
+    },
+    "project_list": {
+        "description": "列出全部工程交接流水。",
+        "properties": {},
+        "required": [],
+        "handler": lambda a: _SERVICE.project_list(),
     },
     "account_create": {
         "description": "创建/幂等更新一个 Windows 本地账号并加入 Remote Desktop Users（多账号类虚拟机·扩展本源）。"

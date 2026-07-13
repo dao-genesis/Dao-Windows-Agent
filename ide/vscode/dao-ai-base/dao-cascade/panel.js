@@ -66,7 +66,6 @@ class CascadePanelProvider {
     this._view = null;
     this._acp = null;       // Devin Local 的 ACP 客户端(懒启动)
     this._acpReady = false;
-    this._sessionEpoch = 0;  // 会话代际(供 shaper 判首条注入)
   }
 
   resolveWebviewView(webviewView) {
@@ -324,6 +323,16 @@ class CascadePanelProvider {
       && vscode.workspace.workspaceFolders[0].name) || null;
     this._post({ type: "env", devinBin: bin || null, agents: AGENTS,
       loggedIn: auth.loggedIn, userName: auth.name, windsurf: ws, folder });
+    // 三模式引擎态归一发布(fused.engines): 归一面板主页/桥接 API 直接消费, 与本面板 env 同源。
+    try {
+      require("./host-state").publishFused("engines", {
+        cascade: { ready: !!(ws && ws.lsPort), lsPort: (ws && ws.lsPort) || 0,
+          signedIn: !!(ws && ws.authSignedIn), name: (ws && ws.authName) || "" },
+        devinLocal: { bin: !!bin, signedIn: !!auth.loggedIn, name: auth.name || "" },
+        devinCloud: { signedIn: !!auth.loggedIn, name: auth.name || "",
+          endpoint: "wss://app.devin.ai/api/acp/live" },
+      });
+    } catch (_) {}
     this._sbSet({ lsReady: !!(ws && ws.lsPort), user: (ws && ws.authName) || auth.name || null });
     this._cxPushWorkflows();
   }
@@ -690,6 +699,71 @@ class CascadePanelProvider {
     const cx = await this._cascadeSessions();
     const all = acp.concat(cx).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
     this._post({ type: "sessions", sessions: all, current: this._acp && this._acp.sessionId });
+    this._autoBackup();
+  }
+
+  // 归一 · Cascade 对话自动备份: 会话列表变更即增量导出轨迹转录(与 dao-one Devin Cloud
+  // 备份同构, 同根 ~/.wam/conversation_backups 供全功能面板「💬 对话备份」统一消费)。
+  // 去抖 + 串行门闩, 避免流式信号风暴下重入。
+  _autoBackup(force) {
+    const cfg = vscode.workspace.getConfiguration("dao.cascade");
+    if (!force && cfg.get("autoBackup") === false) return;
+    clearTimeout(this._bkDebounce);
+    this._bkDebounce = setTimeout(async () => {
+      if (this._bkRunning) return;
+      this._bkRunning = true;
+      try {
+        const backup = require("./backup");
+        const ls = require("./ls-bridge");
+        const hs = require("./host-state").hostState();
+        const fusedAcct = (hs.fused && hs.fused.account) || {};
+        const email = fusedAcct.email || (hs.auth && hs.auth.email) || "";
+        const r = await backup.backupAll(ls, { root: cfg.get("backupDir") || "", email, log: this._log });
+        if (r.ok && r.saved) this._log("[backup] Cascade 对话备份: 新写 " + r.saved + " / 共 " + r.total + " → " + r.root);
+        if (r.ok) this._fusePublish("cascadeBackup", { root: r.root, saved: r.saved, total: r.total });
+        else this._log("[backup] Cascade 备份未就绪: " + (r.reason || ""));
+        const ra = await this._backupAcpSessions(backup, cfg.get("backupDir") || "", email);
+        if (ra && ra.ok && ra.saved) this._log("[backup] Devin(ACP) 会话备份: 新写 " + ra.saved + " / 共 " + ra.total);
+        if (force) {
+          const acpPart = ra && ra.ok ? (" · Devin(ACP) 新写 " + ra.saved + " / 共 " + ra.total) : "";
+          vscode.window.showInformationMessage(r.ok
+            ? ("对话备份完成: Cascade 新写 " + r.saved + " / 共 " + r.total + acpPart + " → " + r.root)
+            : ("Cascade 备份未就绪: " + (r.reason || "") + acpPart));
+        }
+      } catch (e) { this._log("[backup] " + e.message); }
+      this._bkRunning = false;
+    }, force ? 0 : 1500);
+  }
+
+  // Devin Local/Cloud(ACP) 会话备份三模式延伸: session/list + session/load 历史回放拼转录。
+  // 回放会切换客户端活动会话, 备份后恢复原会话(恢复期间帧经 hookUpdates 截流, 不打扰前端)。
+  async _backupAcpSessions(backup, root, email) {
+    const clients = [];
+    if (this._acpReady && this._acp) clients.push(this._acp);
+    if (this._cloud && this._cloud.sessionId) clients.push(this._cloud);
+    let agg = null;
+    for (const c of clients) {
+      if (typeof c.listSessions !== "function" || typeof c.hookUpdates !== "function") continue;
+      const prevSid = c.sessionId;
+      let r = null;
+      try { r = await backup.backupAcp(c, { root, email, log: this._log }); }
+      catch (e) { this._log("[backup-acp] " + e.message); }
+      finally { c.hookUpdates(null); }
+      if (prevSid && c.sessionId !== prevSid) {
+        c.hookUpdates(() => {});
+        try { await c.loadSession(prevSid); } catch (_) {}
+        c.hookUpdates(null);
+      }
+      if (r && !r.ok && r.reason) this._log("[backup-acp] 跳过: " + r.reason);
+      if (r && r.ok) agg = { ok: true, saved: (agg ? agg.saved : 0) + r.saved, total: (agg ? agg.total : 0) + r.total };
+    }
+    return agg;
+  }
+
+  // 归一发布: 插件侧融合态(账户/MCP/备份水位)写入宿主态中枢 → windsurf-host.json,
+  // dao-one 主页账号信息与 MCP 板块双逻辑(官方 Devin Cloud 侧 + 插件本地侧)由此同源。
+  _fusePublish(part, data) {
+    try { require("./host-state").publishFused(part, data); } catch (_) {}
   }
 
   // 官方式「Response Statistics」: GetCascadeTrajectoryGeneratorMetadata → 每个 planner 步的
@@ -1070,6 +1144,8 @@ class CascadePanelProvider {
         prompts: (s.prompts || []).map((p) => ({ name: p.name, description: p.description || "",
           args: (p.arguments || []).map((a) => a.name || "") })) }));
       this._post({ type: "mcp", servers });
+      this._fusePublish("mcp", { servers: servers.map((s) => ({ name: s.name, status: s.status,
+        disabled: s.disabled, toolCount: (s.tools || []).length })) });
     } catch (e) { this._post({ type: "error", text: "读取 MCP 状态失败: " + e.message }); }
   }
 
@@ -1422,6 +1498,9 @@ class CascadePanelProvider {
         flexCredits: num(ps.availableFlexCredits),
         dailyResetUnix: num(ps.dailyQuotaResetAtUnix), weeklyResetUnix: num(ps.weeklyQuotaResetAtUnix),
         teamModelLabels: this._teamModelLabels || [] });
+      this._fusePublish("account", { name: u.name || "", email: u.email || "", plan: pi.planName || "",
+        dailyQuotaPct: num(ps.dailyQuotaRemainingPercent), weeklyQuotaPct: num(ps.weeklyQuotaRemainingPercent),
+        flexCredits: num(ps.availableFlexCredits) });
       this._watchPanelState();
     } catch (e) { this._post({ type: "error", text: "读取账户状态失败: " + e.message }); }
   }
@@ -1834,7 +1913,6 @@ class CascadePanelProvider {
   }
 
   async _handleSessionNew() {
-    this._sessionEpoch++;
     if (this._cxWatch) { try { this._cxWatch.close(); } catch (_) {} this._cxWatch = null; }
     this._cxWatchId = null;
     this._cascadeLsId = null;
@@ -3350,7 +3428,7 @@ function register(context, log, opts) {
   // Devin Desktop/Windsurf: 内建 vscode.moveViews 迁入官方原生 Cascade 容器(windsurf.cascadeViewContainerId, 常驻辅助栏)。
   // 标准 VS Code 无该容器(moveViews 对不存在容器静默无效), 迁入辅助栏常驻的 chat 容器(workbench.panel.chat)。
   // 先迁移后聚焦: moveViews 只需视图描述符(无需先创建 webview); 若先 focus 再迁移,
-  // webview 会在主侧栏解析到一半被重挂到新容器, 首装呈现空白面板直至 Reload Window。
+  // webview 会在主侧栏解析到一半被重挂到新容器, 首装呈空白面板直至 Reload Window。
   const MOVED_KEY = viewId + ".movedToAuxBar.v4";
   if (!context.globalState.get(MOVED_KEY)) {
     context.globalState.update(MOVED_KEY, true);
@@ -3373,6 +3451,7 @@ function register(context, log, opts) {
   }, () => {});
   context.subscriptions.push(
     vscode.commands.registerCommand(viewId + ".newSession", () => provider._handleSessionNew()),
+    vscode.commands.registerCommand(viewId + ".backupAll", () => provider._autoBackup(true)),
     vscode.commands.registerCommand(viewId + ".history", () => provider.showHistory()),
     vscode.commands.registerCommand(viewId + ".deepwiki", () => provider.deepwikiFromEditor()),
     // 官方式 Send problems to Cascade: 汇集诊断(当前文件优先, 无则全工作区) → @mention 式塗入 composer
