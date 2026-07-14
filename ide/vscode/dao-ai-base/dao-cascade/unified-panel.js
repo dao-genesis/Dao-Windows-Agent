@@ -1071,10 +1071,14 @@ function register(context, log, opts) {
       try { vscode.commands.executeCommand("dao.unified.focus"); } catch (_) {}
     })
   );
-  // host-state 变更(账号/MCP/备份水位刷新)即回推面板。
+  // host-state 变更(账号/MCP/备份水位刷新)即回推面板(300ms 去抖: _snapshot 含磁盘扫描, 连发时只刷一次)。
   try {
-    const sub = hostStateMod.subscribe(() => { try { panel._pushState(); } catch (_) {} });
-    context.subscriptions.push(sub);
+    let t = null;
+    const sub = hostStateMod.subscribe(() => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => { t = null; try { panel._pushState(); } catch (_) {} }, 300);
+    });
+    context.subscriptions.push(sub, { dispose() { if (t) clearTimeout(t); } });
   } catch (_) {}
   return panel;
 }

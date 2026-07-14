@@ -29,10 +29,17 @@ function hostState() {
 }
 
 // 变更广播 + 落盘(0600 本机私有): 供 dao 生态(脚本/诊断/headless 核)读取会话信息。
+// 重入护栏: 监听者若在回调内再次触发 hostFire(如 publishFused), 只标记待发,
+// 待本轮广播完成后补发一次 —— 防「监听→发布→广播→监听」同步自激循环吃满事件循环。
 function hostFire() {
   const h = hostState();
-  seedFused(h);
-  for (const fn of h.listeners) { try { fn(h); } catch (_) {} }
+  if (h._firing) { h._fireAgain = true; return; }
+  h._firing = true;
+  try {
+    seedFused(h);
+    for (const fn of h.listeners) { try { fn(h); } catch (_) {} }
+  } finally { h._firing = false; }
+  if (h._fireAgain) { h._fireAgain = false; setTimeout(hostFire, 50); return; }
   try {
     const p = hostFilePath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -87,8 +94,15 @@ function resolveHost() {
 function publishFused(part, data) {
   const h = hostState();
   h.fused = h.fused || {};
-  h.fused[part] = Object.assign({ updatedAt: new Date().toISOString() },
-    data && typeof data === "object" ? data : { value: data });
+  const payload = data && typeof data === "object" ? data : { value: data };
+  // 不动之动: 载荷与现值(去时间戳)相同则不落盘不广播 —— publishFused 是不动点,
+  // 任何「广播→监听→再发布」链路在此收敛, 不会自激。
+  const prev = h.fused[part];
+  if (prev) {
+    const strip = (o) => { const c = Object.assign({}, o); delete c.updatedAt; return c; };
+    try { if (JSON.stringify(strip(prev)) === JSON.stringify(payload)) return prev; } catch (_) {}
+  }
+  h.fused[part] = Object.assign({ updatedAt: new Date().toISOString() }, payload);
   hostFire();
   return h.fused[part];
 }
