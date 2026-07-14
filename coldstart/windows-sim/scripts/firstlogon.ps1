@@ -165,7 +165,10 @@ try {
         # 联网失败才回退应答盘缓存
         foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\payloads\rdpwrap_community.ini") { Copy-Item -Force "$d\payloads\rdpwrap_community.ini" $tmpIni; Log "rdpwrap.ini online failed; using media cache"; break } }
       }
-      if ((Test-Path $tmpIni) -and (Select-String -Path $tmpIni -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)) {
+      # 真机踩坑：-SimpleMatch 会把 [regex]::Escape 后的 "\[10\.0\.26100\.1]" 当字面量搜，
+      # 与文件里的 "[10.0.26100.1]" 永不相等 → 明明有段却误判缺段，正确 ini 永不落地(多会话哑火)。
+      # 故用字面量子串匹配(-SimpleMatch + 原始 $tsSection)——直接、无正则歧义。
+      if ((Test-Path $tmpIni) -and (Select-String -Path $tmpIni -Pattern $tsSection -SimpleMatch -Quiet)) {
         # 文件被 wrapper 占用，需先停服务再替换
         Stop-Service TermService -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -196,9 +199,12 @@ try {
   try {
     Start-Sleep -Seconds 2
     $tsPid = (Get-CimInstance Win32_Service -Filter "Name='TermService'").ProcessId
+    # 真机踩坑：(Get-Process).Modules 对 NetworkService svchost 常因权限枚举不全 → rdpwrap 已加载却误报未加载。
+    # tasklist /m 走内核态查询，对服务宿主可靠。
     $loaded = $false
-    if ($tsPid) { $loaded = [bool]((Get-Process -Id $tsPid).Modules | Where-Object { $_.ModuleName -like '*rdpwrap*' }) }
-    $sectionInstalled = (Test-Path $iniPath) -and (Select-String -Path $iniPath -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)
+    if ($tsPid) { $loaded = [bool]((tasklist /m rdpwrap.dll /fi "PID eq $tsPid" 2>$null | Select-String 'rdpwrap\.dll')) }
+    # 同 168 行：段判定用字面量子串匹配，勿用 -SimpleMatch + [regex]::Escape(否则明明有段却误报缺段)。
+    $sectionInstalled = (Test-Path $iniPath) -and (Select-String -Path $iniPath -Pattern $tsSection -SimpleMatch -Quiet)
     if ($loaded -and $sectionInstalled) { Log "rdpwrap VERIFIED: dll hooked into termsrv(pid=$tsPid) + ini has $tsSection → 单账号多 RDP 就绪" }
     else { Log "WARN rdpwrap verify: dllLoaded=$loaded sectionInstalled=$sectionInstalled — 多会话可能未生效" }
   } catch { Log "rdpwrap verify failed: $_" }
