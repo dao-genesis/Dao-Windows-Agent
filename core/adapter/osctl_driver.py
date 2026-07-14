@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import time
@@ -288,6 +289,86 @@ class OsctlExecutor:
             return {"op": "drag_hint", "ok": True, "via": via}
         return {"op": "drag_hint", "ok": False, "reason": "端点无法定位"}
 
+    # —— 整机 GUI 原语（AI GUI 体系 pc_* 对等：全桌面为操作面，无需先 launch）——
+    def _op_windows(self, desktop: str, step: dict) -> dict:
+        return {"op": "windows", "ok": True, "windows": self.os.list_windows() or []}
+
+    def _op_activate(self, desktop: str, step: dict) -> dict:
+        title = (step.get("title") or "").lower()
+        if not title:
+            return {"op": "activate", "ok": False, "error": "activate 缺 title"}
+        for w in (self.os.list_windows() or []):
+            if title in (w.get("title") or "").lower():
+                ok = bool(self.os.activate_window(w.get("id")))
+                if ok:
+                    self._win[desktop] = w.get("id")
+                return {"op": "activate", "ok": ok, "window": w}
+        return {"op": "activate", "ok": False, "error": f"无标题含 '{step.get('title')}' 的窗口"}
+
+    def _op_click_xy(self, desktop: str, step: dict) -> dict:
+        x, y = step.get("x"), step.get("y")
+        if x is None or y is None:
+            return {"op": "click_xy", "ok": False, "error": "click_xy 缺 x/y"}
+        self.os.click(int(x), int(y), right=step.get("button") == "right")
+        return {"op": "click_xy", "ok": True, "x": int(x), "y": int(y)}
+
+    def _op_move_xy(self, desktop: str, step: dict) -> dict:
+        x, y = step.get("x"), step.get("y")
+        if x is None or y is None:
+            return {"op": "move_xy", "ok": False, "error": "move_xy 缺 x/y"}
+        self.os.move(int(x), int(y))
+        return {"op": "move_xy", "ok": True}
+
+    def _op_drag_xy(self, desktop: str, step: dict) -> dict:
+        try:
+            x1, y1 = int(step["x1"]), int(step["y1"])
+            x2, y2 = int(step["x2"]), int(step["y2"])
+        except (KeyError, TypeError, ValueError):
+            return {"op": "drag_xy", "ok": False, "error": "drag_xy 缺 x1/y1/x2/y2"}
+        self.os.drag(x1, y1, x2, y2)
+        return {"op": "drag_xy", "ok": True}
+
+    def _op_scroll(self, desktop: str, step: dict) -> dict:
+        self.os.scroll(dy=int(step.get("dy", 0)), dx=int(step.get("dx", 0)))
+        return {"op": "scroll", "ok": True}
+
+    def _op_type_text(self, desktop: str, step: dict) -> dict:
+        text = step.get("text", "")
+        self.os.type_unicode(text)
+        return {"op": "type_text", "ok": True, "chars": len(text)}
+
+    def _op_clipboard_get(self, desktop: str, step: dict) -> dict:
+        return {"op": "clipboard_get", "ok": True, "text": self.os.get_clipboard()}
+
+    def _op_clipboard_set(self, desktop: str, step: dict) -> dict:
+        self.os.set_clipboard(step.get("text", ""))
+        return {"op": "clipboard_set", "ok": True}
+
+    def _region_digest(self, step: dict) -> dict:
+        x, y = int(step.get("x", 0)), int(step.get("y", 0))
+        kw = {}
+        if step.get("w") is not None:
+            kw["w"] = int(step["w"])
+        if step.get("h") is not None:
+            kw["h"] = int(step["h"])
+        w, h, rgb = self.os.capture_rgb(x, y, **kw)
+        return {"w": w, "h": h,
+                "hash": hashlib.sha256(bytes(rgb)).hexdigest()}
+
+    def _op_region_hash(self, desktop: str, step: dict) -> dict:
+        return {"op": "region_hash", "ok": True, **self._region_digest(step)}
+
+    def _op_wait_change(self, desktop: str, step: dict) -> dict:
+        base = self._region_digest(step)["hash"]
+        deadline = time.time() + float(step.get("timeout", 10))
+        while time.time() < deadline:
+            cur = self._region_digest(step)["hash"]
+            if cur != base:
+                return {"op": "wait_change", "ok": True, "changed": True, "hash": cur}
+            time.sleep(float(step.get("interval", 0.5)))
+        return {"op": "wait_change", "ok": False, "changed": False,
+                "error": "区域在超时内无变化"}
+
     def _op_wait_for(self, desktop: str, step: dict) -> dict:
         r = self._op_locate(desktop, {"op": "locate", **step})
         return {"op": "wait_for", "ok": r["ok"], "via": r.get("via")}
@@ -331,6 +412,17 @@ _OPS: dict[str, Callable[[OsctlExecutor, str, dict], dict]] = {
     "drag_hint": OsctlExecutor._op_drag_hint,
     "wait_for": OsctlExecutor._op_wait_for,
     "assert_visible": OsctlExecutor._op_assert_visible,
+    "windows": OsctlExecutor._op_windows,
+    "activate": OsctlExecutor._op_activate,
+    "click_xy": OsctlExecutor._op_click_xy,
+    "move_xy": OsctlExecutor._op_move_xy,
+    "drag_xy": OsctlExecutor._op_drag_xy,
+    "scroll": OsctlExecutor._op_scroll,
+    "type_text": OsctlExecutor._op_type_text,
+    "clipboard_get": OsctlExecutor._op_clipboard_get,
+    "clipboard_set": OsctlExecutor._op_clipboard_set,
+    "region_hash": OsctlExecutor._op_region_hash,
+    "wait_change": OsctlExecutor._op_wait_change,
 }
 
 

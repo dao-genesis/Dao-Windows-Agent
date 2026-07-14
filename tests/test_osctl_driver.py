@@ -221,3 +221,93 @@ def test_geometry_fallback_degenerate_geometry_refused():
     ex._win["d"] = 10
     r = ex._step("d", {"op": "click_hint", "target_hint": "画布中心"})
     assert not r["ok"] and r["via"] == "none"
+
+
+class PcOsctl(FakeOsctl):
+    """整机 GUI 原语(pc_* 对等)的假底座：窗口/剪贴板/滚轮/区域指纹。"""
+
+    def __init__(self, windows=None, frames=None, rects=None):
+        super().__init__(rects=rects)
+        self.windows = windows or []
+        self.frames = frames or [b"\x00"]  # capture_rgb 逐次弹出的帧内容
+        self.clip = ""
+
+    def list_windows(self):
+        self.calls.append(("list_windows",))
+        return self.windows
+
+    def activate_window(self, win):
+        self.calls.append(("activate_window", win))
+        return True
+
+    def move(self, x, y):
+        self.calls.append(("move", x, y))
+
+    def scroll(self, dy=0, dx=0):
+        self.calls.append(("scroll", dy, dx))
+
+    def get_clipboard(self):
+        self.calls.append(("get_clipboard",))
+        return self.clip
+
+    def set_clipboard(self, text):
+        self.calls.append(("set_clipboard", text))
+        self.clip = text
+
+    def capture_rgb(self, x=0, y=0, w=None, h=None):
+        self.calls.append(("capture_rgb", x, y, w, h))
+        frame = self.frames[0] if len(self.frames) == 1 else self.frames.pop(0)
+        return (4, 4, frame)
+
+
+def test_pc_windows_and_activate_scopes_window():
+    fake = PcOsctl(windows=[{"id": 7, "title": "无标题 - 记事本"}])
+    ex = OsctlExecutor(fake)
+    r = ex._step("", {"op": "windows"})
+    assert r["ok"] and r["windows"][0]["id"] == 7
+    r2 = ex._step("", {"op": "activate", "title": "记事本"})
+    assert r2["ok"] and ("activate_window", 7) in fake.calls
+    # activate 之后成为语义作用域：find/tree 用该窗口句柄
+    assert ex._win[""] == 7
+    r3 = ex._step("", {"op": "activate", "title": "不存在的窗口"})
+    assert not r3["ok"]
+    r4 = ex._step("", {"op": "activate"})
+    assert not r4["ok"]
+
+
+def test_pc_input_primitives_translate():
+    fake = PcOsctl()
+    ex = OsctlExecutor(fake)
+    assert ex._step("", {"op": "click_xy", "x": 10, "y": 20})["ok"]
+    assert ex._step("", {"op": "move_xy", "x": 1, "y": 2})["ok"]
+    assert ex._step("", {"op": "drag_xy", "x1": 0, "y1": 0, "x2": 5, "y2": 5})["ok"]
+    assert ex._step("", {"op": "scroll", "dy": -3})["ok"]
+    assert ex._step("", {"op": "type_text", "text": "道"})["ok"]
+    got = fake.names()
+    assert got == ["click", "move", "drag", "scroll", "type_unicode"]
+    # 缺坐标如实报错，不臆造
+    assert not ex._step("", {"op": "click_xy"})["ok"]
+    assert not ex._step("", {"op": "drag_xy", "x1": 1})["ok"]
+
+
+def test_pc_clipboard_roundtrip():
+    fake = PcOsctl()
+    ex = OsctlExecutor(fake)
+    assert ex._step("", {"op": "clipboard_set", "text": "无为"})["ok"]
+    r = ex._step("", {"op": "clipboard_get"})
+    assert r["ok"] and r["text"] == "无为"
+
+
+def test_pc_region_hash_and_wait_change():
+    fake = PcOsctl(frames=[b"\x00"])
+    ex = OsctlExecutor(fake)
+    r = ex._step("", {"op": "region_hash", "x": 0, "y": 0, "w": 4, "h": 4})
+    assert r["ok"] and len(r["hash"]) == 64
+    # 帧不变 → 超时如实报未变化
+    r2 = ex._step("", {"op": "wait_change", "timeout": 0.1, "interval": 0.01})
+    assert not r2["ok"] and r2["changed"] is False
+    # 帧变化 → 命中
+    fake2 = PcOsctl(frames=[b"\x00", b"\x01"])
+    ex2 = OsctlExecutor(fake2)
+    r3 = ex2._step("", {"op": "wait_change", "timeout": 2, "interval": 0.01})
+    assert r3["ok"] and r3["changed"] is True
