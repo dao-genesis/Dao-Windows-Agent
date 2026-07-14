@@ -99,7 +99,13 @@ function _keysFromStateDb(dbPath) {
 
 // 有序去重候选 apiKey 集合: credentials.toml 真源 → 各 state.vscdb 登录态。
 // 供 host-discover 逐个探测, 选中官方 LS 实际接受者(账号池切号/多登录态时不误判)。
+// TTL 缓存: state.vscdb 可达数十 MB, 全量同步读+latin1 转码+正则扫描是重活;
+// 发现轮询(3s)每拍都调本函数, 无缓存会持续阻塞扩展宿主事件循环(实机表现为 IDE 无响应)。
+let _candCache = { keys: null, at: 0 };
+const CAND_TTL_MS = 30000;
+
 function apiKeyCandidates() {
+  if (_candCache.keys && Date.now() - _candCache.at < CAND_TTL_MS) return _candCache.keys.slice();
   const out = [];
   const push = (k) => { if (k && out.indexOf(k) < 0) out.push(k); };
   try {
@@ -108,8 +114,12 @@ function apiKeyCandidates() {
     if (m) push(m[1]);
   } catch (_) {}
   for (const db of stateDbCandidates()) for (const k of _keysFromStateDb(db)) push(k);
+  _candCache = { keys: out.slice(), at: Date.now() };
   return out;
 }
+
+// 缓存失效(登录态刚变更的调用方主动刷新; 测试亦用)。
+function invalidateKeyCache() { _candCache = { keys: null, at: 0 }; _keyCache = { key: "", at: 0 }; }
 
 // 首选 apiKey(back-compat): 探测选中的有效 key 经 setApiKey 回灌缓存后即返此。
 function apiKey() {
@@ -288,4 +298,4 @@ async function listModels() {
   });
 }
 
-module.exports = { call, callStream, ready, metadata, apiKey, apiKeyCandidates, setApiKey, stateDbCandidates, driveStream, listModels };
+module.exports = { call, callStream, ready, metadata, apiKey, apiKeyCandidates, setApiKey, invalidateKeyCache, stateDbCandidates, driveStream, listModels };
