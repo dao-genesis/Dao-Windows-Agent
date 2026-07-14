@@ -168,3 +168,56 @@ def test_make_uia_driver_returns_callable():
     out = driver("d", {"verb": "v", "steps": [{"op": "launch", "exe": "a"},
                                               {"op": "click", "target": "x"}]})
     assert out["ok"] is True
+
+
+class GeomOsctl(FakeOsctl):
+    def __init__(self, geo=None, rects=None):
+        super().__init__(rects=rects)
+        self.geo = geo
+
+    def window_geometry(self, win):
+        self.calls.append(("window_geometry", win))
+        return self.geo
+
+    def drag(self, x1, y1, x2, y2):
+        self.calls.append(("drag", x1, y1, x2, y2))
+
+
+def test_geometry_fallback_drag_canvas_corners():
+    fake = GeomOsctl(geo={"x": 100, "y": 50, "w": 1000, "h": 800})
+    ex = OsctlExecutor(fake)
+    ex._win["d"] = 10
+    r = ex._step("d", {"op": "drag_hint", "from_hint": "画布左上", "to_hint": "画布右下"})
+    assert r["ok"] and r["via"] == "geometry"
+    assert ("drag", 100 + 300, 50 + 320, 100 + 750, 50 + 640) in fake.calls
+
+
+def test_geometry_fallback_wait_for_canvas():
+    fake = GeomOsctl(geo={"x": 0, "y": 0, "w": 800, "h": 600})
+    ex = OsctlExecutor(fake)
+    ex._win["d"] = 10
+    r = ex._step("d", {"op": "wait_for", "target_hint": "画图窗口的画布区域", "timeout": 0})
+    assert r["ok"] and r["via"] == "geometry"
+
+
+def test_geometry_fallback_honest_when_no_window_or_no_keyword():
+    fake = GeomOsctl(geo={"x": 0, "y": 0, "w": 800, "h": 600})
+    ex = OsctlExecutor(fake)
+    # 未跟踪窗口 → 不臆造
+    r = ex._step("d", {"op": "click_hint", "target_hint": "画布中心"})
+    assert not r["ok"] and r["via"] == "none"
+    # 有窗口但 hint 无方位/画布词 → 不臆造
+    ex._win["d"] = 10
+    r2 = ex._step("d", {"op": "click_hint", "target_hint": "确定按钮"})
+    assert not r2["ok"] and r2["via"] == "none"
+    # 有方位词 → 几何兜底
+    r3 = ex._step("d", {"op": "click_hint", "target_hint": "画布中心"})
+    assert r3["ok"] and r3["via"] == "geometry"
+
+
+def test_geometry_fallback_degenerate_geometry_refused():
+    fake = GeomOsctl(geo={"x": 0, "y": 0, "w": 0, "h": 0})
+    ex = OsctlExecutor(fake)
+    ex._win["d"] = 10
+    r = ex._step("d", {"op": "click_hint", "target_hint": "画布中心"})
+    assert not r["ok"] and r["via"] == "none"
