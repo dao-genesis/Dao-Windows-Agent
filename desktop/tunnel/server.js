@@ -157,8 +157,31 @@ httpServer.listen(HTTP_PORT, BIND, () => {
 });
 
 // —— guacamole-lite 隧道（浏览器 WS ↔ guacd）——
+// 无效/缺失 token 的握手先在 upgrade 阶段拒掉：guacamole-lite 校验失败后仍会走
+// ClientConnection.connect（读 undefined.connection 抛未捕获异常杀死进程），
+// 等于任何未鉴权探测都能打死整条桌面路由链路。
+const wsHttpServer = http.createServer();
+wsHttpServer.prependListener("upgrade", (req, socket) => {
+  let ok = false;
+  try {
+    const u = new URL(req.url, `http://127.0.0.1:${WS_PORT}`);
+    const payload = crypt.decrypt(u.searchParams.get("token") || "");
+    ok = !!(payload && payload.connection);
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
+    console.error("[tunnel] 拒绝无效 token 握手（不中断服务）");
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  }
+});
+// 兜底：单连接异常不得杀死整个隧道进程。
+process.on("uncaughtException", (err) => {
+  console.error("[tunnel] 未捕获异常（已兜底，进程存活）:", err && err.message);
+});
 const guacServer = new GuacamoleLite(
-  { server: http.createServer().listen(WS_PORT, BIND) },
+  { server: wsHttpServer.listen(WS_PORT, BIND) },
   { host: GUACD_HOST, port: GUACD_PORT },
   {
     crypt: { cypher: CIPHER, key: KEY },
