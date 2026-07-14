@@ -94,7 +94,21 @@ class OsctlExecutor:
     # —— 级别② UIA（语义）——
     def _op_launch(self, desktop: str, step: dict) -> dict:
         argv = [step["exe"], *(step.get("args") or [])]
+        before = {w.get("id") for w in (self.os.list_windows() or [])}
         rec = self.os.launch(argv, wait_title=step.get("wait_title"))
+        if rec is None:
+            # 打包应用逃逸兜底：Win11 stub(如 mspaint.exe) 秒退再经应用别名重生，
+            # osctl.launch 因 proc 已退而报 None——按"新窗口"再等一轮接管。
+            deadline = time.time() + float(step.get("timeout", 8))
+            hint = (step.get("wait_title") or "").lower()
+            while time.time() < deadline and rec is None:
+                for w in (self.os.list_windows() or []):
+                    if w.get("id") in before:
+                        continue
+                    if not hint or hint in (w.get("title") or "").lower():
+                        rec = w
+                        break
+                time.sleep(0.3)
         if rec:
             self._win[desktop] = rec.get("id")
         return {"op": "launch", "ok": rec is not None, "window": rec}

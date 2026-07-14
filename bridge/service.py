@@ -17,7 +17,6 @@ MCP 外壳把上述动作包成工具，任意 Agent（Devin/Claude/本插件）
 from __future__ import annotations
 
 import os
-import socket
 from typing import Any, Optional
 
 from core.accounts import AccountManager
@@ -33,19 +32,16 @@ from core.session.manager import SessionManager
 def _detect_cdp_bindings():
     """按显式环境变量 DAO_CDP_PORT 绑定本机 Chrome CDP。
 
-    设置且端口可达 → 返回 (browser_factory, jlceda evaluator)：两者共享同一 CDP 浏览器
+    设置了 → 返回 (browser_factory, jlceda evaluator)：两者共享同一 CDP 浏览器
     实例，evaluator 以 await 语义求值 handler 返回的 JS 表达式（_EXTAPI_ROOT_ 多为异步 API）。
-    未设置/不可达 → (None, None)，对应画像保持 dry-run（确定性：不隐式探测，
+    未设置 → (None, None)，对应画像保持 dry-run（确定性：不隐式探测，
     避免测试/CI 因环境碰巧开着调试端口而行为漂移）。"""
     raw = os.environ.get("DAO_CDP_PORT", "").strip()
     if not raw:
         return None, None
     port = int(raw)
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1):
-            pass
-    except OSError:
-        return None, None
+    # 显式设置了 DAO_CDP_PORT 即视为用户意图绑定：端口此刻不活也绑（工厂具备
+    # 零配置自动拉起 + 断连重建能力），避免启动竞态把 browser 永久钉死在 dry-run。
 
     from core.profiles.builtin.browser import make_browser_factory
 

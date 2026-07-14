@@ -75,7 +75,10 @@ class BrowserCdpAdapter(AppAdapter):
     def launch(self, workdir: str, **kwargs: Any) -> Instance:
         inst = Instance(app_id=self.profile.app_id, workdir=workdir, meta=dict(kwargs))
         if self.browser_factory is not None:
-            self._browser = self.browser_factory()
+            try:
+                self._browser = self.browser_factory()
+            except Exception as exc:  # noqa: BLE001 - 启动时连不上不致命：invoke 时再重试
+                inst.meta["cdp_connect_error"] = f"{type(exc).__name__}: {exc}"
         return inst
 
     def invoke(self, instance: Instance, verb: str, **params: Any) -> ActionResult:
@@ -94,6 +97,11 @@ class BrowserCdpAdapter(AppAdapter):
                 kwargs[key] = params[key]
             else:
                 args.append(params[key])
+        if self._browser is None and self.browser_factory is not None:
+            try:
+                self._browser = self.browser_factory()
+            except Exception as exc:  # noqa: BLE001 - 工厂在但连不上：如实回报，不假 dry-run
+                return ActionResult.bad(f"CDP 连接失败: {type(exc).__name__}: {exc}")
         if self._browser is None:
             return ActionResult.good(
                 {"dry_run": True, "method": name, "args": args, "kwargs": kwargs},
@@ -102,6 +110,15 @@ class BrowserCdpAdapter(AppAdapter):
             fn = getattr(self._browser, name)
             return ActionResult.good(fn(*args, **kwargs), logs=[f"browser.{name}"])
         except Exception as exc:  # noqa: BLE001 - 单动词失败如实回报
+            # 浏览器进程可能被杀/崩溃：经工厂重建连接后重试一次，仍败则如实回报
+            if self.browser_factory is not None:
+                try:
+                    self._browser = self.browser_factory()
+                    fn = getattr(self._browser, name)
+                    return ActionResult.good(
+                        fn(*args, **kwargs), logs=[f"browser.{name} (重连后重试)"])
+                except Exception as exc2:  # noqa: BLE001
+                    return ActionResult.bad(f"{type(exc2).__name__}: {exc2}")
             return ActionResult.bad(f"{type(exc).__name__}: {exc}")
 
     def shutdown(self, instance: Instance) -> None:
@@ -114,11 +131,61 @@ class BrowserCdpAdapter(AppAdapter):
         instance.alive = False
 
 
+def _cdp_alive(port: int) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/version", timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def _spawn_debug_browser(port: int) -> bool:
+    """零配置兜底：端口上没有可调试浏览器时，自动拉起本机 Edge/Chrome（无头 + 独立
+    user-data-dir，不碰用户日常浏览器实例），等 CDP 就绪。找不到浏览器时如实返回 False。"""
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+    candidates = []
+    if os.name == "nt":
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        candidates = [
+            os.path.join(p, sub) for p in (pf, pf86, local)
+            for sub in (r"Microsoft\Edge\Application\msedge.exe",
+                        r"Google\Chrome\Application\chrome.exe")
+        ]
+    else:
+        candidates = [shutil.which(n) or "" for n in
+                      ("google-chrome", "chromium-browser", "chromium", "msedge")]
+    exe = next((c for c in candidates if c and os.path.isfile(c)), "")
+    if not exe:
+        return False
+    profile_dir = os.path.join(tempfile.gettempdir(), f"dao-cdp-{port}")
+    subprocess.Popen(
+        [exe, f"--remote-debugging-port={port}",
+         f"--user-data-dir={profile_dir}",
+         "--no-first-run", "--headless=new", "about:blank"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(30):
+        if _cdp_alive(port):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def make_browser_factory(port: int = 29229) -> Callable[[], Any]:
-    """真机工厂：接本地 Chrome CDP 端口（vendored agentctl.browser.Browser）。"""
+    """真机工厂：接本地 Chrome/Edge CDP 端口（vendored agentctl.browser.Browser）；
+    端口无人监听时先零配置自动拉起可调试浏览器再连。"""
     def factory() -> Any:
         import os
         import sys
+        if not _cdp_alive(port):
+            _spawn_debug_browser(port)
         vendor = os.path.abspath(os.path.join(
             os.path.dirname(__file__), "..", "..", "gui", "agentctl"))
         if vendor not in sys.path:
