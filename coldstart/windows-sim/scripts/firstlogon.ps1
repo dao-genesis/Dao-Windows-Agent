@@ -150,11 +150,22 @@ try {
   $tsVer = (Get-Item "$env:SystemRoot\System32\termsrv.dll").VersionInfo.FileVersion
   $tsSection = '[' + (($tsVer -split ' ')[0]) + ']'
   $iniPath = "$rdpwrapDir\rdpwrap.ini"
+  $iniUrl = 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini'
   $iniOk = $false
+  # 关键（真机踩坑·本源修复）：切勿走 Get-Payload——它优先返回应答盘缓存，一旦缓存里的
+  # rdpwrap.ini 是构建时的旧版（缺当前 build 段，如 26100.x），三次重试只是反复拷同一份缺段文件，
+  # 永远补不齐 offset。故此处强制每次在线拉取最新社区 ini，仅在联网失败时才回退缓存。
   for ($i = 1; $i -le 3 -and -not $iniOk; $i++) {
     try {
-      $tmpIni = Get-Payload 'rdpwrap_community.ini' 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini'
-      if ((Select-String -Path $tmpIni -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)) {
+      $tmpIni = "$env:TEMP\rdpwrap_community.ini"
+      try {
+        Invoke-WebRequest -UseBasicParsing -Uri $iniUrl -OutFile $tmpIni
+        Log "rdpwrap.ini fetched fresh online (attempt $i)"
+      } catch {
+        # 联网失败才回退应答盘缓存
+        foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\payloads\rdpwrap_community.ini") { Copy-Item -Force "$d\payloads\rdpwrap_community.ini" $tmpIni; Log "rdpwrap.ini online failed; using media cache"; break } }
+      }
+      if ((Test-Path $tmpIni) -and (Select-String -Path $tmpIni -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)) {
         # 文件被 wrapper 占用，需先停服务再替换
         Stop-Service TermService -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -162,7 +173,7 @@ try {
         $iniOk = $true
         Log "rdpwrap.ini updated (community); contains $tsSection for termsrv $tsVer"
       } else {
-        Log "rdpwrap.ini community missing $tsSection (attempt $i); retrying"
+        Log "rdpwrap.ini source missing $tsSection (attempt $i); retrying"
       }
     } catch { Log "rdpwrap.ini update attempt $i failed: $_" }
     if (-not $iniOk) { Start-Sleep -Seconds 5 }
@@ -180,6 +191,17 @@ try {
     Start-Service TermService -ErrorAction SilentlyContinue
     Log "TermService start after ini swap: $_"
   }
+  # 置备后自证：rdpwrap.dll 是否真加载进 termsrv 宿主进程 + 安装版 ini 是否含当前 build 段。
+  # 二者皆真 = 单账号多路并行 RDP 已具备（每个 IDE 窗口一路独立会话）。
+  try {
+    Start-Sleep -Seconds 2
+    $tsPid = (Get-CimInstance Win32_Service -Filter "Name='TermService'").ProcessId
+    $loaded = $false
+    if ($tsPid) { $loaded = [bool]((Get-Process -Id $tsPid).Modules | Where-Object { $_.ModuleName -like '*rdpwrap*' }) }
+    $sectionInstalled = (Test-Path $iniPath) -and (Select-String -Path $iniPath -Pattern ([regex]::Escape($tsSection)) -SimpleMatch -Quiet)
+    if ($loaded -and $sectionInstalled) { Log "rdpwrap VERIFIED: dll hooked into termsrv(pid=$tsPid) + ini has $tsSection → 单账号多 RDP 就绪" }
+    else { Log "WARN rdpwrap verify: dllLoaded=$loaded sectionInstalled=$sectionInstalled — 多会话可能未生效" }
+  } catch { Log "rdpwrap verify failed: $_" }
 } catch { Log "rdpwrap provisioning failed: $_" }
 
 # 6) VSCode + DAO 插件（把整台 Windows 做进 IDE：每个 IDE 窗口=一个隔离会话）

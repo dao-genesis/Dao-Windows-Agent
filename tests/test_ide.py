@@ -110,10 +110,36 @@ def test_coldstart_payload_cache_pipeline():
     with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"), encoding="utf-8") as fh:
         fl = fh.read()
     assert "Get-Payload" in fl
-    # 全部大件安装包都必须走缓存优先取数（在线只是兜底）
+    # 大件安装包走缓存优先取数（在线只是兜底）。注意：rdpwrap_community.ini 是唯一例外——
+    # 它必须每次在线拉最新（见 test_firstlogon_rdpwrap_ini_fetched_fresh），故不在此列。
     for name in ("py312.exe", "vc_redist.x64.exe", "VSCodeSetup.exe",
-                 "DevinUserSetup.exe", "RDPWrap.zip", "rdpwrap_community.ini"):
+                 "DevinUserSetup.exe", "RDPWrap.zip"):
         assert "Get-Payload '%s'" % name in fl
+
+
+def test_firstlogon_rdpwrap_ini_fetched_fresh():
+    """真机踩坑回归（单账号多 RDP 本源）：rdpwrap.ini 必须每次在线拉最新社区版，
+    不得走 Get-Payload（缓存优先）——否则构建时捆入的旧 ini 缺当前 termsrv build 段
+    （如 26100.x），三次重试只是反复拷同一份缺段文件，wrapper 加载但不打补丁，退化成单会话。
+    在线失败才回退应答盘缓存；置备后须自证 dll 已挂进 termsrv 且 ini 含当前 build 段。"""
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"),
+              encoding="utf-8") as fh:
+        src = fh.read()
+    # 取 rdpwrap 段落
+    i = src.index("RDPWrap（")
+    seg = src[i:i + 5000]
+    # ini 必须在线直取（Invoke-WebRequest），且不能用 Get-Payload 取 ini
+    assert "sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini" in seg
+    assert "Invoke-WebRequest -UseBasicParsing -Uri $iniUrl" in seg
+    assert "Get-Payload 'rdpwrap_community.ini'" not in src
+    # 在线失败才回退媒体缓存
+    assert "payloads\\rdpwrap_community.ini" in seg
+    # 必须校验当前 build 段并在替换前停服务、替换后重启重读 offset
+    assert "$tsSection" in seg and "Select-String" in seg
+    assert "Stop-Service TermService" in seg and "Restart-Service TermService" in seg
+    # 置备后自证：dll 挂进 termsrv 进程 + 安装版 ini 含段
+    assert "rdpwrap VERIFIED" in seg
+    assert "fSingleSessionPerUser -Value 0" in seg
 
 
 def test_coldstart_domain_payloads_and_cdp_binding():
