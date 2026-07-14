@@ -202,7 +202,7 @@ class OsctlExecutor:
         return self.os.uia_find(win, name=hint)
 
     def _pixel_point(self, desktop: str, step: dict) -> Optional[dict]:
-        """像素兜底：优先注入的 grounder，其次颜色定位；都无则 None（不臆造坐标）。"""
+        """像素兜底：注入的 grounder → 颜色定位 → 窗口几何锚点；都无则 None（不臆造坐标）。"""
         if self.pixel_grounder is not None:
             pt = self.pixel_grounder(desktop, step)
             if pt:
@@ -212,7 +212,31 @@ class OsctlExecutor:
             hit = self.os.find_color(tuple(color))
             if hit:
                 return {"x": hit[0], "y": hit[1]}
-        return None
+        return self._geometry_point(desktop, step.get("target_hint", ""))
+
+    def _geometry_point(self, desktop: str, hint: str) -> Optional[dict]:
+        """窗口几何锚点兜底：hint 含方位词(画布左上/右下/中心…)时按已跟踪窗口的
+        实际几何(GetWindowRect)换算屏幕坐标。仅锚点是相对约定(如左上≈30%,40%，避开
+        标题栏/工具条)，几何本身是实测——比无 grounder 时直接放弃更进一步，且不臆造。"""
+        win = self._win.get(desktop)
+        if win is None or not hint:
+            return None
+        geo = getattr(self.os, "window_geometry", lambda w: None)(win)
+        if not geo or geo.get("w", 0) <= 0 or geo.get("h", 0) <= 0:
+            return None
+        frac = None
+        for kw, f in _GEOM_ANCHORS:
+            if kw in hint:
+                frac = f
+                break
+        if frac is None:
+            if any(k in hint for k in ("画布", "画面", "窗口", "canvas")):
+                frac = (0.5, 0.6)
+            else:
+                return None
+        return {"x": int(geo["x"] + geo["w"] * frac[0]),
+                "y": int(geo["y"] + geo["h"] * frac[1]),
+                "via": "geometry"}
 
     def _op_observe(self, desktop: str, step: dict) -> dict:
         w, h, _rgb = self.os.capture_rgb()
@@ -225,7 +249,7 @@ class OsctlExecutor:
             return {"op": "locate", "ok": True, "via": "semantic", "rect": rect}
         pt = self._pixel_point(desktop, step)
         if pt:
-            return {"op": "locate", "ok": True, "via": "pixel", "point": pt}
+            return {"op": "locate", "ok": True, "via": pt.get("via", "pixel"), "point": pt}
         return {"op": "locate", "ok": False, "via": "none",
                 "reason": "语义未命中且无像素 grounder（不臆造坐标）"}
 
@@ -237,7 +261,7 @@ class OsctlExecutor:
         pt = self._pixel_point(desktop, step)
         if pt:
             self.os.click(pt["x"], pt["y"])
-            return {"op": "click_hint", "ok": True, "via": "pixel"}
+            return {"op": "click_hint", "ok": True, "via": pt.get("via", "pixel")}
         return {"op": "click_hint", "ok": False, "via": "none",
                 "reason": "语义未命中且无像素 grounder"}
 
@@ -251,7 +275,7 @@ class OsctlExecutor:
         if pt:
             self.os.click(pt["x"], pt["y"])
             self.os.type_unicode(text)
-            return {"op": "type_hint", "ok": True, "via": "pixel"}
+            return {"op": "type_hint", "ok": True, "via": pt.get("via", "pixel")}
         return {"op": "type_hint", "ok": False, "via": "none",
                 "reason": "语义未命中且无像素 grounder"}
 
@@ -260,7 +284,8 @@ class OsctlExecutor:
         b = self._pixel_point(desktop, {"target_hint": step.get("to_hint"), **step})
         if a and b:
             self.os.drag(a["x"], a["y"], b["x"], b["y"])
-            return {"op": "drag_hint", "ok": True, "via": "pixel"}
+            via = "geometry" if "geometry" in (a.get("via"), b.get("via")) else "pixel"
+            return {"op": "drag_hint", "ok": True, "via": via}
         return {"op": "drag_hint", "ok": False, "reason": "端点无法定位"}
 
     def _op_wait_for(self, desktop: str, step: dict) -> dict:
@@ -270,6 +295,20 @@ class OsctlExecutor:
     def _op_assert_visible(self, desktop: str, step: dict) -> dict:
         r = self._op_locate(desktop, {"op": "locate", **step})
         return {"op": "assert_visible", "ok": r["ok"], "via": r.get("via")}
+
+
+# 方位词 → 窗口内相对锚点（长词在前防误配；纵向 40% 起步避开标题栏/Ribbon 工具条）
+_GEOM_ANCHORS: tuple[tuple[str, tuple[float, float]], ...] = (
+    ("左上", (0.30, 0.40)),
+    ("右上", (0.75, 0.40)),
+    ("左下", (0.30, 0.80)),
+    ("右下", (0.75, 0.80)),
+    ("中心", (0.50, 0.60)),
+    ("中央", (0.50, 0.60)),
+    ("中间", (0.50, 0.60)),
+    ("顶部", (0.50, 0.40)),
+    ("底部", (0.50, 0.85)),
+)
 
 
 # op → 处理函数（一张表，避免长 if 链）
