@@ -295,33 +295,39 @@ if (-not (Test-Cmd $freecadPaths)) {
   }
 } else { Log "freecad already present" }
 
-# 8b) Mesa3D 软件 OpenGL（llvmpipe）注入 FreeCAD\bin：QEMU 虚拟显示器仅 "Microsoft Basic
-#     Display Adapter"，无 OpenGL 2.0 → FreeCAD 带 3D 视口启动即崩。就近放三件 DLL 得纯软件
-#     OpenGL 4.5（零 GPU 依赖），并置机器级 env 强制 llvmpipe。装不上不阻断（headless 算子仍可跑）。
+# 8b) Mesa3D 软件 OpenGL → 系统级 ICD 注册（HKLM OpenGLDrivers）：QEMU 虚拟显示器仅
+#     "Microsoft Basic Display Adapter"，无 OpenGL 2.0 → FreeCAD 带 3D 视口启动即崩。
+#     真机踩坑（勿回退到旧法）：
+#     · 把 mesa opengl32.dll 拷进 FreeCAD\bin 是死路——Qt 经 QSystemLibrary 只认
+#       System32\opengl32.dll，进程内双 opengl32 模块像素格式表互不相认，
+#       wglCreateContext 报 "The parameter is incorrect"，GUI 永无 GL 上下文。
+#     · GALLIUM_DRIVER=llvmpipe 机器级 env 同为死路——mesa 26 的 llvmpipe 在本 guest 直接
+#       令 wglCreateContext 返 NULL；默认 d3d12(WARP·Basic Render Driver) 反而给 GL 4.6。
+#     正道 = mesa-dist-win 的系统级部署：libgallium_wgl.dll 注册为 ICD，System32\opengl32.dll
+#     自动经 ICD 派发，Qt/Coin3D/一切进程透明获得软件 GL 4.6（已活体渲染出 3D 视口 PNG 自证）。
 try {
-  $fcGuiPaths = @("$env:ProgramFiles\FreeCAD*\bin\FreeCAD.exe","$env:LOCALAPPDATA\Programs\FreeCAD*\bin\FreeCAD.exe")
-  $fcGui = Get-ChildItem $fcGuiPaths -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($fcGui) {
-    $binDir = $fcGui.DirectoryName
-    $mesa = @{ 'opengl32.dll'='mesa_opengl32.dll'; 'libgallium_wgl.dll'='mesa_libgallium_wgl.dll'; 'dxil.dll'='mesa_dxil.dll' }
-    $mesaOk = $true
-    foreach ($dst in $mesa.Keys) {
-      $srcName = $mesa[$dst]; $dstPath = Join-Path $binDir $dst
-      if (Test-Path $dstPath) { continue }
-      if ($payloadDir -and (Test-Path "$payloadDir\$srcName")) {
-        Copy-Item -Force "$payloadDir\$srcName" $dstPath
+  $mesaDir = 'C:\mesa'
+  $mesaOk = $true
+  New-Item -ItemType Directory -Force -Path $mesaDir | Out-Null
+  foreach ($pair in @(@('libgallium_wgl.dll','mesa_libgallium_wgl.dll'), @('dxil.dll','mesa_dxil.dll'))) {
+    $dst = Join-Path $mesaDir $pair[0]
+    if (-not (Test-Path $dst)) {
+      if ($payloadDir -and (Test-Path "$payloadDir\$($pair[1])")) {
+        Copy-Item -Force "$payloadDir\$($pair[1])" $dst
       }
-      if (-not (Test-Path $dstPath)) { $mesaOk = $false; Log "mesa $dst 缺失（缓存无 $srcName）" }
     }
-    if ($mesaOk) {
-      [Environment]::SetEnvironmentVariable('GALLIUM_DRIVER','llvmpipe','Machine')
-      [Environment]::SetEnvironmentVariable('MESA_GL_VERSION_OVERRIDE','4.5','Machine')
-      [Environment]::SetEnvironmentVariable('MESA_GLSL_VERSION_OVERRIDE','450','Machine')
-      [Environment]::SetEnvironmentVariable('LIBGL_ALWAYS_SOFTWARE','1','Machine')
-      Log "mesa software-OpenGL injected into $binDir (llvmpipe, GL4.5)"
-    } else { Log "mesa injection incomplete（FreeCAD 3D 视口可能仍无法渲染）" }
-  } else { Log "mesa injection skipped: FreeCAD GUI exe 未落盘" }
-} catch { Log "mesa injection failed: $_" }
+    if (-not (Test-Path $dst)) { $mesaOk = $false; Log "mesa $($pair[0]) 缺失（缓存无 $($pair[1])）" }
+  }
+  if ($mesaOk) {
+    $icd = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\MSOGL'
+    New-Item -Path $icd -Force | Out-Null
+    Set-ItemProperty $icd -Name DLL -Value "$mesaDir\libgallium_wgl.dll"
+    Set-ItemProperty $icd -Name DriverVersion -Value 1 -Type DWord
+    Set-ItemProperty $icd -Name Flags -Value 1 -Type DWord
+    Set-ItemProperty $icd -Name Version -Value 2 -Type DWord
+    Log "mesa software-OpenGL installed as system ICD ($mesaDir\libgallium_wgl.dll, GL4.6 d3d12/WARP)"
+  } else { Log "mesa ICD install incomplete（FreeCAD 3D 视口可能仍无法渲染）" }
+} catch { Log "mesa ICD install failed: $_" }
 
 # KiCad：桥探 kicad-cli.exe（含 winget 用户域 LOCALAPPDATA\Programs 与任意版本号）
 $kicadPaths = @("$env:ProgramFiles\KiCad\*\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe","$env:LOCALAPPDATA\Programs\KiCad\*\bin\kicad-cli.exe")
