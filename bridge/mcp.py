@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from typing import Any, Callable
 
@@ -113,10 +114,31 @@ class RemoteBridge:
         return self._req("GET", "/api/account.sessions")
 
 
+# 本机桥候选：bridge.server 默认 9930；guest 置备(start-bridge.ps1)常用 9920
+_LOCAL_PROBE_URLS = ("http://127.0.0.1:9930", "http://127.0.0.1:9920")
+
+
+def _probe_local_bridge(base: str) -> bool:
+    """本机桥探活：/api/health 免鉴权，2xx 即视为活。"""
+    try:
+        with urllib.request.urlopen(base.rstrip("/") + "/api/health", timeout=2) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
 def _make_service():
     url = os.environ.get("DAO_WIN_BRIDGE_URL", "").strip()
+    token = os.environ.get("DAO_WIN_TOKEN", "").strip()
     if url:
-        return RemoteBridge(url, os.environ.get("DAO_WIN_TOKEN", "").strip())
+        return RemoteBridge(url, token)
+    # 会话态归一：本机若已有活桥，stdio MCP 附着其上（HTTP 与 MCP 共享同一套
+    # 会话/模式/工程流水），而非各起一份割裂的内存态。探活失败才退回进程内直驱。
+    env_probe = os.environ.get("DAO_WIN_LOCAL_BRIDGE", "").strip()
+    candidates = (env_probe,) if env_probe else _LOCAL_PROBE_URLS
+    for probe in candidates:
+        if _probe_local_bridge(probe):
+            return RemoteBridge(probe, token)
     return BridgeService()
 
 
