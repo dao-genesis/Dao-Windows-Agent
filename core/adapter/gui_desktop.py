@@ -33,6 +33,7 @@ DESKTOP_OPS = (
     "tree",           # 激活窗口作用域内导出 UIA 控件树：{op, depth?}
     "region_hash",    # 屏幕区域指纹：{op, x?, y?, w?, h?}
     "wait_change",    # 等区域出现变化：{op, x?, y?, w?, h?, timeout?}
+    "where_changed",  # 等区域变化并回变化位置(最小包围盒)：{op, x?, y?, w?, h?, timeout?}
     "locate",         # 语义优先定位(hint)：{op, target_hint}
     "click_hint",     # 语义优先点击(hint)：{op, target_hint}
     "type_hint",      # 语义优先输入(hint)：{op, target_hint, text}
