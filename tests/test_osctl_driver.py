@@ -15,6 +15,10 @@ class FakeOsctl:
         self.calls.append(("launch", tuple(argv), wait_title))
         return {"id": 4321, "title": wait_title or argv[0]}
 
+    def list_windows(self):
+        self.calls.append(("list_windows",))
+        return []
+
     def uia_find(self, win, name=None, ctype=None):
         self.calls.append(("uia_find", win, name, ctype))
         return self.rects.get(name)
@@ -80,9 +84,9 @@ def test_launch_binds_window_then_uia_ops():
     ]}
     res = ex.run("dao_s1_notepad", plan)
     assert res["ok"] is True
-    assert fake.names() == ["launch", "uia_find", "click_center"]
+    assert fake.names() == ["list_windows", "launch", "uia_find", "click_center"]
     # 窗口句柄从 launch 绑定，传给后续 uia_find
-    assert fake.calls[1][1] == 4321
+    assert fake.calls[2][1] == 4321
 
 
 def test_uia_verbs_translate():
@@ -100,8 +104,8 @@ def test_uia_verbs_translate():
     res = ex.run("d", plan)
     assert res["ok"] is True
     got = fake.names()
-    assert got == ["launch", "uia_set_value", "uia_text", "uia_invoke",
-                   "uia_context", "hotkey", "uia_children"]
+    assert got == ["list_windows", "launch", "uia_set_value", "uia_text",
+                   "uia_invoke", "uia_context", "hotkey", "uia_children"]
 
 
 def test_vision_semantic_first_then_pixel():

@@ -80,3 +80,28 @@ def test_shutdown_closes_browser():
     inst = ad.launch(workdir=".")
     ad.shutdown(inst)
     assert fake.closed and not inst.alive
+
+
+def test_dead_browser_reconnects_via_factory():
+    dead = _FakeBrowser()
+
+    def boom(*a, **k):
+        raise ConnectionError("browser gone")
+    dead.navigate = boom
+    healthy = _FakeBrowser()
+    seq = iter([dead, healthy])
+    ad = browser_mod._ADAPTER(browser_mod.PROFILE,
+                              browser_factory=lambda: next(seq))
+    inst = ad.launch(workdir=".")
+    res = ad.invoke(inst, "navigate", url="https://x")
+    assert res.ok and healthy.calls == [("navigate", "https://x")]
+
+
+def test_factory_failure_reported_not_fake_dryrun():
+    def bad_factory():
+        raise ConnectionRefusedError("no cdp")
+    ad = browser_mod._ADAPTER(browser_mod.PROFILE, browser_factory=bad_factory)
+    inst = ad.launch(workdir=".")
+    assert "cdp_connect_error" in inst.meta
+    res = ad.invoke(inst, "navigate", url="https://x")
+    assert not res.ok and "CDP 连接失败" in res.error
