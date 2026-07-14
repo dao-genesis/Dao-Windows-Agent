@@ -31,8 +31,12 @@ function apiKeyCandidates() {
   return [];
 }
 
-// language_server 进程 PID(Linux: /proc 扫 cmdline; 其余平台: pgrep)。
+// language_server 进程 PID(Linux: /proc 扫 cmdline; macOS: pgrep)。
+// Windows 无 pgrep/lsof 且 csrfOf 读不到他进程环境变量 —— /proc 扫描路径在 win32
+// 永远不可能命中, 直接短路(Windows 路径靠 windsurf-shim 捕获落盘 windsurf-host.json);
+// 否则每拍同步 spawn 一个必败的 shell, 白白阻塞扩展宿主事件循环。
 function lsPids() {
+  if (process.platform === "win32") return [];
   const pids = [];
   try {
     if (process.platform === "linux") {
@@ -65,6 +69,7 @@ function csrfOf(pid) {
 // 进程监听的本地 TCP 端口(Linux: /proc/net/tcp 按 inode 反查; 其余: lsof)。
 function listenPortsOf(pid) {
   const ports = new Set();
+  if (process.platform === "win32") return [...ports];
   try {
     if (process.platform === "linux") {
       const inodes = new Set();
@@ -118,20 +123,28 @@ function probe(port, csrf, key) {
 
 // 发现并灌入 hostState.lsPort/csrfToken。命中返回 {lsPort,csrfToken}; 未就绪返回 null。
 // 逐个候选 key 探测: 命中即把该 key 回灌 ls-bridge 缓存(后续 RPC 用官方 LS 实际接受者)。
+// 先廉后贵: 先扫进程/CSRF/端口(廉), 确有可探目标才读 apiKey 候选(贵 —— 扫 state.vscdb);
+// 冷启动 LS 未起时每拍即刻空转, 不碰磁盘重活。
 async function discover() {
-  const keys = apiKeyCandidates();
-  if (!keys.length) return null;
+  const targets = [];
   for (const pid of lsPids()) {
     const csrf = csrfOf(pid);
     if (!csrf) continue;
-    for (const port of listenPortsOf(pid)) {
+    const ports = listenPortsOf(pid);
+    if (ports.length) targets.push({ csrf, ports });
+  }
+  if (!targets.length) return null;
+  const keys = apiKeyCandidates();
+  if (!keys.length) return null;
+  for (const t of targets) {
+    for (const port of t.ports) {
       for (const key of keys) {
-        if (await probe(port, csrf, key)) {
+        if (await probe(port, t.csrf, key)) {
           const h = hostState();
-          h.lsPort = port; h.csrfToken = csrf;
+          h.lsPort = port; h.csrfToken = t.csrf;
           try { require("./ls-bridge").setApiKey(key); } catch (_) {}
           hostFire(); // 广播监听者 + 落盘, 供跨进程 headless 核复用
-          return { lsPort: port, csrfToken: csrf };
+          return { lsPort: port, csrfToken: t.csrf };
         }
       }
     }
@@ -140,15 +153,18 @@ async function discover() {
 }
 
 // 轮询发现(冷启动时 LS 略迟于插件激活): 每 intervalMs 试一次, 命中即停; 返回停止句柄。
+// 长期未命中时逐拍退避(封顶 30s): LS 未安装/不会出现的机器上不永久占着事件循环。
 function startDiscovery(onFound, log, intervalMs) {
   let stopped = false; let timer = null;
+  const base = intervalMs || 3000;
+  let delay = base;
   const tick = async () => {
     if (stopped) return;
     try {
       const found = await discover();
       if (found) { if (log) log("共生: 已发现宿主 LS(端口 " + found.lsPort + ", CSRF ✓)"); if (onFound) onFound(found); return; }
     } catch (_) {}
-    if (!stopped) timer = setTimeout(tick, intervalMs || 3000);
+    if (!stopped) { timer = setTimeout(tick, delay); delay = Math.min(delay * 2, 30000); }
   };
   tick();
   return { stop() { stopped = true; if (timer) clearTimeout(timer); } };
