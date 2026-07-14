@@ -308,9 +308,20 @@ const MAX_RETRIES = 5;
 
 // \u591a\u5b9e\u4f8b\u5206\u8eab\uff1a\u4e00\u4e2a IDE \u7a97\u53e3\u5185\u5e76\u884c\u591a\u8def\u540c\u8d26\u53f7\u72ec\u7acb\u684c\u9762\u4f1a\u8bdd\uff08\u7c7b\u591a RDP\uff09\u3002
 // \u6bcf\u8def\u5206\u8eab = \u72ec\u7acb Guacamole client + \u72ec\u7acb\u753b\u5e03\uff1b\u952e\u76d8/\u526a\u8d34\u677f\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\u3002
-let instances = [];   // {id, label, el, client, display, connecting, userDisconnected, retries, retryTimer, state}
+let instances = [];   // {id, slot, label, el, client, display, connecting, userDisconnected, retries, retryTimer, state}
 let activeId = null;
 let nextId = 1;
+// slot = 本窗口内分身的稳定序号（跨 webview 重载不变）→ 隧道租约 key 稳定，
+// IDE/面板重载后同一 slot 命中同一 lease，确定性复归同一路桌面身份。
+let nextSlot = 1;
+// 分身的隧道租约 key：按账号路由时由账号隔离（返 null，走 account 命名空间）；否则 IDE_SESSION.slot 唯一。
+function ideKey(it){ return ACCOUNT ? null : (IDE_SESSION + '.' + it.slot); }
+function saveLayout(){
+  try {
+    vscodeApi.setState({ slots: instances.map(function(x){ return x.slot; }),
+                         activeSlot: (active() || {}).slot || null });
+  } catch(e) {}
+}
 let lastLocalClip = null;
 let lastRemoteClip = null;
 
@@ -358,14 +369,17 @@ function switchInstance(id){
   var it = active();
   if (it && it.client) vscodeApi.postMessage({type:'readClipboard'});
 }
-function newInstance(){
+function newInstance(slot){
   var id = nextId++;
+  var s = slot || nextSlot;
+  if (s >= nextSlot) nextSlot = s + 1;
   var el = document.createElement('div'); el.className = 'inst';
   container.appendChild(el);
-  var it = { id: id, label: '\u5206\u8eab' + id, el: el, client: null, display: null,
+  var it = { id: id, slot: s, label: '\u5206\u8eab' + s, el: el, client: null, display: null,
              connecting: false, userDisconnected: false, retries: 0, retryTimer: null, state: 0 };
   instances.push(it);
   switchInstance(id);
+  saveLayout();
   return it;
 }
 function addInstance(){ var it = newInstance(); connectInstance(it); }
@@ -378,9 +392,11 @@ function closeInstance(id){
   if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
   try { container.removeChild(it.el); } catch(e) {}
   instances.splice(idx, 1);
+  // 释放租约（分身销毁）：告知隧道不再保留该窗口会话身份。
+  try { var k = ideKey(it); if (k) fetch(TUNNEL_HTTP + '/sessions?ide=' + encodeURIComponent(k), {method:'POST'}); } catch(e) {}
   if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
   instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
-  renderTabs(); showActiveStatus();
+  renderTabs(); showActiveStatus(); saveLayout();
 }
 
 async function connectInstance(it) {
@@ -395,9 +411,10 @@ async function connectInstance(it) {
   let tokenData;
   try {
     // \u6bcf\u6b21\u94f8\u65b0 token = \u65b0\u5f00\u4e00\u8def\u72ec\u7acb RDP \u8fde\u63a5\uff08guest \u5173\u5355\u4f1a\u8bdd\u9650\u5236\u540e\u5373\u5404\u6210\u4e00\u8def\u72ec\u7acb\u4f1a\u8bdd\uff09
-    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + IDE_SESSION);
+    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + encodeURIComponent(ideKey(it)));
     const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
     tokenData = await r.json();
+    if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' \u00b7 \u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); it.connecting = false; return; }
   let wsHost = '127.0.0.1', wsScheme = 'ws';
@@ -496,8 +513,16 @@ window.addEventListener('focus', function() { var it = active(); if (it && it.cl
 
 function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 
-// \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u7b2c\u4e00\u8def\u5206\u8eab
-setTimeout(doConnect, 300);
+// \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u63a5\uff1b\u82e5\u6709\u6301\u4e45\u5316\u5206\u8eab\u5e03\u5c40\uff08\u91cd\u8f7d\u524d\uff09\u5219\u6309\u539f slot \u9010\u4e00\u590d\u8fde\uff08\u7a97\u53e3\u2194\u4f1a\u8bdd\u786e\u5b9a\u6027\u7ed1\u5b9a\uff09
+setTimeout(function boot(){
+  var st = null; try { st = vscodeApi.getState(); } catch(e) {}
+  if (st && st.slots && st.slots.length) {
+    st.slots.forEach(function(s){ var it = newInstance(s); connectInstance(it); });
+    if (st.activeSlot) { var a = instances.find(function(x){ return x.slot===st.activeSlot; }); if (a) switchInstance(a.id); }
+  } else {
+    doConnect();
+  }
+}, 300);
 </script></body></html>`;
 }
 
