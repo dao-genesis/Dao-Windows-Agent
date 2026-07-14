@@ -39,10 +39,16 @@ fetch_mesa() {
   local need=("mesa_opengl32.dll" "mesa_libgallium_wgl.dll" "mesa_dxil.dll")
   local have=1; for f in "${need[@]}"; do [ -s "$PAY/$f" ] || have=0; done
   if [ "$have" = 1 ]; then echo "  [OK] Mesa 三件 DLL 已缓存"; return 0; fi
+  # GitHub API 匿名限流（60次/h·共享出口 IP 下 403 常态）——有 token 则带上；查询失败退钉住版。
+  local auth=(); [ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN:-${GH_TOKEN:-}}")
   local url
-  url="$(curl -fsSL --retry 3 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' \
+  url="$(curl -fsSL --retry 3 "${auth[@]}" 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' 2>/dev/null \
         | grep -oE '"browser_download_url": *"[^"]*release-msvc\.7z"' | head -1 | grep -oE 'https[^"]*')"
-  [ -n "$url" ] || { echo "  [--] Mesa 版本查询失败（guest 首登在线兜底）"; return 1; }
+  if [ -z "$url" ]; then
+    # 钉住版兜底：release 资产直链不走 API，不受 API 限流影响。
+    url='https://github.com/pal1000/mesa-dist-win/releases/download/24.3.2/mesa3d-24.3.2-release-msvc.7z'
+    echo "  [..] Mesa 版本查询失败（API 限流/离线），改用钉住版 24.3.2"
+  fi
   echo "  [..] 拉取 Mesa: $url"
   curl -fL --retry 3 -o "$out7z" "$url" || { echo "  [--] Mesa 下载失败"; return 1; }
   local ex="$PAY/.mesa_extract"; rm -rf "$ex"; mkdir -p "$ex"
