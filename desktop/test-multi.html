@@ -73,6 +73,10 @@ async function connectOne(account){
   const mouse = new Guacamole.Mouse(display.getElement());
   mouse.onEach(["mousedown","mousemove","mouseup"], (e)=> client.sendMouseState(e.state, true));
   // 键盘绑定到本 pane 容器（点谁操作谁，两路互不串扰）
+  // div 默认不可聚焦收不到键盘事件：加 tabindex 并在鼠标按下时聚焦本 pane
+  p.canvas.tabIndex = 0;
+  p.canvas.style.outline = "none";
+  p.canvas.addEventListener("mousedown", ()=> p.canvas.focus());
   const keyboard = new Guacamole.Keyboard(p.canvas);
   keyboard.onkeydown = (k)=> client.sendKeyEvent(1,k);
   keyboard.onkeyup = (k)=> client.sendKeyEvent(0,k);
