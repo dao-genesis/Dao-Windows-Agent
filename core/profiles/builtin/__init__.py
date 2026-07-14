@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from core.profiles.builtin import browser, freecad, jlceda, kicad, mspaint, notepad, system
+from core.profiles.builtin import (browser, desktop, freecad, jlceda, kicad, mspaint,
+                                   notepad, system)
 from core.profiles.registry import ProfileRegistry
 
 
@@ -49,6 +50,9 @@ def build_default_registry(uia_driver: Optional[Callable[[str, dict], Any]] = No
     reg.register(jlceda.PROFILE, lambda p: jlceda._ADAPTER(p, evaluator=cdp_evaluator))
     reg.register(notepad.PROFILE, lambda p: notepad._ADAPTER(p, driver=uia_driver))
     reg.register(mspaint.PROFILE, lambda p: mspaint._ADAPTER(p, grounder=vision_grounder))
+    # 整机 GUI 画像（AI GUI 体系 pc_* 对等层）与级别③共用同一 osctl 执行器：
+    # 操作面是整机可见桌面本体（desktop 名为空），无底座时 dry-run 离线可校验。
+    reg.register(desktop.PROFILE, lambda p: desktop._ADAPTER(p, executor=vision_grounder))
     if discover_subplugins:
         # 扫描发现目录，把已安装的领域子插件（外部 VS Code 扩展）自动收编为 @ 工作层。
         from core.subplugin import register_subplugins
