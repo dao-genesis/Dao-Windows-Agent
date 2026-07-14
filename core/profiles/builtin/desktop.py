@@ -119,6 +119,16 @@ def _wait_change(adapter, instance, x: int = 0, y: int = 0, w: int = 0, h: int =
     return adapter.build_plan("wait_change", [step])
 
 
+def _where_changed(adapter, instance, x: int = 0, y: int = 0, w: int = 0, h: int = 0,
+                   timeout: int = 10, **_):
+    step: dict = {"op": "where_changed", "x": x, "y": y, "timeout": timeout}
+    if w:
+        step["w"] = w
+    if h:
+        step["h"] = h
+    return adapter.build_plan("where_changed", [step])
+
+
 PROFILE = AppProfile(
     app_id="desktop",
     display_name="整机 GUI (截屏/鼠键/剪贴板/窗口/UIA · AI GUI 体系收编)",
@@ -172,6 +182,9 @@ PROFILE = AppProfile(
         Verb("wait_change", "等屏幕区域出现变化(轮询指纹)",
              {"x": "左上x", "y": "左上y", "w": "宽", "h": "高", "timeout": "秒"},
              handler=_wait_change),
+        Verb("where_changed", "等区域变化并回变化位置(变化像素最小包围盒·绝对坐标)",
+             {"x": "左上x", "y": "左上y", "w": "宽", "h": "高", "timeout": "秒"},
+             handler=_where_changed),
     ],
 )
 _ADAPTER = GuiDesktopAdapter

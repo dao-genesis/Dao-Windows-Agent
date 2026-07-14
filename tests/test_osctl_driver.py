@@ -311,3 +311,20 @@ def test_pc_region_hash_and_wait_change():
     ex2 = OsctlExecutor(fake2)
     r3 = ex2._step("", {"op": "wait_change", "timeout": 2, "interval": 0.01})
     assert r3["ok"] and r3["changed"] is True
+
+
+def test_pc_where_changed_locates_bbox():
+    base = bytearray(4 * 4 * 3)
+    changed = bytearray(base)
+    changed[(1 * 4 + 2) * 3] = 0xFF          # 只动 (x=2,y=1) 一个像素
+    fake = PcOsctl(frames=[bytes(base), bytes(changed)])
+    ex = OsctlExecutor(fake)
+    r = ex._step("", {"op": "where_changed", "x": 10, "y": 20,
+                      "timeout": 2, "interval": 0.01})
+    assert r["ok"] and r["changed"] is True
+    assert r["rect"] == {"x": 12, "y": 21, "w": 1, "h": 1}
+    # 帧不变 → 超时如实报未变化
+    fake2 = PcOsctl(frames=[bytes(base)])
+    ex2 = OsctlExecutor(fake2)
+    r2 = ex2._step("", {"op": "where_changed", "timeout": 0.1, "interval": 0.01})
+    assert not r2["ok"] and r2["changed"] is False

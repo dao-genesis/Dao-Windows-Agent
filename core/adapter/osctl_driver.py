@@ -344,7 +344,7 @@ class OsctlExecutor:
         self.os.set_clipboard(step.get("text", ""))
         return {"op": "clipboard_set", "ok": True}
 
-    def _region_digest(self, step: dict) -> dict:
+    def _region_rgb(self, step: dict) -> tuple[int, int, bytes]:
         x, y = int(step.get("x", 0)), int(step.get("y", 0))
         kw = {}
         if step.get("w") is not None:
@@ -352,8 +352,29 @@ class OsctlExecutor:
         if step.get("h") is not None:
             kw["h"] = int(step["h"])
         w, h, rgb = self.os.capture_rgb(x, y, **kw)
+        return w, h, bytes(rgb)
+
+    def _region_digest(self, step: dict) -> dict:
+        w, h, rgb = self._region_rgb(step)
         return {"w": w, "h": h,
-                "hash": hashlib.sha256(bytes(rgb)).hexdigest()}
+                "hash": hashlib.sha256(rgb).hexdigest()}
+
+    @staticmethod
+    def _diff_bbox(w: int, h: int, a: bytes, b: bytes) -> Optional[dict]:
+        """两帧 RGB 逐像素比对，回不同像素的最小包围盒(区域内相对坐标)。"""
+        x0, y0, x1, y1 = w, h, -1, -1
+        stride = w * 3
+        for row in range(h):
+            ra, rb = a[row * stride:(row + 1) * stride], b[row * stride:(row + 1) * stride]
+            if ra == rb:
+                continue
+            y0, y1 = min(y0, row), max(y1, row)
+            for col in range(w):
+                if ra[col * 3:col * 3 + 3] != rb[col * 3:col * 3 + 3]:
+                    x0, x1 = min(x0, col), max(x1, col)
+        if x1 < 0:
+            return None
+        return {"x": x0, "y": y0, "w": x1 - x0 + 1, "h": y1 - y0 + 1}
 
     def _op_region_hash(self, desktop: str, step: dict) -> dict:
         return {"op": "region_hash", "ok": True, **self._region_digest(step)}
@@ -367,6 +388,24 @@ class OsctlExecutor:
                 return {"op": "wait_change", "ok": True, "changed": True, "hash": cur}
             time.sleep(float(step.get("interval", 0.5)))
         return {"op": "wait_change", "ok": False, "changed": False,
+                "error": "区域在超时内无变化"}
+
+    def _op_where_changed(self, desktop: str, step: dict) -> dict:
+        """等区域变化并回「变在哪」：变化像素的最小包围盒(绝对屏幕坐标)。"""
+        w0, h0, base = self._region_rgb(step)
+        deadline = time.time() + float(step.get("timeout", 10))
+        while time.time() < deadline:
+            w1, h1, cur = self._region_rgb(step)
+            if (w1, h1) == (w0, h0) and cur != base:
+                box = self._diff_bbox(w0, h0, base, cur)
+                if box is None:
+                    continue
+                ox, oy = int(step.get("x", 0)), int(step.get("y", 0))
+                return {"op": "where_changed", "ok": True, "changed": True,
+                        "rect": {"x": ox + box["x"], "y": oy + box["y"],
+                                 "w": box["w"], "h": box["h"]}}
+            time.sleep(float(step.get("interval", 0.5)))
+        return {"op": "where_changed", "ok": False, "changed": False,
                 "error": "区域在超时内无变化"}
 
     def _op_wait_for(self, desktop: str, step: dict) -> dict:
@@ -423,6 +462,7 @@ _OPS: dict[str, Callable[[OsctlExecutor, str, dict], dict]] = {
     "clipboard_set": OsctlExecutor._op_clipboard_set,
     "region_hash": OsctlExecutor._op_region_hash,
     "wait_change": OsctlExecutor._op_wait_change,
+    "where_changed": OsctlExecutor._op_where_changed,
 }
 
 
