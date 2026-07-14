@@ -127,7 +127,7 @@ def test_firstlogon_rdpwrap_ini_fetched_fresh():
         src = fh.read()
     # 取 rdpwrap 段落
     i = src.index("RDPWrap（")
-    seg = src[i:i + 5000]
+    seg = src[i:i + 6500]
     # ini 必须在线直取（Invoke-WebRequest），且不能用 Get-Payload 取 ini
     assert "sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini" in seg
     assert "Invoke-WebRequest -UseBasicParsing -Uri $iniUrl" in seg
