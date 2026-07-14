@@ -19,6 +19,7 @@ let panel;           // 旧控制面板（降级为辅助）
 const desktopPanels = new Map(); // key(账号名或 ide_<hash>) → 桌面路由面板（每账号一路独立桌面）
 let spawnedBridge = null;
 let activeBridgeUrl = null;
+let _ideTools = null;  // vscode_* IDE 对等面子插件宿主
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("daoWin");
@@ -1139,6 +1140,13 @@ async function activate(context) {
     const c0 = cfg();
     await daoMcp.activateDaoMcp(context, { pythonPath: c0.pythonPath, bridgeUrl: c0.bridgeUrl, token: c0.token, log: (m) => log("[dao-mcp] " + m) });
   } catch (e) { log("[dao-mcp] 工具层注册失败: " + (e && e.stack ? e.stack : e)); }
+  // vscode_* IDE 对等面(历史四模块工具组): 命令/诊断/定义/引用/符号/打开/活动编辑器
+  // 包成本地子插件 @ide → 机控桥扫描描述符后自动多出一路领域工作层。
+  try {
+    const ideTools = require("./dao-ide-tools");
+    const c2 = cfg();
+    _ideTools = await ideTools.startIdeTools({ vscode, token: c2.token, log: (m) => log("[dao-ide-tools] " + m) });
+  } catch (e) { log("[dao-ide-tools] IDE 对等面启动失败: " + (e && e.stack ? e.stack : e)); }
   // 二合一子模块(FreeCAD / KiCad / 嘉立创EDA / HomeAssistant …): 构建时由 unify.js 折入 vendor/。
   try { await activateVendorModules(context); } catch (e) { log("子模块编排异常: " + (e && e.stack ? e.stack : e)); }
   // 启动即收编同装的 DAO 领域子插件 → 机控桥自动多出各路 @ 工作层
@@ -1189,6 +1197,7 @@ async function activate(context) {
 }
 
 function deactivate() {
+  if (_ideTools) { try { _ideTools.stop(); } catch (e) {} _ideTools = null; }
   for (const v of _vendorLoaded) { try { v.mod.deactivate && v.mod.deactivate(); } catch (e) {} }
   if (spawnedBridge) { try { spawnedBridge.kill(); } catch (e) {} }
   for (const p of desktopPanels.values()) { try { p.dispose(); } catch (e) {} }
