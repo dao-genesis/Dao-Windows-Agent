@@ -72,8 +72,12 @@ class CascadePanelProvider {
     this._view = webviewView;
     this._disposed = false;
     // 官方宿主态(LS 端口/CSRF/登录)变更 → 刷新 env 行，与官方登录模式同源
-    if (hostState) { const h = hostState(); const fn = () => { this._pushEnv(); this._handleSessionsList(); this._pushCascadeConfigOptions(); }; h.listeners.add(fn);
-      webviewView.onDidDispose(() => h.listeners.delete(fn)); }
+    // 去抖合流: 宿主态变更可能连发(fused 各分片相继落定), 300ms 收口只刷一次
+    if (hostState) { const h = hostState(); let t = null;
+      const fn = () => { if (t) clearTimeout(t);
+        t = setTimeout(() => { t = null; this._pushEnv(); this._handleSessionsList(); this._pushCascadeConfigOptions(); }, 300); };
+      h.listeners.add(fn);
+      webviewView.onDidDispose(() => { h.listeners.delete(fn); if (t) clearTimeout(t); }); }
     const w = webviewView.webview;
     w.options = { enableScripts: true, localResourceRoots: [this._ctx.extensionUri] };
     w.html = this._html(w);
