@@ -19,3 +19,7 @@ devin_login*.html
 
 # 二合一构建装配产物(unify.js 折入的领域子模块, 构建时生成)
 ide/vscode/vendor/
+
+# 隧道会话租约运行时台账（窗口↔会话持久绑定）——运行时生成，不入库
+desktop/sessions-state.json
+desktop/sessions-state.json.tmp

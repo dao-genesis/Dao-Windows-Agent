@@ -53,6 +53,17 @@ const SESSIONS_JSON =
 const ACCOUNTS_JSON =
   process.env.DAO_ACCOUNTS_JSON || path.join(__dirname, "..", "accounts.json");
 
+// 会话租约台账（窗口↔会话持久绑定）：每个 IDE 窗口/分身按其稳定 key（ide 或 ide.分身号）
+// 首次取 token 即登记一条租约(lease)，落盘持久化；同一 key 复连（IDE 重启后）命中同一 leaseId，
+// 从而确定性地复归“同一路桌面身份+同一账号/目标”。
+//
+// 诚实边界：RDP 协议本身无“连到指定 termsrv session id”的客户端参数，Windows 侧会话号由
+// termsrv 分配（同账号多路 = 各自独立 Active）。故本租约持久化的是【窗口↔身份/账号/目标】的确定性
+// 映射（复连回同一账号、同一 RDP 目标、同一逻辑桌面槽位），而非强制 termsrv 内部会话号。
+const SESSIONS_STATE_JSON =
+  process.env.DAO_SESSIONS_STATE_JSON ||
+  path.join(__dirname, "..", "sessions-state.json");
+
 function loadJson(p) {
   try {
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8")) || {};
@@ -82,6 +93,67 @@ function targetForIde(ide) {
   const map = loadJson(SESSIONS_JSON);
   const t = (map && map[ide]) || {};
   return Object.assign({}, DEFAULT_RDP, t);
+}
+
+// —— 会话租约台账（窗口↔会话持久绑定）——
+// key = 稳定的窗口/分身身份（ide 或 ide.分身号 或 account:分身号）。
+function leaseKey(ide, account) {
+  return account ? `account:${account}` : String(ide || "ide_default");
+}
+
+function loadLeases() {
+  const st = loadJson(SESSIONS_STATE_JSON);
+  return st && typeof st === "object" && st.leases ? st : { leases: {} };
+}
+
+function saveLeases(state) {
+  try {
+    const tmp = SESSIONS_STATE_JSON + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, SESSIONS_STATE_JSON);
+  } catch (e) {
+    console.error("[tunnel] 落盘 sessions-state 失败:", e.message);
+  }
+}
+
+// 登记/更新一条租约：首次见到该 key → 生成稳定 leaseId 并落盘；再次（含 IDE 重启后）
+// 命中同一 key → 复用同一 leaseId + 复归同一账号/目标，实现窗口↔会话确定性复连。
+function recordLease(ide, account, target) {
+  const state = loadLeases();
+  const key = leaseKey(ide, account);
+  const now = new Date().toISOString();
+  const prev = state.leases[key];
+  const lease = prev || {
+    leaseId: "lease_" + crypto.randomBytes(6).toString("hex"),
+    key,
+    firstSeen: now,
+    mintCount: 0,
+  };
+  lease.ide = ide || null;
+  lease.account = account || null;
+  lease.target = target
+    ? { hostname: target.hostname, port: String(target.port), username: target.username }
+    : lease.target || null;
+  lease.lastSeen = now;
+  lease.mintCount = (lease.mintCount || 0) + 1;
+  lease.reconnect = !!prev; // 本次是否为对既有租约的复连
+  state.leases[key] = lease;
+  saveLeases(state);
+  return lease;
+}
+
+function listLeases() {
+  const state = loadLeases();
+  return Object.values(state.leases);
+}
+
+function dropLease(ide, account) {
+  const state = loadLeases();
+  const key = leaseKey(ide, account);
+  const existed = !!state.leases[key];
+  delete state.leases[key];
+  saveLeases(state);
+  return existed;
 }
 
 // 使用 guacamole-lite 的 Crypt 模块生成兼容 token（AES-256-CBC）。
@@ -133,6 +205,27 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, accounts }));
     return;
   }
+  if (u.pathname === "/sessions") {
+    // GET  /sessions            列全部租约
+    // GET  /sessions?ide=X      查单条租约（含 reconnect 标志）
+    // POST /sessions/drop?ide=X 释放一条租约（窗口关闭/分身销毁时调用）
+    const ide = u.searchParams.get("ide") || undefined;
+    const account = u.searchParams.get("account") || undefined;
+    if (req.method === "POST") {
+      const dropped = dropLease(ide, account);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, dropped }));
+      return;
+    }
+    let out = listLeases();
+    if (ide || account) {
+      const key = leaseKey(ide, account);
+      out = out.filter((l) => l.key === key);
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, leases: out }));
+    return;
+  }
   if (u.pathname === "/token") {
     const ide = u.searchParams.get("ide") || "ide_default";
     const account = u.searchParams.get("account") || undefined;
@@ -141,8 +234,13 @@ const httpServer = http.createServer((req, res) => {
     const dpi = parseInt(u.searchParams.get("dpi") || "0", 10) || undefined;
     try {
       const token = mintToken(ide, { account, width, height, dpi });
+      const target = account ? targetForAccount(account) : targetForIde(ide);
+      const lease = recordLease(ide, account, target);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ token, ws_port: WS_PORT, ide, account: account || null }));
+      res.end(JSON.stringify({
+        token, ws_port: WS_PORT, ide, account: account || null,
+        leaseId: lease.leaseId, reconnect: lease.reconnect,
+      }));
     } catch (e) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(e.message || e) }));
@@ -152,6 +250,8 @@ const httpServer = http.createServer((req, res) => {
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
 });
+// 仅当作为入口进程直接运行时才起监听/隧道；被 require（单测）时只暴露纯函数，不占端口、不连 guacd。
+function startServer() {
 httpServer.listen(HTTP_PORT, BIND, () => {
   console.log(`[tunnel] 令牌铸造 HTTP 就绪 http://${BIND}:${HTTP_PORT}/token?ide=<hash>`);
 });
@@ -197,5 +297,14 @@ guacServer.on("open", (conn) => console.log(`[tunnel] 会话打开 ${conn.connec
 guacServer.on("close", (conn) => console.log(`[tunnel] 会话关闭 ${conn.connectionId || 'unknown'}`));
 guacServer.on("error", (conn, err) => console.error("[tunnel] 错误:", err && err.message));
 console.log(`[tunnel] WebSocket↔guacd 隧道就绪 ws://127.0.0.1:${WS_PORT}/?token=<token>  guacd=${GUACD_HOST}:${GUACD_PORT}`);
+}
 
-module.exports = { mintToken, encryptToken };
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  mintToken, encryptToken, startServer,
+  leaseKey, recordLease, listLeases, dropLease, loadLeases,
+  SESSIONS_STATE_JSON,
+};
