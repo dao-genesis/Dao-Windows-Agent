@@ -288,6 +288,35 @@ if (-not (Test-Cmd $freecadPaths)) {
     } catch { Log "offline freecad failed: $_" }
   }
 } else { Log "freecad already present" }
+
+# 8b) Mesa3D 软件 OpenGL（llvmpipe）注入 FreeCAD\bin：QEMU 虚拟显示器仅 "Microsoft Basic
+#     Display Adapter"，无 OpenGL 2.0 → FreeCAD 带 3D 视口启动即崩。就近放三件 DLL 得纯软件
+#     OpenGL 4.5（零 GPU 依赖），并置机器级 env 强制 llvmpipe。装不上不阻断（headless 算子仍可跑）。
+try {
+  $fcGuiPaths = @("$env:ProgramFiles\FreeCAD*\bin\FreeCAD.exe","$env:LOCALAPPDATA\Programs\FreeCAD*\bin\FreeCAD.exe")
+  $fcGui = Get-ChildItem $fcGuiPaths -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($fcGui) {
+    $binDir = $fcGui.DirectoryName
+    $mesa = @{ 'opengl32.dll'='mesa_opengl32.dll'; 'libgallium_wgl.dll'='mesa_libgallium_wgl.dll'; 'dxil.dll'='mesa_dxil.dll' }
+    $mesaOk = $true
+    foreach ($dst in $mesa.Keys) {
+      $srcName = $mesa[$dst]; $dstPath = Join-Path $binDir $dst
+      if (Test-Path $dstPath) { continue }
+      if ($payloadDir -and (Test-Path "$payloadDir\$srcName")) {
+        Copy-Item -Force "$payloadDir\$srcName" $dstPath
+      }
+      if (-not (Test-Path $dstPath)) { $mesaOk = $false; Log "mesa $dst 缺失（缓存无 $srcName）" }
+    }
+    if ($mesaOk) {
+      [Environment]::SetEnvironmentVariable('GALLIUM_DRIVER','llvmpipe','Machine')
+      [Environment]::SetEnvironmentVariable('MESA_GL_VERSION_OVERRIDE','4.5','Machine')
+      [Environment]::SetEnvironmentVariable('MESA_GLSL_VERSION_OVERRIDE','450','Machine')
+      [Environment]::SetEnvironmentVariable('LIBGL_ALWAYS_SOFTWARE','1','Machine')
+      Log "mesa software-OpenGL injected into $binDir (llvmpipe, GL4.5)"
+    } else { Log "mesa injection incomplete（FreeCAD 3D 视口可能仍无法渲染）" }
+  } else { Log "mesa injection skipped: FreeCAD GUI exe 未落盘" }
+} catch { Log "mesa injection failed: $_" }
+
 # KiCad：桥探 kicad-cli.exe（含 winget 用户域 LOCALAPPDATA\Programs 与任意版本号）
 $kicadPaths = @("$env:ProgramFiles\KiCad\*\bin\kicad-cli.exe","$env:ProgramFiles\KiCad\bin\kicad-cli.exe","$env:LOCALAPPDATA\Programs\KiCad\*\bin\kicad-cli.exe")
 if (-not (Test-Cmd $kicadPaths)) {

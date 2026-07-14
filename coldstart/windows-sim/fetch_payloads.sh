@@ -29,5 +29,32 @@ fetch rdpwrap_community.ini 'https://raw.githubusercontent.com/sebaxakerhtc/rdpw
 # 领域软件本体（大件·全离线装机）：guest 常无外网/winget，缺缓存即装不上（真机踩坑）
 fetch FreeCAD-setup.exe 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-installer-1.exe' || rc=1
 fetch KiCad-setup.exe 'https://kicad-downloads.s3.cern.ch/windows/stable/kicad-8.0.9-x86_64.exe' || rc=1
+
+# Mesa3D 软件 OpenGL（llvmpipe）：QEMU 虚拟显示器只报 "Microsoft Basic Display Adapter"，
+# 无 OpenGL 2.0，FreeCAD/带 3D 视口的软件启动即崩（"requires OpenGL 2.0"）。把 Mesa 的
+# opengl32.dll(ICD 垫片)+libgallium_wgl.dll(llvmpipe 驱动)+dxil.dll 就近放到 FreeCAD\bin，
+# 即得纯软件 OpenGL 4.5，零 GPU 依赖。此处在宿主(有 7z)解出三件 DLL 落缓存，随盘带入 guest。
+fetch_mesa() {
+  local out7z="$PAY/mesa.7z"
+  local need=("mesa_opengl32.dll" "mesa_libgallium_wgl.dll" "mesa_dxil.dll")
+  local have=1; for f in "${need[@]}"; do [ -s "$PAY/$f" ] || have=0; done
+  if [ "$have" = 1 ]; then echo "  [OK] Mesa 三件 DLL 已缓存"; return 0; fi
+  local url
+  url="$(curl -fsSL --retry 3 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' \
+        | grep -oE '"browser_download_url": *"[^"]*release-msvc\.7z"' | head -1 | grep -oE 'https[^"]*')"
+  [ -n "$url" ] || { echo "  [--] Mesa 版本查询失败（guest 首登在线兜底）"; return 1; }
+  echo "  [..] 拉取 Mesa: $url"
+  curl -fL --retry 3 -o "$out7z" "$url" || { echo "  [--] Mesa 下载失败"; return 1; }
+  local ex="$PAY/.mesa_extract"; rm -rf "$ex"; mkdir -p "$ex"
+  if command -v 7z >/dev/null 2>&1; then 7z x -y -o"$ex" "$out7z" >/dev/null 2>&1
+  elif command -v 7za >/dev/null 2>&1; then 7za x -y -o"$ex" "$out7z" >/dev/null 2>&1
+  else echo "  [--] 无 7z，无法解出 Mesa DLL"; return 1; fi
+  cp -f "$ex/x64/opengl32.dll"        "$PAY/mesa_opengl32.dll"        2>/dev/null || rc=1
+  cp -f "$ex/x64/libgallium_wgl.dll"  "$PAY/mesa_libgallium_wgl.dll"  2>/dev/null || rc=1
+  cp -f "$ex/x64/dxil.dll"            "$PAY/mesa_dxil.dll"            2>/dev/null || rc=1
+  rm -rf "$ex" "$out7z"
+  for f in "${need[@]}"; do [ -s "$PAY/$f" ] && echo "  [OK] $f 就绪 ($(du -h "$PAY/$f" | cut -f1))"; done
+}
+fetch_mesa || rc=1
 echo "现有载荷:"; ls -lh "$PAY" 2>/dev/null || true
 exit $rc

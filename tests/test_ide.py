@@ -162,6 +162,30 @@ def test_coldstart_domain_payloads_and_cdp_binding():
     assert "DAO_CDP_PORT" in fl and "--remote-debugging-port=9222" in fl
 
 
+def test_firstlogon_mesa_software_opengl_for_freecad():
+    """真机踩坑回归（FreeCAD GPU 本源）：QEMU 虚拟显示器仅 'Microsoft Basic Display Adapter'，
+    无 OpenGL 2.0，FreeCAD 带 3D 视口启动即崩。冷启动须把 Mesa llvmpipe 的三件 DLL 就近放进
+    FreeCAD\\bin，并置机器级 env 强制软件 OpenGL 4.5。宿主(有 7z)预解 DLL 落缓存，随盘带入。"""
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "fetch_payloads.sh"),
+              encoding="utf-8") as fh:
+        fetch = fh.read()
+    # 宿主预下 + 解出三件 DLL 落缓存
+    assert "mesa-dist-win" in fetch
+    for f in ("mesa_opengl32.dll", "mesa_libgallium_wgl.dll", "mesa_dxil.dll"):
+        assert f in fetch
+    with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"),
+              encoding="utf-8") as fh:
+        fl = fh.read()
+    # 就近注入 FreeCAD\bin 的三件 DLL（缓存优先）
+    for dst in ("opengl32.dll", "libgallium_wgl.dll", "dxil.dll"):
+        assert dst in fl
+    assert "mesa_opengl32.dll" in fl
+    # 机器级 env 强制 llvmpipe 软件 OpenGL 4.5（无 GPU 依赖）
+    assert "GALLIUM_DRIVER" in fl and "llvmpipe" in fl
+    assert "MESA_GL_VERSION_OVERRIDE" in fl and "LIBGL_ALWAYS_SOFTWARE" in fl
+    assert "mesa software-OpenGL injected" in fl
+
+
 def test_firstlogon_log_is_pipeline_safe():
     """真机踩坑回归：Log 绝不能用 Tee-Object 把日志行泄进管道——否则 Get-Payload 这类
     '末句返回路径' 的函数会连同 Log 行返回成 System.Object[]，令 Start-Process/Expand-Archive
