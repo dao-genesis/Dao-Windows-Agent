@@ -152,7 +152,7 @@ PROFILE = AppProfile(
         Verb("scroll", "滚轮滚动", {"dy": "纵向格数(负=下)", "dx": "横向格数"}, handler=_scroll),
         Verb("type", "焦点处输入 Unicode 文本", {"text": "文本"}, handler=_type,
              aliases=("type_text",)),
-        Verb("keys", "组合键/热键(如 ^s、%{F4})", {"keys": "按键谱"}, handler=_keys,
+        Verb("keys", "组合键/热键(如 ctrl+s、alt+f4)", {"keys": "按键谱"}, handler=_keys,
              aliases=("hotkey", "key_combo")),
         Verb("clipboard_get", "读剪贴板文本", handler=_clipboard_get, aliases=("paste_read",)),
         Verb("clipboard_set", "写剪贴板文本", {"text": "文本"}, handler=_clipboard_set,
