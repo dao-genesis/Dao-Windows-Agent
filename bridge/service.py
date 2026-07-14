@@ -69,8 +69,8 @@ class BridgeService:
     ) -> None:
         # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
         # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
-        # 本机若有可达的 Chrome CDP 端口（DAO_CDP_PORT，默认 29229），把 browser 画像
-        # 与 jlceda 的 CDP evaluator 绑到真浏览器；不可达则保持 dry-run（离线可校验）。
+        # 显式设置 DAO_CDP_PORT（guest 内 firstlogon 统一 9222；Web 版 EDA 走 29229/29230）
+        # 才把 browser 画像与 jlceda 的 CDP evaluator 绑到真浏览器；未设置保持 dry-run（离线可校验）。
         if registry is None:
             factory, evaluator = _detect_cdp_bindings()
             registry = build_default_registry(
