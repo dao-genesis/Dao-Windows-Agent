@@ -61,6 +61,46 @@ def test_positional_binding_and_kwonly():
     ]
 
 
+def test_new_semantic_verbs_registered_and_bound():
+    reg = build_default_registry()
+    prof = reg.get("browser")
+    for name in ("double_click", "context_click", "dnd", "scroll",
+                 "set_value", "set_file_input", "press_enter",
+                 "wait_for", "wait_change", "close"):
+        assert prof.verb(name), f"缺动词 {name}"
+
+    class _Rich:
+        def __init__(self):
+            self.calls = []
+
+        def dnd(self, source, target):
+            self.calls.append(("dnd", source, target)); return True
+
+        def set_file_input(self, selector, files):
+            self.calls.append(("set_file_input", selector, files))
+
+        def press_enter(self):
+            self.calls.append(("press_enter",))
+
+        def wait_for(self, expr_js, timeout=10.0):
+            self.calls.append(("wait_for", expr_js, timeout)); return True
+
+    fake = _Rich()
+    ad = _adapter(fake)
+    inst = ad.launch(workdir=".")
+    assert ad.invoke(inst, "dnd", source="#a", target="#b").ok
+    assert ad.invoke(inst, "set_file_input", selector="#f",
+                     files=["/tmp/a.png"]).ok
+    assert ad.invoke(inst, "press_enter").ok
+    assert ad.invoke(inst, "wait_for", expr_js="1==1", timeout=3).ok
+    assert fake.calls == [
+        ("dnd", "#a", "#b"),
+        ("set_file_input", "#f", ["/tmp/a.png"]),
+        ("press_enter",),
+        ("wait_for", "1==1", 3),
+    ]
+
+
 def test_unknown_verb_and_error_reported():
     fake = _FakeBrowser()
     ad = _adapter(fake)

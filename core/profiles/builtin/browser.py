@@ -36,6 +36,16 @@ _METHODS: dict[str, tuple[str, dict[str, str]]] = {
     "url": ("当前页面 URL", {}),
     "title": ("当前页面标题", {}),
     "screenshot": ("整页截图到磁盘(证据·非操作依据)", {"path": "保存路径"}),
+    "double_click": ("双击元素", {"selector": "CSS 选择器或可见文本", "by_text": "true=按可见文本定位"}),
+    "context_click": ("右键元素(弹出上下文菜单)", {"selector": "CSS 选择器或可见文本", "by_text": "true=按可见文本定位"}),
+    "dnd": ("拖放(源元素→目标元素)", {"source": "源选择器", "target": "目标选择器"}),
+    "scroll": ("滚轮滚动(像素量)", {"dy": "纵向像素(正=下)", "dx": "横向像素"}),
+    "set_value": ("直写表单元素 value(触发 input/change)", {"selector": "CSS 选择器", "value": "值"}),
+    "set_file_input": ("给 <input type=file> 注入本地文件路径(上传)", {"selector": "file input 选择器", "files": "本地文件路径数组"}),
+    "press_enter": ("按回车", {}),
+    "wait_for": ("等 JS 表达式为真(显式闭环等待)", {"expr_js": "JS 表达式", "timeout": "秒"}),
+    "wait_change": ("等 JS 表达式的值发生变化", {"expr_js": "JS 表达式", "timeout": "秒"}),
+    "close": ("关闭浏览器连接", {}),
 }
 
 _ARG_ORDER: dict[str, tuple[str, ...]] = {
@@ -56,6 +66,16 @@ _ARG_ORDER: dict[str, tuple[str, ...]] = {
     "url": (),
     "title": (),
     "screenshot": ("path",),
+    "double_click": ("selector", "by_text"),
+    "context_click": ("selector", "by_text"),
+    "dnd": ("source", "target"),
+    "scroll": ("dy", "dx"),
+    "set_value": ("selector", "value"),
+    "set_file_input": ("selector", "files"),
+    "press_enter": (),
+    "wait_for": ("expr_js", "timeout"),
+    "wait_change": ("expr_js", "timeout"),
+    "close": (),
 }
 
 _KWONLY = {("select_option", "value")}
