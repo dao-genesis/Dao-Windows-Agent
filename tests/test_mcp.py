@@ -20,7 +20,7 @@ def test_attaches_to_live_local_bridge(monkeypatch):
     monkeypatch.delenv("DAO_WIN_BRIDGE_URL", raising=False)
     monkeypatch.delenv("DAO_WIN_LOCAL_BRIDGE", raising=False)
     monkeypatch.setenv("DAO_WIN_TOKEN", "t1")
-    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base: True)
+    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base, token="": True)
     svc = _make_service()
     assert isinstance(svc, RemoteBridge)
     assert svc.base == mcp_mod._LOCAL_PROBE_URLS[0] and svc.token == "t1"
@@ -30,14 +30,14 @@ def test_probes_fall_through_candidates(monkeypatch):
     monkeypatch.delenv("DAO_WIN_BRIDGE_URL", raising=False)
     monkeypatch.delenv("DAO_WIN_LOCAL_BRIDGE", raising=False)
     alive = mcp_mod._LOCAL_PROBE_URLS[1]
-    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base: base == alive)
+    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base, token="": base == alive)
     svc = _make_service()
     assert isinstance(svc, RemoteBridge) and svc.base == alive
 
 
 def test_falls_back_to_inprocess_when_no_bridge(monkeypatch):
     monkeypatch.delenv("DAO_WIN_BRIDGE_URL", raising=False)
-    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base: False)
+    monkeypatch.setattr(mcp_mod, "_probe_local_bridge", lambda base, token="": False)
     assert isinstance(_make_service(), BridgeService)
 
 
@@ -46,7 +46,7 @@ def test_local_probe_url_env_override(monkeypatch):
     monkeypatch.setenv("DAO_WIN_LOCAL_BRIDGE", "http://127.0.0.1:12345")
     seen = {}
 
-    def probe(base):
+    def probe(base, token=""):
         seen["base"] = base
         return True
     monkeypatch.setattr(mcp_mod, "_probe_local_bridge", probe)

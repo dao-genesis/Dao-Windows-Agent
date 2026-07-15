@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from bridge.mcp import handle_request
 from bridge.service import BridgeService
@@ -225,3 +226,78 @@ def test_dispatch_clone_plan_and_matrix(tmp_path):
     status, err = svc.dispatch("POST", "/api/clone.plan",
                                {"app_id": "vscode", "clone_id": "c1", "tiers": ["bogus"]})
     assert status == 400 and "档位" in err["error"]
+
+
+def _serve_bridge_with_token(token: str):
+    """在临时端口起一路真实 bridge.server（http.server 薄壳），返回 (base_url, stop)。"""
+    import threading
+    from http.server import ThreadingHTTPServer
+    from bridge import server as _srv
+
+    _srv._TOKEN = token
+    _srv._SERVICE = BridgeService()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _srv._Handler)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+
+    def stop():
+        httpd.shutdown()
+        _srv._TOKEN = ""
+
+    return f"http://127.0.0.1:{port}", stop
+
+
+def test_probe_skips_token_protected_bridge_we_cannot_auth():
+    """真机踩坑回归：本机若有一路他人 token 保护桥，/api/health 照样 2xx；
+    盲附会导致每次工具调用 401（不透明失败·污染测试）。探针须带 token 鉴权自证，
+    token 不匹配即判不可用，回退进程内直驱。"""
+    from bridge import mcp as _mcp
+
+    base, stop = _serve_bridge_with_token("secret-token")
+    try:
+        # 无 token / 错 token：探针须判不可用（不附着）
+        assert _mcp._probe_local_bridge(base, "") is False
+        assert _mcp._probe_local_bridge(base, "wrong-token") is False
+        # 正确 token：可附着
+        assert _mcp._probe_local_bridge(base, "secret-token") is True
+
+        # 冒名服务（任意路径都回 200 但结构不对，如 VPS 上撞见的模拟器）：也须判不可用
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Impostor(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b'{"status":"ok","host":"VPS-SIM-USER"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, fmt, *args):
+                pass
+
+        imp = ThreadingHTTPServer(("127.0.0.1", 0), _Impostor)
+        threading.Thread(target=imp.serve_forever, daemon=True).start()
+        try:
+            assert _mcp._probe_local_bridge(
+                f"http://127.0.0.1:{imp.server_address[1]}", "any") is False
+        finally:
+            imp.shutdown()
+
+        # 端到端：_make_service 面对只有一路错 token 桥的本机，须回退到进程内 BridgeService
+        orig_urls = _mcp._LOCAL_PROBE_URLS
+        orig_env = os.environ.get("DAO_WIN_TOKEN")
+        _mcp._LOCAL_PROBE_URLS = (base,)
+        os.environ["DAO_WIN_TOKEN"] = "wrong-token"
+        try:
+            svc = _mcp._make_service()
+            assert isinstance(svc, BridgeService)
+        finally:
+            _mcp._LOCAL_PROBE_URLS = orig_urls
+            if orig_env is None:
+                os.environ.pop("DAO_WIN_TOKEN", None)
+            else:
+                os.environ["DAO_WIN_TOKEN"] = orig_env
+    finally:
+        stop()
