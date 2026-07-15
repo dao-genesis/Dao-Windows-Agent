@@ -22,6 +22,7 @@ from typing import Any, Optional
 from core.accounts import AccountManager
 from core.adapter.base import ActionResult
 from core.agent.modes import ModeManager
+from core.clone import IsolationTier, isolation_matrix, resolve_isolation
 from core.dispatch import MentionRouter
 from core.handoff import HandoffFlow
 from core.profiles.builtin import build_default_registry
@@ -232,6 +233,17 @@ class BridgeService:
     def account_sessions(self) -> dict:
         return self.accounts.sessions()
 
+    # --- 通用隔离层（单账号多分身：三机制归一选档，见 core/clone/isolation_layer） ---
+    def clone_plan(self, app_id: str, clone_id: str,
+                   tiers: Optional[list] = None, prefer_strongest: bool = False) -> dict:
+        return resolve_isolation(
+            app_id, clone_id, _parse_tiers(tiers), bool(prefer_strongest)).to_dict()
+
+    def clone_matrix(self, app_ids: list,
+                     tiers: Optional[list] = None, prefer_strongest: bool = False) -> dict:
+        return {"matrix": isolation_matrix(
+            app_ids, _parse_tiers(tiers), bool(prefer_strongest))}
+
     # --- REST 路由分发（纯函数，便于单测） ---
     def dispatch(self, method: str, path: str, payload: Optional[dict] = None) -> tuple[int, dict]:
         payload = payload or {}
@@ -305,11 +317,38 @@ class BridgeService:
                 name = _require(payload, "name")
                 return 200, self.account_destroy(
                     name, bool(payload.get("delete_profile", True)))
+            if method == "POST" and path == "/api/clone.plan":
+                app_id = _require(payload, "app_id")
+                clone_id = _require(payload, "clone_id")
+                return 200, self.clone_plan(
+                    app_id, clone_id, payload.get("tiers"),
+                    bool(payload.get("prefer_strongest", False)))
+            if method == "POST" and path == "/api/clone.matrix":
+                app_ids = _require(payload, "app_ids")
+                return 200, self.clone_matrix(
+                    list(app_ids), payload.get("tiers"),
+                    bool(payload.get("prefer_strongest", False)))
         except KeyError as exc:
             return 400, {"error": f"缺少必填参数: {exc.args[0]}"}
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 - 边界统一兜底
             return 500, {"error": f"{type(exc).__name__}: {exc}"}
         return 404, {"error": f"未知路由: {method} {path}"}
+
+
+def _parse_tiers(tiers: Optional[list]) -> Optional[list[IsolationTier]]:
+    """把 ["appdata","session",...] 解析为档位集合；None/空 = 缺省零配置三档。"""
+    if not tiers:
+        return None
+    by_label = {t.label: t for t in IsolationTier}
+    out = []
+    for raw in tiers:
+        key = str(raw).strip().lower()
+        if key not in by_label:
+            raise ValueError(f"tiers 含未知档位: {raw}（可用: {sorted(by_label)}）")
+        out.append(by_label[key])
+    return out
 
 
 def _require(payload: dict, key: str) -> Any:

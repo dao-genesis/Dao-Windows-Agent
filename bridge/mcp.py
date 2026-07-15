@@ -113,6 +113,16 @@ class RemoteBridge:
     def account_sessions(self):
         return self._req("GET", "/api/account.sessions")
 
+    def clone_plan(self, app_id: str, clone_id: str, tiers=None, prefer_strongest: bool = False):
+        return self._req("POST", "/api/clone.plan",
+                         {"app_id": app_id, "clone_id": clone_id,
+                          "tiers": tiers, "prefer_strongest": prefer_strongest})
+
+    def clone_matrix(self, app_ids, tiers=None, prefer_strongest: bool = False):
+        return self._req("POST", "/api/clone.matrix",
+                         {"app_ids": app_ids, "tiers": tiers,
+                          "prefer_strongest": prefer_strongest})
+
 
 # 本机桥候选：bridge.server 默认 9930；guest 置备(start-bridge.ps1)常用 9920
 _LOCAL_PROBE_URLS = ("http://127.0.0.1:9930", "http://127.0.0.1:9920")
@@ -314,6 +324,32 @@ _TOOLS: dict[str, dict] = {
         "properties": {},
         "required": [],
         "handler": lambda a: _SERVICE.account_sessions(),
+    },
+    "clone_plan": {
+        "description": "通用隔离层：为“分身 clone_id 隔离运行 app_id”选出隔离档位"
+                       "（account/session/desktop/appdata）并如实报告能否真隔离。",
+        "properties": {
+            "app_id": {"type": "string", "description": "软件键（如 vscode/devin-desktop/wechat）"},
+            "clone_id": {"type": "string", "description": "分身号（如 session-2）"},
+            "tiers": {"type": "array", "items": {"type": "string"},
+                      "description": "环境可用档位；缺省零配置三档 none/appdata/desktop"},
+            "prefer_strongest": {"type": "boolean", "description": "真时选最强档而非最省档"},
+        },
+        "required": ["app_id", "clone_id"],
+        "handler": lambda a: _SERVICE.clone_plan(
+            a["app_id"], a["clone_id"], a.get("tiers"),
+            bool(a.get("prefer_strongest", False))),
+    },
+    "clone_matrix": {
+        "description": "通用隔离层：一次算出多软件在当前可用档位下的隔离方案矩阵。",
+        "properties": {
+            "app_ids": {"type": "array", "items": {"type": "string"}},
+            "tiers": {"type": "array", "items": {"type": "string"}},
+            "prefer_strongest": {"type": "boolean"},
+        },
+        "required": ["app_ids"],
+        "handler": lambda a: _SERVICE.clone_matrix(
+            a["app_ids"], a.get("tiers"), bool(a.get("prefer_strongest", False))),
     },
 }
 
