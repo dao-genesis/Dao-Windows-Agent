@@ -17,6 +17,18 @@ from core.clone.app_isolation import (
     clone_data_root,
     isolatable_apps,
 )
+from core.clone.isolation_layer import (
+    ALL_TIERS,
+    NEED_REGISTRY,
+    ZERO_CONFIG_TIERS,
+    AppIsolationNeed,
+    IsolationPlan,
+    IsolationTier,
+    SingleInstanceKind,
+    isolation_matrix,
+    need_for,
+    resolve_isolation,
+)
 
 __all__ = [
     "ISOLATION_REGISTRY",
@@ -24,4 +36,14 @@ __all__ = [
     "build_clone_launch",
     "clone_data_root",
     "isolatable_apps",
+    "ALL_TIERS",
+    "NEED_REGISTRY",
+    "ZERO_CONFIG_TIERS",
+    "AppIsolationNeed",
+    "IsolationPlan",
+    "IsolationTier",
+    "SingleInstanceKind",
+    "isolation_matrix",
+    "need_for",
+    "resolve_isolation",
 ]

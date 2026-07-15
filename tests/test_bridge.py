@@ -198,3 +198,30 @@ def test_mcp_handler_exception_returns_error_not_crash():
         assert "RuntimeError" in payload["error"]
     finally:
         del _mcp._TOOLS["_boom"]
+
+
+def test_dispatch_clone_plan_and_matrix(tmp_path):
+    svc = _svc(tmp_path)
+    # 零配置缺省档位：Electron 类 APPDATA 即真隔离
+    status, plan = svc.dispatch("POST", "/api/clone.plan",
+                                {"app_id": "vscode", "clone_id": "session-2"})
+    assert status == 200 and plan["isolated"] is True and plan["tier"] == "appdata"
+    assert plan["app_launch"]["data_dir"].endswith(r"\session-2\vscode")
+    # 全局互斥体软件在零配置档位下如实报告无法保证隔离
+    status, plan = svc.dispatch("POST", "/api/clone.plan",
+                                {"app_id": "wechat", "clone_id": "c1"})
+    assert status == 200 and plan["isolated"] is False and plan["min_tier"] == "session"
+    # 环境启用 session 档位后即可真隔离
+    status, plan = svc.dispatch("POST", "/api/clone.plan",
+                                {"app_id": "wechat", "clone_id": "c1",
+                                 "tiers": ["appdata", "desktop", "session"]})
+    assert status == 200 and plan["isolated"] is True and plan["placement"] == "rdp-session"
+    # 矩阵
+    status, m = svc.dispatch("POST", "/api/clone.matrix",
+                             {"app_ids": ["vscode", "wechat"]})
+    assert status == 200 and m["matrix"]["vscode"]["isolated"] is True
+    assert m["matrix"]["wechat"]["isolated"] is False
+    # 未知档位名 → 400
+    status, err = svc.dispatch("POST", "/api/clone.plan",
+                               {"app_id": "vscode", "clone_id": "c1", "tiers": ["bogus"]})
+    assert status == 400 and "档位" in err["error"]
