@@ -40,10 +40,13 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$")
 
 def _powershell_runner(script: str) -> "tuple[int, str, str]":
     """默认真机 runner：走 powershell -NoProfile -Command。仅 Windows 有效。"""
-    proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True, timeout=120,
-    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, timeout=120,
+        )
+    except FileNotFoundError:
+        return 127, "", "powershell 不可用（非 Windows 主机）：账号档位需在真机 Windows 上执行"
     return proc.returncode, decode_output(proc.stdout), decode_output(proc.stderr)
 
 
