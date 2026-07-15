@@ -31,6 +31,8 @@ qemu-img create -f qcow2 "$DISK" "$size" >/dev/null
 AUTO_ISO="$IMAGES/${name}-unattend.iso"
 tmp="$(mktemp -d)"; cp "$UNATTEND_XML" "$tmp/autounattend.xml"
 cp "$HERE/scripts/firstlogon.ps1" "$tmp/firstlogon.ps1" 2>/dev/null || true
+# 分身内隔离启动器（单账号多分身根治·在分身自己的会话里 per-clone user-data-dir 启动软件）随盘带入。
+cp "$HERE/scripts/dao-clone-open.ps1" "$tmp/dao-clone-open.ps1" 2>/dev/null || true
 # 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）随盘带入 → guest 落地 C:\dao_win\coldstart-auth。
 mkdir -p "$tmp/coldstart-auth"
 cp "$HERE/scripts/devin_auth.js" "$HERE/scripts/devin_inject_cdp.js" "$HERE/scripts/devin-login.ps1" "$tmp/coldstart-auth/" 2>/dev/null || true
