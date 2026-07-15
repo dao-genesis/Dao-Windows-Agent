@@ -59,6 +59,20 @@
         </FirewallGroup>
       </FirewallGroups>
     </component>
+    <!-- 置备兜底（真机实证缺陷：FirstLogonCommands 在部分镜像/OOBE 路径下不触发，
+         C:\dao-firstlogon.log 不存在、机控桥永不上线）：specialize 阶段（SYSTEM）把
+         firstlogon.ps1 从应答盘拷进 C:\，并装 SetupComplete.cmd —— 安装收尾必跑（SYSTEM），
+         与 FirstLogonCommands 双保险；firstlogon.ps1 内置 .provisioned 幂等门，重复触发不重跑。 -->
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
+      publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>1</Order>
+          <Description>Dao provisioning fallback via SetupComplete</Description>
+          <Path>powershell -ExecutionPolicy Bypass -NoProfile -Command "$src=Get-PSDrive -PSProvider FileSystem|ForEach-Object{$_.Root+'firstlogon.ps1'}|Where-Object{Test-Path $_}|Select-Object -First 1; if($src){Copy-Item -Force $src C:\dao-firstlogon-media.ps1; New-Item -ItemType Directory -Force C:\Windows\Setup\Scripts|Out-Null; Set-Content -Encoding ASCII C:\Windows\Setup\Scripts\SetupComplete.cmd 'powershell -ExecutionPolicy Bypass -NoProfile -File C:\dao-firstlogon-media.ps1 &gt;&gt; C:\dao-setupcomplete.log 2&gt;&amp;1'}"</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
   </settings>
 
   <settings pass="oobeSystem">
@@ -92,7 +106,7 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>powershell -ExecutionPolicy Bypass -NoProfile -Command "$p='D','E','F','G'|ForEach-Object{$_+':\firstlogon.ps1'}|Where-Object{Test-Path $_}|Select-Object -First 1; if($p){powershell -ExecutionPolicy Bypass -NoProfile -File $p} else {Set-Content C:\dao-firstlogon.log 'firstlogon.ps1 not found on D:-G:'}"</CommandLine>
+          <CommandLine>powershell -ExecutionPolicy Bypass -NoProfile -Command "$p=Get-PSDrive -PSProvider FileSystem|ForEach-Object{$_.Root+'firstlogon.ps1'}|Where-Object{Test-Path $_}|Select-Object -First 1; if(-not $p -and (Test-Path C:\dao-firstlogon-media.ps1)){$p='C:\dao-firstlogon-media.ps1'}; if($p){powershell -ExecutionPolicy Bypass -NoProfile -File $p} else {Set-Content C:\dao-firstlogon.log 'firstlogon.ps1 not found on any filesystem drive'}"</CommandLine>
           <Description>Dao first-logon provisioning</Description>
         </SynchronousCommand>
       </FirstLogonCommands>
