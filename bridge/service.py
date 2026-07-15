@@ -64,7 +64,7 @@ class BridgeService:
         self,
         registry: Optional[ProfileRegistry] = None,
         manager: Optional[SessionManager] = None,
-        root: str = "/tmp/dao-win/sessions",
+        root: Optional[str] = None,
         accounts: Optional[AccountManager] = None,
         modes: Optional[ModeManager] = None,
     ) -> None:
@@ -79,6 +79,7 @@ class BridgeService:
                 browser_factory=factory, cdp_evaluator=evaluator)
         self.registry = registry
         self.manager = manager or SessionManager(self.registry, root=root)
+        root = self.manager.root
         self.accounts = accounts or AccountManager()
         self.router = MentionRouter(self.registry)
         self.modes = modes or ModeManager(self.registry)

@@ -480,3 +480,14 @@ def test_system_prompt_includes_open_apps():
     reg = build_default_registry()
     prompt = build_system_prompt(reg, ["kicad", "jlceda"])
     assert "KiCad" in prompt and "嘉立创EDA" in prompt and "无为而无不为" in prompt
+
+
+def test_default_session_root_follows_system_tempdir(monkeypatch, tmp_path):
+    import tempfile
+    from core.session.manager import default_session_root
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    root = default_session_root()
+    assert root == os.path.join(str(tmp_path), "dao-win", "sessions")
+    reg = build_default_registry()
+    mgr = SessionManager(reg)
+    assert mgr.root == root
