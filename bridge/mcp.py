@@ -128,11 +128,39 @@ class RemoteBridge:
 _LOCAL_PROBE_URLS = ("http://127.0.0.1:9930", "http://127.0.0.1:9920")
 
 
-def _probe_local_bridge(base: str) -> bool:
-    """本机桥探活：/api/health 免鉴权，2xx 即视为活。"""
+def _probe_local_bridge(base: str, token: str = "") -> bool:
+    """本机桥探活 + 验明正身 + 鉴权自证：三关全过才视为可附着。
+
+    真机（VPS）实证暴露的两类盲附事故：
+    1. 同端口有一路 **他人的 token 保护桥**——/api/health 照样 2xx，盲附后每次
+       真实工具调用都拿 401（不透明失败，且污染测试）。
+    2. 同端口有一路 **任意路径都回 200 的冒名服务**（如模拟器/echo 服务）——探活
+       与鉴权全过，但响应结构完全不对，下游取键即 KeyError。
+    故探针要求：/api/health 回 `{"ok": true}`（本桥指纹），且带 token 的 /api/apps
+    回含 `apps` 键的 2xx。任一不满足即判不可用，回退进程内直驱或下一候选。
+    """
+    base = base.rstrip("/")
     try:
-        with urllib.request.urlopen(base.rstrip("/") + "/api/health", timeout=2) as resp:
-            return 200 <= resp.status < 300
+        with urllib.request.urlopen(base + "/api/health", timeout=2) as resp:
+            if not (200 <= resp.status < 300):
+                return False
+            health = json.loads(resp.read())
+        if not (isinstance(health, dict) and health.get("ok") is True):
+            return False
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    # 鉴权自证：/api/apps 在设了 token 的桥上需 Bearer；无 token 桥则任何请求皆 2xx。
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(base + "/api/apps", headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            if not (200 <= resp.status < 300):
+                return False
+            apps = json.loads(resp.read())
+        return isinstance(apps, dict) and "apps" in apps
+    except urllib.error.HTTPError:
+        # 401/403（token 不匹配/缺失）或其它 HTTP 错误：此桥不可用，勿附着。
+        return False
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
@@ -143,11 +171,11 @@ def _make_service():
     if url:
         return RemoteBridge(url, token)
     # 会话态归一：本机若已有活桥，stdio MCP 附着其上（HTTP 与 MCP 共享同一套
-    # 会话/模式/工程流水），而非各起一份割裂的内存态。探活失败才退回进程内直驱。
+    # 会话/模式/工程流水），而非各起一份割裂的内存态。探活/鉴权失败才退回进程内直驱。
     env_probe = os.environ.get("DAO_WIN_LOCAL_BRIDGE", "").strip()
     candidates = (env_probe,) if env_probe else _LOCAL_PROBE_URLS
     for probe in candidates:
-        if _probe_local_bridge(probe):
+        if _probe_local_bridge(probe, token):
             return RemoteBridge(probe, token)
     return BridgeService()
 
