@@ -74,6 +74,9 @@ if ($src -and $py) {
   # 无头登录注入三件套（rt-flow 本源移植·彻底规避 GUI）落地，供运行时零键鼠登录 Devin。
   if (Test-Path "$src\coldstart-auth") { Copy-Item -Recurse -Force "$src\coldstart-auth" "$dst\coldstart-auth"; Log "coldstart-auth (headless login) deployed" }
   if (Test-Path "$src\tools") { Copy-Item -Recurse -Force "$src\tools" "$dst\tools"; Log "freecad_backend tools deployed" }
+  # 分身内隔离启动器：在分身自己的 RDP 会话里以 per-clone user-data-dir 启动软件，
+  # 根治"单账号两个分身开同一软件（VS Code/Devin Desktop）被首实例吞到错误会话"。
+  foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\dao-clone-open.ps1") { Copy-Item -Force "$d\dao-clone-open.ps1" "$dst\dao-clone-open.ps1"; Log "dao-clone-open.ps1 deployed (per-clone app isolation)"; break } }
   Get-ChildItem -Path $dst -Recurse -Force | ForEach-Object {
     if (-not $_.PSIsContainer) { $_.IsReadOnly = $false }
   }
