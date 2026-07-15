@@ -25,7 +25,9 @@ if pgrep -f "node.*desktop/tunnel/server.js" >/dev/null 2>&1; then
 else
   cd "$HERE/tunnel"
   [ -d node_modules ] || npm install --no-audit --no-fund
-  nohup node server.js > /tmp/dao-tunnel.log 2>&1 &
+  # 以绝对路径启动，令 cmdline 含 desktop/tunnel/server.js——上方 pgrep 幂等判定才认得它；
+  # 否则二次执行永远探不到已跑实例，重复起进程撞 EADDRINUSE。
+  nohup node "$HERE/tunnel/server.js" > /tmp/dao-tunnel.log 2>&1 &
   TUNNEL_PID="$!"
   echo "[tunnel] 已启动 pid=$TUNNEL_PID → 日志 /tmp/dao-tunnel.log"
   sleep 1
