@@ -27,6 +27,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const GuacamoleLite = require("guacamole-lite");
+const forward = require("./forward");
+const { InputArbiter } = require("./input-arbiter");
 
 const WS_PORT = parseInt(process.env.DAO_GUAC_WS_PORT || "4823", 10);
 const HTTP_PORT = parseInt(process.env.DAO_GUAC_HTTP_PORT || "4824", 10);
@@ -45,6 +47,9 @@ const DEFAULT_RDP = {
   username: process.env.DAO_RDP_USER || "dao",
   password: process.env.DAO_RDP_PASS || "Dao@2026!",
 };
+
+// 输入并发仲裁器（分身级短租约：用户可抢占 Agent，不同分身永不互阻）。
+const inputArbiter = new InputArbiter();
 
 const SESSIONS_JSON =
   process.env.DAO_SESSIONS_JSON || path.join(__dirname, "..", "sessions.json");
@@ -173,6 +178,12 @@ function mintToken(ide, opts) {
   opts = opts || {};
   const rdp = opts.account ? targetForAccount(opts.account) : targetForIde(ide);
   if (!rdp) throw new Error(`未知账号: ${opts.account}`);
+  return mintTokenForTarget(rdp, opts);
+}
+
+// 目标已解析（含 via 后端换机已重写为本地 connector 口）时直接铸 token。
+function mintTokenForTarget(rdp, opts) {
+  opts = opts || {};
   const settings = {
     hostname: rdp.hostname,
     port: String(rdp.port),
@@ -231,6 +242,36 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, leases: out }));
     return;
   }
+  if (u.pathname === "/input") {
+    // 输入并发协作（道并行而不相悖）：同一分身上用户/Agent 短租约轮替，不同分身永不互阻。
+    // GET  /input                                   列当前全部持有者
+    // GET  /input?key=K                             查单分身持有者
+    // POST /input?op=acquire&key=K&owner=I&kind=human|agent[&ttl=ms]  申请/续租输入权
+    // POST /input?op=release&key=K&owner=I                            释放
+    const key = u.searchParams.get("key");
+    if (req.method === "POST") {
+      const op = u.searchParams.get("op");
+      const ownerId = u.searchParams.get("owner");
+      if (!key || !ownerId || (op !== "acquire" && op !== "release")) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "需 op=acquire|release & key & owner" }));
+        return;
+      }
+      if (op === "release") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, released: inputArbiter.release(key, ownerId) }));
+        return;
+      }
+      const ttl = parseInt(u.searchParams.get("ttl") || "0", 10) || undefined;
+      const r = inputArbiter.acquire(key, { id: ownerId, kind: u.searchParams.get("kind") || "agent" }, { ttlMs: ttl });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(Object.assign({ ok: true }, r)));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, holders: key ? [inputArbiter.holder(key)].filter(Boolean) : inputArbiter.list() }));
+    return;
+  }
   if (u.pathname === "/token") {
     const ide = u.searchParams.get("ide") || "ide_default";
     const account = u.searchParams.get("account") || undefined;
@@ -238,19 +279,23 @@ const httpServer = http.createServer((req, res) => {
     const width = parseInt(u.searchParams.get("width") || "0", 10) || undefined;
     const height = parseInt(u.searchParams.get("height") || "0", 10) || undefined;
     const dpi = parseInt(u.searchParams.get("dpi") || "0", 10) || undefined;
-    try {
-      const token = mintToken(ide, { account, width, height, dpi });
-      const target = account ? targetForAccount(account) : targetForIde(ide);
+    (async () => {
+      const raw = account ? targetForAccount(account) : targetForIde(ide);
+      if (!raw) throw new Error(`未知账号: ${account}`);
+      // 后端换机：目标带 via(穿透 WS 端点，如用户本地电脑) → 惰性起本地 connector 口并重写目标。
+      const target = await forward.resolveTarget(raw);
+      const token = mintTokenForTarget(target, { width, height, dpi });
       const lease = recordLease(ide, account, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         token, ws_port: WS_PORT, ide, account: account || null, clone: clone || null,
         leaseId: lease.leaseId, reconnect: lease.reconnect,
+        remote: !!raw.via,
       }));
-    } catch (e) {
+    })().catch((e) => {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(e.message || e) }));
-    }
+    });
     return;
   }
   res.writeHead(404, { "Content-Type": "application/json" });
@@ -310,7 +355,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  mintToken, encryptToken, startServer,
+  mintToken, mintTokenForTarget, encryptToken, startServer, inputArbiter,
   leaseKey, recordLease, listLeases, dropLease, loadLeases,
   SESSIONS_STATE_JSON,
 };
