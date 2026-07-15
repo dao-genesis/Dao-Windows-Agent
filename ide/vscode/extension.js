@@ -325,6 +325,36 @@ function saveLayout(){
 let lastLocalClip = null;
 let lastRemoteClip = null;
 
+// —— 输入并发协作（道并行而不相悖）——
+// 人手在画布上活动即向隧道 /input 申请/续租 human 租约（human 优先级高于 agent，
+// 动手即抢占后端 Agent；Agent 应让位待归还）。节流续租，静默失败（隧道不可达不阻输入）。
+const HUMAN_OWNER = 'human:' + IDE_SESSION;
+function cloneKey(it){
+  return ACCOUNT ? ('account:' + ACCOUNT + '#' + it.slot) : ideKey(it);
+}
+let _lastLeaseAt = 0;
+function humanLease(it){
+  var now = Date.now();
+  if (now - _lastLeaseAt < 1500) return;
+  _lastLeaseAt = now;
+  try {
+    fetch(TUNNEL_HTTP + '/input?op=acquire&key=' + encodeURIComponent(cloneKey(it))
+      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000', {method:'POST'});
+  } catch(e) {}
+}
+// 活动分身被 Agent 持有输入权时在状态栏提示（人可随时动手接管）。
+let _agentHolding = false;
+setInterval(function(){
+  var it = active(); if (!it) return;
+  fetch(TUNNEL_HTTP + '/input?key=' + encodeURIComponent(cloneKey(it)))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var h = d && d.holders && d.holders[0];
+      var holding = !!(h && h.kind === 'agent');
+      if (holding !== _agentHolding) { _agentHolding = holding; showActiveStatus(); }
+    })['catch'](function(){});
+}, 2000);
+
 (function initAccounts(){
   var names = (ACCOUNTS && ACCOUNTS.length) ? ACCOUNTS.map(function(a){return a.name;}) : [];
   if (ACCOUNT && names.indexOf(ACCOUNT) < 0) names.unshift(ACCOUNT);
@@ -346,7 +376,8 @@ function stateColor(s){ return ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','
 function showActiveStatus(){
   var it = active(); if (!it) { setStatus('\u672a\u8fde\u63a5'); return; }
   var names = ['\u7a7a\u95f2','\u6b63\u5728\u8fde\u63a5...','\u7b49\u5f85\u4e2d...','\u5df2\u8fde\u63a5 \u25cf','\u6b63\u5728\u65ad\u5f00...','\u5df2\u65ad\u5f00'];
-  setStatus(it.label + ' \u00b7 ' + (names[it.state] || '\u672a\u8fde\u63a5'), stateColor(it.state));
+  var agentTag = (typeof _agentHolding !== 'undefined' && _agentHolding) ? ' \u00b7 \u26a1AI\u64cd\u4f5c\u4e2d(\u52a8\u624b\u5373\u63a5\u7ba1)' : '';
+  setStatus(it.label + ' \u00b7 ' + (names[it.state] || '\u672a\u8fde\u63a5') + agentTag, stateColor(it.state));
 }
 function renderTabs(){
   tabsEl.innerHTML = '';
@@ -439,6 +470,7 @@ async function connectInstance(it) {
   const mouse = new Guacamole.Mouse(display.getElement());
   mouse.onEach(['mousedown','mousemove','mouseup'], function(e) {
     if (!it.client) return;
+    if (e.state && (e.state.left || e.state.middle || e.state.right)) humanLease(it);
     var s = display.getScale() || 1;
     var st = e.state;
     if (s !== 1) st = new Guacamole.Mouse.State(st.x / s, st.y / s, st.left, st.middle, st.right, st.up, st.down);
@@ -495,7 +527,7 @@ function doDisconnect(){
 
 // \u952e\u76d8\uff1a\u5168\u5c40\u4e00\u4efd\uff0c\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\uff08\u591a\u8def\u5e76\u884c\u4e92\u4e0d\u4e32\u952e\uff09
 const keyboard = new Guacamole.Keyboard(document);
-keyboard.onkeydown = function(k) { var it = active(); if (it && it.client) it.client.sendKeyEvent(1, k); };
+keyboard.onkeydown = function(k) { var it = active(); if (it && it.client) { humanLease(it); it.client.sendKeyEvent(1, k); } };
 keyboard.onkeyup = function(k) { var it = active(); if (it && it.client) it.client.sendKeyEvent(0, k); };
 
 // \u526a\u8d34\u677f\uff1a\u672c\u5730\u2192\u8fdc\u7aef\uff08\u53ea\u53d1\u7ed9\u6d3b\u52a8\u5206\u8eab\uff09
