@@ -37,6 +37,17 @@ def test_unknown_app_conservatively_needs_session():
     assert need.min_tier == IsolationTier.SESSION
 
 
+def test_win11_notepad_packaged_app_needs_session():
+    """Win11 打包应用激活无视 lpDesktop，HDESK 上不了 → 最低需 session（真机实测锁死）。"""
+    need = need_for("notepad")
+    assert need.kind == SingleInstanceKind.PACKAGED_APP
+    plan = resolve_isolation("notepad", "c1")
+    assert plan.isolated is False
+    assert plan.min_tier == IsolationTier.SESSION
+    plan2 = resolve_isolation("notepad", "c1", ALL_TIERS)
+    assert plan2.isolated is True and plan2.tier == IsolationTier.SESSION
+
+
 def test_aliases_flow_through():
     assert need_for("windsurf").app_id == "devin-desktop"
     assert need_for("code").app_id == "vscode"
