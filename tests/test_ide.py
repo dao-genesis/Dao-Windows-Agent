@@ -164,26 +164,28 @@ def test_coldstart_domain_payloads_and_cdp_binding():
 
 def test_firstlogon_mesa_software_opengl_for_freecad():
     """真机踩坑回归（FreeCAD GPU 本源）：QEMU 虚拟显示器仅 'Microsoft Basic Display Adapter'，
-    无 OpenGL 2.0，FreeCAD 带 3D 视口启动即崩。冷启动须把 Mesa llvmpipe 的三件 DLL 就近放进
-    FreeCAD\\bin，并置机器级 env 强制软件 OpenGL 4.5。宿主(有 7z)预解 DLL 落缓存，随盘带入。"""
+    无 OpenGL 2.0，FreeCAD 带 3D 视口启动即崩。活体证明：
+    · per-app 拷 opengl32.dll 进 FreeCAD\\bin 死路（Qt QSystemLibrary 只认 System32，双模块
+      像素格式表互不相认，wglCreateContext 'parameter is incorrect'）；
+    · GALLIUM_DRIVER=llvmpipe 机器级 env 死路（mesa 26 llvmpipe 令 wglCreateContext 返 NULL）。
+    正道 = libgallium_wgl.dll 注册系统级 ICD（HKLM OpenGLDrivers），全进程透明得软件 GL 4.6。"""
     with open(os.path.join(REPO, "coldstart", "windows-sim", "fetch_payloads.sh"),
               encoding="utf-8") as fh:
         fetch = fh.read()
-    # 宿主预下 + 解出三件 DLL 落缓存
+    # 宿主预下 + 解出 DLL 落缓存
     assert "mesa-dist-win" in fetch
-    for f in ("mesa_opengl32.dll", "mesa_libgallium_wgl.dll", "mesa_dxil.dll"):
+    for f in ("mesa_libgallium_wgl.dll", "mesa_dxil.dll"):
         assert f in fetch
     with open(os.path.join(REPO, "coldstart", "windows-sim", "scripts", "firstlogon.ps1"),
               encoding="utf-8") as fh:
         fl = fh.read()
-    # 就近注入 FreeCAD\bin 的三件 DLL（缓存优先）
-    for dst in ("opengl32.dll", "libgallium_wgl.dll", "dxil.dll"):
-        assert dst in fl
-    assert "mesa_opengl32.dll" in fl
-    # 机器级 env 强制 llvmpipe 软件 OpenGL 4.5（无 GPU 依赖）
-    assert "GALLIUM_DRIVER" in fl and "llvmpipe" in fl
-    assert "MESA_GL_VERSION_OVERRIDE" in fl and "LIBGL_ALWAYS_SOFTWARE" in fl
-    assert "mesa software-OpenGL injected" in fl
+    # 系统级 ICD 注册（非 per-app 注入、非 llvmpipe env）
+    assert "OpenGLDrivers\\MSOGL" in fl
+    assert "libgallium_wgl.dll" in fl and "dxil.dll" in fl
+    assert "mesa software-OpenGL installed as system ICD" in fl
+    # 死路禁令：不得再置 llvmpipe 机器级 env / 不得再拷 opengl32.dll 进应用目录
+    assert "SetEnvironmentVariable('GALLIUM_DRIVER'" not in fl
+    assert "mesa_opengl32.dll" not in fl
 
 
 def test_firstlogon_log_is_pipeline_safe():
