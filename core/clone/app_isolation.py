@@ -97,6 +97,12 @@ def _vscode_args(dir_: str) -> List[str]:
     return [f"--user-data-dir={dir_}\\data", f"--extensions-dir={dir_}\\ext"]
 
 
+def _ide_clone_env(dir_: str) -> Dict[str, str]:
+    # Devin Desktop 插件版(dao-desktop)的环境共生检测读此变量：IDE 层配置随分身走，
+    # 引擎层(~/.codeium)仍全分身共生——Windows Agent 体系与插件体系的对接点。
+    return {"DAO_CLONE_USER_DATA_DIR": f"{dir_}\\data"}
+
+
 def _freecad_env(dir_: str) -> Dict[str, str]:
     # FreeCAD 从 FREECAD_USER_HOME 读取用户配置根；分身各自一份即不再互相覆盖偏好。
     return {"FREECAD_USER_HOME": f"{dir_}\\home"}
@@ -110,6 +116,7 @@ ISOLATION_REGISTRY: Dict[str, IsolationStrategy] = {
             r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe",
         ],
         args_from_dir=_vscode_args,
+        env_from_dir=_ide_clone_env,
         note="Electron 单实例锁在 user-data-dir 内，分身各自一份即独立实例",
     ),
     "devin-desktop": IsolationStrategy(
@@ -121,6 +128,7 @@ ISOLATION_REGISTRY: Dict[str, IsolationStrategy] = {
             r"C:\Program Files\Windsurf\Windsurf.exe",
         ],
         args_from_dir=_vscode_args,
+        env_from_dir=_ide_clone_env,
         note="Devin Desktop = VS Code/Electron 内核，隔离方式同 vscode",
     ),
     "chrome": IsolationStrategy(

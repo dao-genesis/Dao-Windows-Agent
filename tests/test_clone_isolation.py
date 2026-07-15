@@ -45,6 +45,14 @@ def test_devin_desktop_same_mechanism_as_vscode():
     assert any("Devin" in e or "Windsurf" in e for e in s.exe_candidates)
 
 
+def test_ide_apps_expose_clone_dir_to_dao_desktop_plugin():
+    """VS Code/Devin Desktop 分身启动注入 DAO_CLONE_USER_DATA_DIR，
+    供 dao-desktop 插件的环境共生检测把 IDE 层配置定位到分身目录。"""
+    for app in ("vscode", "devin-desktop"):
+        s = build_clone_launch(app, "session-2")
+        assert s.env["DAO_CLONE_USER_DATA_DIR"] == f"{s.data_dir}\\data", app
+
+
 def test_aliases_resolve():
     assert build_clone_launch("code", "c1").app_id == "vscode"
     assert build_clone_launch("windsurf", "c1").app_id == "devin-desktop"
@@ -95,6 +103,7 @@ def test_guest_launcher_script_mirrors_registry():
     assert "--user-data-dir=" in src
     assert "--extensions-dir=" in src
     assert "FREECAD_USER_HOME" in src
+    assert "DAO_CLONE_USER_DATA_DIR" in src
     # 分身号默认取当前会话 id（每 RDP 分身天然唯一）
     assert "SessionId" in src
 

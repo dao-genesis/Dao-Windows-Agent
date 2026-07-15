@@ -35,9 +35,9 @@ New-Item -ItemType Directory -Force $dataDir | Out-Null
 # 软件注册表：exe 候选 + 由 dataDir 派生的隔离参数/环境（与 Python 注册表一致）。
 $reg = @{
   'vscode' = @{ exe=@("$env:ProgramFiles\Microsoft VS Code\Code.exe","$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe");
-                args=@("--user-data-dir=$dataDir\data","--extensions-dir=$dataDir\ext"); env=@{} }
+                args=@("--user-data-dir=$dataDir\data","--extensions-dir=$dataDir\ext"); env=@{ 'DAO_CLONE_USER_DATA_DIR'="$dataDir\data" } }
   'devin-desktop' = @{ exe=@("$env:LOCALAPPDATA\Programs\Devin\Devin.exe","$env:LOCALAPPDATA\Programs\Windsurf\Windsurf.exe","$env:ProgramFiles\Devin\Devin.exe","$env:ProgramFiles\Windsurf\Windsurf.exe");
-                args=@("--user-data-dir=$dataDir\data","--extensions-dir=$dataDir\ext"); env=@{} }
+                args=@("--user-data-dir=$dataDir\data","--extensions-dir=$dataDir\ext"); env=@{ 'DAO_CLONE_USER_DATA_DIR'="$dataDir\data" } }
   'chrome' = @{ exe=@("$env:ProgramFiles\Google\Chrome\Application\chrome.exe","${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe");
                 args=@("--user-data-dir=$dataDir\data"); env=@{} }
   'edge' = @{ exe=@("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe","$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe");
