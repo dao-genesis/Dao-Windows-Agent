@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>☯ DAO 多账号类虚拟机 · 每账号一路独立桌面（并行·互不干扰）</title>
+<title>☯ DAO 多账号/单账号多分身类虚拟机 · 每分身一路独立桌面（并行·互不干扰）</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:system-ui,sans-serif;background:#141418;color:#e0e0e0;display:flex;flex-direction:column;height:100vh}
@@ -20,46 +20,52 @@ body{font-family:system-ui,sans-serif;background:#141418;color:#e0e0e0;display:f
 </head>
 <body>
 <div id="bar">
-  <b>☯ 多账号类虚拟机</b>
+  <b>☯ 多账号/单账号多分身类虚拟机</b>
   <label>隧道: <input id="tunnelUrl" value="http://127.0.0.1:4824" style="width:180px"></label>
   <button onclick="connectAll()">全部连接</button>
+  <label>账号 <input id="cloneAccount" value="dao" style="width:60px"> × 分身数 <input id="cloneCount" type="number" value="2" min="1" style="width:44px"></label>
+  <button onclick="connectClones()">单账号多分身</button>
   <button onclick="disconnectAll()">全部断开</button>
-  <span style="opacity:.6">每账号 = 一路独立完整桌面，经 RDPWrap 单机多会话并行、互不干扰</span>
+  <span style="opacity:.6">每账号/每分身 = 一路独立完整桌面，经 RDPWrap 单机多会话并行、互不干扰</span>
 </div>
 <div id="grid"></div>
 
 <script src="../ide/vscode/media/guacamole-common.min.js"></script>
 <script>
-const panes = {}; // account -> {client, canvas, statusEl}
+const panes = {}; // paneKey(account 或 account#分身号) -> {client, canvas, statusEl, account, clone}
 
 function tunnelBase(){ return document.getElementById("tunnelUrl").value.replace(/\/$/, ""); }
 
-function addPane(account){
+function addPane(account, clone){
+  const key = clone ? account+"#"+clone : account;
+  const label = clone ? "账号 <b>"+account+"</b> · 分身 <b>#"+clone+"</b>" : "账号 <b>"+account+"</b>";
   const wrap = document.createElement("div");
   wrap.className = "pane";
   wrap.innerHTML =
-    '<div class="hd"><span>账号 <b>'+account+'</b></span><span class="st" id="st-'+account+'">未连接</span></div>'+
-    '<div class="canvas" id="cv-'+account+'"></div>';
+    '<div class="hd"><span>'+label+'</span><span class="st" id="st-'+key+'">未连接</span></div>'+
+    '<div class="canvas" id="cv-'+key+'"></div>';
   document.getElementById("grid").appendChild(wrap);
-  panes[account] = { client:null, canvas:document.getElementById("cv-"+account), statusEl:document.getElementById("st-"+account) };
+  panes[key] = { client:null, canvas:document.getElementById("cv-"+key), statusEl:document.getElementById("st-"+key), account, clone };
+  return key;
 }
 
-function setStatus(account, t, color){
-  const p = panes[account]; if(!p) return;
+function setStatus(key, t, color){
+  const p = panes[key]; if(!p) return;
   p.statusEl.textContent = t; p.statusEl.style.color = color || "#e0e0e0";
 }
 
-async function connectOne(account){
-  const p = panes[account];
-  disconnectOne(account);
-  setStatus(account, "取 token...", "#ffcc00");
+async function connectOne(key){
+  const p = panes[key];
+  disconnectOne(key);
+  setStatus(key, "取 token...", "#ffcc00");
   const w = p.canvas.clientWidth, h = p.canvas.clientHeight;
   let td;
   try {
-    const r = await fetch(tunnelBase()+"/token?account="+encodeURIComponent(account)+"&width="+w+"&height="+h);
+    const q = "account="+encodeURIComponent(p.account)+(p.clone?"&clone="+encodeURIComponent(p.clone):"");
+    const r = await fetch(tunnelBase()+"/token?"+q+"&width="+w+"&height="+h);
     td = await r.json();
-    if (td.error) { setStatus(account, "令牌: "+td.error, "#ff4444"); return; }
-  } catch(e){ setStatus(account, "令牌失败: "+e.message, "#ff4444"); return; }
+    if (td.error) { setStatus(key, "令牌: "+td.error, "#ff4444"); return; }
+  } catch(e){ setStatus(key, "令牌失败: "+e.message, "#ff4444"); return; }
 
   const wsPort = td.ws_port || 4823;
   const wsUrl = "ws://127.0.0.1:"+wsPort+"/?token="+encodeURIComponent(td.token);
@@ -88,14 +94,14 @@ async function connectOne(account){
   client.onstatechange = (s)=>{
     const names=["空闲","连接中...","等待...","已连接 ●","断开中...","已断开"];
     const colors=["#999","#ffcc00","#ffcc00","#44ff44","#ff8800","#ff4444"];
-    setStatus(account, names[s]||s, colors[s]);
+    setStatus(key, names[s]||s, colors[s]);
   };
-  client.onerror = (st)=> setStatus(account, "错误: "+(st.message||st.code||"?"), "#ff4444");
+  client.onerror = (st)=> setStatus(key, "错误: "+(st.message||st.code||"?"), "#ff4444");
   client.connect();
 }
 
-function disconnectOne(account){
-  const p = panes[account]; if(!p) return;
+function disconnectOne(key){
+  const p = panes[key]; if(!p) return;
   if (p.client){ try{ p.client.disconnect(); }catch(e){} p.client=null; }
   p.canvas.innerHTML = "";
 }
@@ -106,9 +112,20 @@ async function connectAll(){
   const names = (j.accounts||[]).map(a=>a.name);
   document.getElementById("grid").innerHTML = "";
   for (const k in panes) delete panes[k];
-  names.forEach(addPane);
+  const keys = names.map(n=>addPane(n));
   // 逐个连接（错峰，避免同一 guacd 建连拥塞）
-  for (const n of names){ await connectOne(n); await new Promise(r=>setTimeout(r,800)); }
+  for (const k of keys){ await connectOne(k); await new Promise(r=>setTimeout(r,800)); }
+}
+
+// 单账号多分身：同一账号 × N 个分身号 → N 路各自独立的 RDP 桌面会话（各自独立租约）。
+async function connectClones(){
+  const account = document.getElementById("cloneAccount").value.trim() || "dao";
+  const n = Math.max(1, parseInt(document.getElementById("cloneCount").value,10)||1);
+  document.getElementById("grid").innerHTML = "";
+  for (const k in panes) delete panes[k];
+  const keys = [];
+  for (let i=1;i<=n;i++) keys.push(addPane(account, String(i)));
+  for (const k of keys){ await connectOne(k); await new Promise(r=>setTimeout(r,800)); }
 }
 
 function disconnectAll(){ Object.keys(panes).forEach(disconnectOne); }

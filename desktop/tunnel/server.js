@@ -96,9 +96,12 @@ function targetForIde(ide) {
 }
 
 // —— 会话租约台账（窗口↔会话持久绑定）——
-// key = 稳定的窗口/分身身份（ide 或 ide.分身号 或 account:分身号）。
-function leaseKey(ide, account) {
-  return account ? `account:${account}` : String(ide || "ide_default");
+// key = 稳定的窗口/分身身份：ide 或 account:<名>，可再带 #<分身号> 后缀。
+// 单账号多分身：同一账号以不同 clone 号铸 token → 各自独立租约/独立 RDP 会话路，
+// 互不相并（termsrv 同账号多路 = 各自独立桌面/进程，鸡犬相闻互不往来）。
+function leaseKey(ide, account, clone) {
+  const base = account ? `account:${account}` : String(ide || "ide_default");
+  return clone ? `${base}#${clone}` : base;
 }
 
 function loadLeases() {
@@ -118,9 +121,9 @@ function saveLeases(state) {
 
 // 登记/更新一条租约：首次见到该 key → 生成稳定 leaseId 并落盘；再次（含 IDE 重启后）
 // 命中同一 key → 复用同一 leaseId + 复归同一账号/目标，实现窗口↔会话确定性复连。
-function recordLease(ide, account, target) {
+function recordLease(ide, account, target, clone) {
   const state = loadLeases();
-  const key = leaseKey(ide, account);
+  const key = leaseKey(ide, account, clone);
   const now = new Date().toISOString();
   const prev = state.leases[key];
   const lease = prev || {
@@ -131,6 +134,7 @@ function recordLease(ide, account, target) {
   };
   lease.ide = ide || null;
   lease.account = account || null;
+  lease.clone = clone || null;
   lease.target = target
     ? { hostname: target.hostname, port: String(target.port), username: target.username }
     : lease.target || null;
@@ -147,9 +151,9 @@ function listLeases() {
   return Object.values(state.leases);
 }
 
-function dropLease(ide, account) {
+function dropLease(ide, account, clone) {
   const state = loadLeases();
-  const key = leaseKey(ide, account);
+  const key = leaseKey(ide, account, clone);
   const existed = !!state.leases[key];
   delete state.leases[key];
   saveLeases(state);
@@ -206,20 +210,21 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
   if (u.pathname === "/sessions") {
-    // GET  /sessions            列全部租约
-    // GET  /sessions?ide=X      查单条租约（含 reconnect 标志）
-    // POST /sessions/drop?ide=X 释放一条租约（窗口关闭/分身销毁时调用）
+    // GET  /sessions                     列全部租约
+    // GET  /sessions?ide=X / ?account=A[&clone=N]  查单条租约（含 reconnect 标志）
+    // POST /sessions/drop?ide=X          释放一条租约（窗口关闭/分身销毁时调用）
     const ide = u.searchParams.get("ide") || undefined;
     const account = u.searchParams.get("account") || undefined;
+    const clone = u.searchParams.get("clone") || undefined;
     if (req.method === "POST") {
-      const dropped = dropLease(ide, account);
+      const dropped = dropLease(ide, account, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, dropped }));
       return;
     }
     let out = listLeases();
     if (ide || account) {
-      const key = leaseKey(ide, account);
+      const key = leaseKey(ide, account, clone);
       out = out.filter((l) => l.key === key);
     }
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -229,16 +234,17 @@ const httpServer = http.createServer((req, res) => {
   if (u.pathname === "/token") {
     const ide = u.searchParams.get("ide") || "ide_default";
     const account = u.searchParams.get("account") || undefined;
+    const clone = u.searchParams.get("clone") || undefined;
     const width = parseInt(u.searchParams.get("width") || "0", 10) || undefined;
     const height = parseInt(u.searchParams.get("height") || "0", 10) || undefined;
     const dpi = parseInt(u.searchParams.get("dpi") || "0", 10) || undefined;
     try {
       const token = mintToken(ide, { account, width, height, dpi });
       const target = account ? targetForAccount(account) : targetForIde(ide);
-      const lease = recordLease(ide, account, target);
+      const lease = recordLease(ide, account, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
-        token, ws_port: WS_PORT, ide, account: account || null,
+        token, ws_port: WS_PORT, ide, account: account || null, clone: clone || null,
         leaseId: lease.leaseId, reconnect: lease.reconnect,
       }));
     } catch (e) {
