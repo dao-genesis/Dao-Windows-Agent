@@ -1,5 +1,7 @@
 {
   "_note": "账号注册表样例（真相源）。桥 core/accounts.py 建号时写入 accounts.json；隧道 server.js 读它按账号铸令牌。真实 accounts.json 含明文口令，已 .gitignore，勿入库。",
+  "_note_via": "后端换机：账号带 via(远端 agent 的 WS 端点，经 DAO Bridge 内网穿透暴露)+viaToken(Bearer) 时，隧道惰性起本地 connector 口并把 RDP 目标重写指向用户本地电脑；hostname/port 由 forward 层自动改写，可省略。远端机侧起 agent：node forward.js agent --port 19389 --token <Bearer> --target 127.0.0.1:3389",
   "dao": {"hostname": "127.0.0.1", "port": "13389", "username": "dao", "password": "<PASSWORD>"},
-  "vm01": {"hostname": "127.0.0.1", "port": "13389", "username": "vm01", "password": "<PASSWORD>"}
+  "vm01": {"hostname": "127.0.0.1", "port": "13389", "username": "vm01", "password": "<PASSWORD>"},
+  "user-pc": {"username": "<用户机账号>", "password": "<PASSWORD>", "via": "wss://<穿透公网URL>/rdp", "viaToken": "<Bearer>"}
 }

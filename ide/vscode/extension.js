@@ -393,7 +393,11 @@ function closeInstance(id){
   try { container.removeChild(it.el); } catch(e) {}
   instances.splice(idx, 1);
   // 释放租约（分身销毁）：告知隧道不再保留该窗口会话身份。
-  try { var k = ideKey(it); if (k) fetch(TUNNEL_HTTP + '/sessions?ide=' + encodeURIComponent(k), {method:'POST'}); } catch(e) {}
+  try {
+    var dq = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot)))
+                     : ('ide=' + encodeURIComponent(ideKey(it)));
+    fetch(TUNNEL_HTTP + '/sessions?' + dq, {method:'POST'});
+  } catch(e) {}
   if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
   instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
   renderTabs(); showActiveStatus(); saveLayout();
@@ -411,7 +415,9 @@ async function connectInstance(it) {
   let tokenData;
   try {
     // \u6bcf\u6b21\u94f8\u65b0 token = \u65b0\u5f00\u4e00\u8def\u72ec\u7acb RDP \u8fde\u63a5\uff08guest \u5173\u5355\u4f1a\u8bdd\u9650\u5236\u540e\u5373\u5404\u6210\u4e00\u8def\u72ec\u7acb\u4f1a\u8bdd\uff09
-    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT)) : ('ide=' + encodeURIComponent(ideKey(it)));
+    // 账号路由时带稳定分身号 clone=slot：同账号多分身各自独立租约 key(account:<名>#<slot>)，重连各归其位。
+    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot)))
+                      : ('ide=' + encodeURIComponent(ideKey(it)));
     const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
     tokenData = await r.json();
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
