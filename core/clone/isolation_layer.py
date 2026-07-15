@@ -80,6 +80,7 @@ class SingleInstanceKind(IntEnum):
     DATA_DIR_LOCK = 1    # 单实例锁在 user-data-dir 内 → APPDATA 即可
     GLOBAL_MUTEX = 2     # 单实例互斥体钉在全局命名空间且无开关 → 需 SESSION 及以上
     GPU_COMPOSITED = 3   # 必须真 GPU 合成（离屏桌面画不出）→ 需 SESSION 及以上
+    PACKAGED_APP = 4     # UWP/打包应用：激活走 app broker，无视 lpDesktop，上不了 HDESK → 需 SESSION 及以上
 
 
 # 各 kind 对应的**最低隔离档位需求**。
@@ -88,6 +89,7 @@ _MIN_TIER_FOR_KIND: Dict[SingleInstanceKind, IsolationTier] = {
     SingleInstanceKind.DATA_DIR_LOCK: IsolationTier.APPDATA,
     SingleInstanceKind.GLOBAL_MUTEX: IsolationTier.SESSION,
     SingleInstanceKind.GPU_COMPOSITED: IsolationTier.SESSION,
+    SingleInstanceKind.PACKAGED_APP: IsolationTier.SESSION,
 }
 
 
@@ -124,6 +126,12 @@ NEED_REGISTRY: Dict[str, AppIsolationNeed] = {
                                "全局命名互斥体、无 user-data-dir 开关，同会话内无法多开"),
     "wechat": AppIsolationNeed("wechat", SingleInstanceKind.GLOBAL_MUTEX,
                                "全局互斥体单实例，需独立会话/账号才能多开"),
+    # Win11 现代记事本是打包应用：System32\notepad.exe 只是激活存根，真进程经 app broker
+    # 拉起、无视 STARTUPINFOW.lpDesktop，窗口永远不会落在 CreateDesktop 隔离桌面上
+    # （真机 QEMU Win11 实测：pid 拉起但隔离桌面 enum_windows 永远为空）。
+    "notepad": AppIsolationNeed("notepad", SingleInstanceKind.PACKAGED_APP,
+                                "Win11 记事本=打包应用，激活无视 lpDesktop，HDESK 隔离桌面上不了；"
+                                "需独立 RDP 会话/账号（Win10 经典记事本不受此限）"),
 }
 
 
