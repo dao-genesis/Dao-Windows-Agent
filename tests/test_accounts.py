@@ -133,3 +133,15 @@ def test_bridge_account_routes(tmp_path):
     assert status == 200 and obj["ok"]
     status, obj = svc.dispatch("POST", "/api/account.create", {})
     assert status == 400
+
+
+def test_default_runner_degrades_gracefully_without_powershell(monkeypatch):
+    """非 Windows 主机上默认 runner 不炸 FileNotFoundError，桥面返回结构化错误。"""
+    import core.accounts as acc
+
+    def _raise(*a, **k):
+        raise FileNotFoundError("powershell")
+
+    monkeypatch.setattr(acc.subprocess, "run", _raise)
+    rc, out, err = acc._powershell_runner("quser")
+    assert rc == 127 and "powershell 不可用" in err
