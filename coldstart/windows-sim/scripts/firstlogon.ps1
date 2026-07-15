@@ -9,12 +9,28 @@ $log = "$env:SystemDrive\dao-firstlogon.log"
 # 编码钉死 UTF8：PS5.1 的 Add-Content 默认写 UTF-16LE，经机控桥 read_file(utf-8) 读回是
 # 满屏空格乱码——正是本次排障要看的日志，故统一 UTF8，运维/桥皆可直读。
 function Log($m){ $line = "$([DateTime]::Now.ToString('s')) $m"; Add-Content -Path $log -Value $line -Encoding UTF8; Write-Host $line }
+# 日志可写兜底（真机踩坑：非提权上下文写 C:\ 根 Access denied，排障日志全丢）：写不进则落 TEMP。
+try { Add-Content -Path $log -Value '' -Encoding UTF8 -ErrorAction Stop } catch { $log = "$env:TEMP\dao-firstlogon.log" }
 
-Log "== Dao first-logon start =="
+# 幂等门：FirstLogonCommands / SetupComplete / 兜底计划任务三路触发均可能命中，
+# 凭标记只跑一遍，重复触发直接退出，不重复下载/装驱动/重建任务。
+$marker = "$env:SystemDrive\dao_win\.provisioned"
+if (Test-Path $marker) { Log "already provisioned ($marker), skip"; exit 0 }
+
+# 驱动器枚举：应答盘盘符不固定（多光驱/USB 环境会漂），枚举全部文件系统驱动器，不再硬编码 D:-G:。
+$daoDrives = @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Root.TrimEnd('\') } | Where-Object { $_ -ne $env:SystemDrive })
+
+# SYSTEM 上下文支持：SetupComplete/specialize 兜底路径以 SYSTEM 跑本脚本时，
+# 交互会话任务（DaoBridge）须挂到无人值守建的管理员 dao 名下，而非 SYSTEM。
+$daoUser = $env:USERNAME
+$daoIsSystem = ($daoUser -ieq 'SYSTEM' -or $daoUser -match '\$$')
+if ($daoIsSystem) { $daoUser = 'dao' }
+
+Log "== Dao first-logon start (user=$env:USERNAME target=$daoUser) =="
 
 # 置备载荷缓存（fetch_payloads.sh 预下到应答盘 payloads\）：先取随盘缓存，缺才在线下载。
 $payloadDir = $null
-foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\payloads") { $payloadDir = "$d\payloads"; break } }
+foreach ($d in $daoDrives) { if (Test-Path "$d\payloads") { $payloadDir = "$d\payloads"; break } }
 if ($payloadDir) { Log "payload cache found: $payloadDir" }
 function Get-Payload($name, $url) {
   if ($payloadDir -and (Test-Path "$payloadDir\$name")) {
@@ -39,9 +55,9 @@ Log "RDP enabled"
 # 2) QEMU guest agent（virtio-win.iso 内），供宿主 QMP 无头管控。
 #    必须先装 vioserial 驱动：qemu-ga MSI 不带它，PCI VEN_1AF4&DEV_1003 无驱动则
 #    org.qemu.guest_agent.0 通道不通，宿主 guest-ping 恒超时（真机实测踩坑）。
-$vioser = Get-ChildItem 'D:\vioserial\w11\amd64\vioser.inf','E:\vioserial\w11\amd64\vioser.inf','F:\vioserial\w11\amd64\vioser.inf','G:\vioserial\w11\amd64\vioser.inf' -ErrorAction SilentlyContinue | Select-Object -First 1
+$vioser = Get-ChildItem ($daoDrives | ForEach-Object { "$_\vioserial\w11\amd64\vioser.inf" }) -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($vioser) { pnputil /add-driver "$($vioser.FullName)" /install | Out-Null; Log "vioserial driver installed" } else { Log "vioserial inf not found on any drive" }
-$qga = Get-ChildItem 'D:\guest-agent\qemu-ga-x86_64.msi','E:\guest-agent\qemu-ga-x86_64.msi','F:\guest-agent\qemu-ga-x86_64.msi','G:\guest-agent\qemu-ga-x86_64.msi' -ErrorAction SilentlyContinue | Select-Object -First 1
+$qga = Get-ChildItem ($daoDrives | ForEach-Object { "$_\guest-agent\qemu-ga-x86_64.msi" }) -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($qga) { Start-Process msiexec -ArgumentList "/i `"$($qga.FullName)`" /qn" -Wait; Log "qemu-ga installed" }
 
 # 3) Python（winget，供机控桥与级别① 适配器在 guest 内运行）
@@ -67,7 +83,7 @@ if (-not $py) {
 $dst = 'C:\dao_win'
 New-Item -ItemType Directory -Force $dst | Out-Null
 $src = $null
-foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\bridge\server.py") { $src = $d; break } }
+foreach ($d in $daoDrives) { if (Test-Path "$d\bridge\server.py") { $src = $d; break } }
 if ($src -and $py) {
   Copy-Item -Recurse -Force "$src\bridge" "$dst\bridge"
   Copy-Item -Recurse -Force "$src\core"   "$dst\core"
@@ -76,7 +92,7 @@ if ($src -and $py) {
   if (Test-Path "$src\tools") { Copy-Item -Recurse -Force "$src\tools" "$dst\tools"; Log "freecad_backend tools deployed" }
   # 分身内隔离启动器：在分身自己的 RDP 会话里以 per-clone user-data-dir 启动软件，
   # 根治"单账号两个分身开同一软件（VS Code/Devin Desktop）被首实例吞到错误会话"。
-  foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\dao-clone-open.ps1") { Copy-Item -Force "$d\dao-clone-open.ps1" "$dst\dao-clone-open.ps1"; Log "dao-clone-open.ps1 deployed (per-clone app isolation)"; break } }
+  foreach ($d in $daoDrives) { if (Test-Path "$d\dao-clone-open.ps1") { Copy-Item -Force "$d\dao-clone-open.ps1" "$dst\dao-clone-open.ps1"; Log "dao-clone-open.ps1 deployed (per-clone app isolation)"; break } }
   Get-ChildItem -Path $dst -Recurse -Force | ForEach-Object {
     if (-not $_.PSIsContainer) { $_.IsReadOnly = $false }
   }
@@ -108,12 +124,14 @@ Set-Location '$dst'
   # 窗口站，隔离桌面里的窗口才可枚举/消息级输入/PrintWindow。切勿跑 SYSTEM(session0·服务窗口站)——
   # 那样 CreateProcessAsUser 起的进程落在交互 WinSta0，与 session0 里建的桌面互不可见，窗口永远枚举不到。
   $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`"" -WorkingDirectory $dst
-  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $daoUser
   $set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-  $penv    = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+  $penv    = New-ScheduledTaskPrincipal -UserId $daoUser -LogonType Interactive -RunLevel Highest
   Register-ScheduledTask -TaskName 'DaoBridge' -Action $action -Trigger $trigger -Settings $set -Principal $penv -Force | Out-Null
-  # 立即拉起一次（本次登录即可用，无需等下次登录）
-  Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$start -WorkingDirectory $dst -WindowStyle Hidden
+  # 立即拉起一次（本次登录即可用）；SYSTEM 上下文不直接拉（会落 session0，窗口永远枚举不到），留待 dao 登录触发。
+  if (-not $daoIsSystem) {
+    Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$start -WorkingDirectory $dst -WindowStyle Hidden
+  }
   Log "bridge + homeassistant-ext deployed and scheduled (token=$token, port 9920)"
 } else {
   Log "bridge deploy skipped (src=$src py=$py)"
@@ -166,7 +184,7 @@ try {
         Log "rdpwrap.ini fetched fresh online (attempt $i)"
       } catch {
         # 联网失败才回退应答盘缓存
-        foreach ($d in 'D:','E:','F:','G:') { if (Test-Path "$d\payloads\rdpwrap_community.ini") { Copy-Item -Force "$d\payloads\rdpwrap_community.ini" $tmpIni; Log "rdpwrap.ini online failed; using media cache"; break } }
+        foreach ($d in $daoDrives) { if (Test-Path "$d\payloads\rdpwrap_community.ini") { Copy-Item -Force "$d\payloads\rdpwrap_community.ini" $tmpIni; Log "rdpwrap.ini online failed; using media cache"; break } }
       }
       # 真机踩坑：-SimpleMatch 会把 [regex]::Escape 后的 "\[10\.0\.26100\.1]" 当字面量搜，
       # 与文件里的 "[10.0.26100.1]" 永不相等 → 明明有段却误判缺段，正确 ini 永不落地(多会话哑火)。
@@ -347,9 +365,15 @@ if (-not (Test-Cmd $kicadPaths)) {
   }
 } else { Log "kicad already present" }
 
+# 幂等凭标记：置备跑完落标，三路触发（FirstLogonCommands/SetupComplete/兜底任务）重复命中不重跑。
+New-Item -ItemType Directory -Force "$env:SystemDrive\dao_win" | Out-Null
+Set-Content -Path $marker -Value ([DateTime]::Now.ToString('s')) -Encoding UTF8
+# 兜底触发器自清理（存在才删）
+schtasks /Delete /TN DaoFirstLogonFallback /F 2>$null | Out-Null
+
 Log "== Dao first-logon done =="
 
 # 收尾：仅安装阶段（unattend 光盘仍挂载）自动关机，令宿主 up.sh 以 QEMU 正常退出为装机完成信号；
 # 常态启动无该光盘，不触发。
-$unattendDisk = Get-ChildItem 'D:\dao-windows-agent-*.vsix','E:\dao-windows-agent-*.vsix','F:\dao-windows-agent-*.vsix','G:\dao-windows-agent-*.vsix' -ErrorAction SilentlyContinue | Select-Object -First 1
+$unattendDisk = Get-ChildItem ($daoDrives | ForEach-Object { "$_\dao-windows-agent-*.vsix" }) -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($unattendDisk) { Log "install-phase shutdown in 10s"; shutdown /s /t 10 /c "dao coldstart install done" }
