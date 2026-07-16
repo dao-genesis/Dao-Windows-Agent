@@ -49,6 +49,20 @@ def _decode(data: "bytes | None") -> str:
         return data.decode(locale.getpreferredencoding(False), errors="replace")
 
 
+def _child_env() -> dict:
+    """子进程环境：强制 Python 子进程 UTF-8 IO。
+
+    非 UTF-8 的 Windows（英文版控制台 ANSI 码页为 cp1252）下，Python 子进程
+    stdout 默认按区域码页编码——回显任何非 Latin 文本（如中文动词参数）即
+    UnicodeEncodeError 而整条命令失败。设 PYTHONUTF8/PYTHONIOENCODING 令子进程
+    以 UTF-8 收发；对非 Python 命令与 POSIX 主机均无害（setdefault 不覆盖既有值）。
+    """
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 def _quote(value: str) -> str:
     """按当前平台 shell 规则引用参数（POSIX→shlex.quote，Windows cmd→双引号）。"""
     if os.name == "nt":
@@ -153,7 +167,7 @@ class SubpluginHost:
         try:
             proc = subprocess.run(
                 cmd, shell=True, cwd=workdir or self.workdir,  # noqa: S602 - 模板来自本地 spec，参数已 quote
-                capture_output=True, timeout=300)
+                capture_output=True, timeout=300, env=_child_env())
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"命令超时: {cmd}"}
         out = _decode(proc.stdout).strip()

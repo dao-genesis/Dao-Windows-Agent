@@ -292,7 +292,7 @@ def test_mcp_node_selftest():
         import pytest
         pytest.skip("node 不可用")
     r = subprocess.run([node, os.path.join(IDE, "test", "dao-mcp.test.js")],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -362,6 +362,6 @@ def test_headless_auth_node_selftest():
         pytest.skip("node 不可用")
     r = subprocess.run(
         [node, os.path.join(COLD_SCRIPTS, "test", "devin_auth.test.js")],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert r.returncode == 0, r.stdout + r.stderr
