@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List
 
@@ -143,6 +144,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     global _SERVICE, _TOKEN
+    # Windows 控制台默认区域码页（cp1252/GBK）编不出中文横幅，启动即崩——与 bridge.mcp
+    # 同法收发统一 UTF-8（errors=replace：横幅是日志不是数据，宁降级勿拒启）。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="Dao-Windows-Agent 机控桥 REST 内核")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=9930)
