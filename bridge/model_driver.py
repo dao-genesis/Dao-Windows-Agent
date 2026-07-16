@@ -195,7 +195,8 @@ class OpenAICompatClient:
 PROVIDERS: dict[str, dict[str, str]] = {
     "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-chat",
                  "key_env": "DEEPSEEK_API_KEY"},
-    "xiaomi-mimo": {"base_url": "https://api.xiaomimimo.com/v1", "model": "mimo-v2.5",
+    # 实测 mimo-v2.5 基座不回 tool_calls（把工具调用写进 content），-pro 才有原生 function-calling
+    "xiaomi-mimo": {"base_url": "https://api.xiaomimimo.com/v1", "model": "mimo-v2.5-pro",
                     "key_env": "XIAOMI_MIMO_API_KEY"},
 }
 
