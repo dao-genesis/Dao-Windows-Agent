@@ -22,9 +22,15 @@ from typing import Any, Optional
 from core.accounts import AccountManager
 from core.adapter.base import ActionResult
 from core.agent.modes import ModeManager
-from core.clone import IsolationTier, isolation_matrix, resolve_isolation
+from core.clone import (
+    CloneLifecycle,
+    IsolationTier,
+    isolation_matrix,
+    resolve_isolation,
+)
 from core.dispatch import MentionRouter
 from core.handoff import HandoffFlow
+from core.macros import MacroStore
 from core.profiles.builtin import build_default_registry
 from core.profiles.registry import ProfileRegistry
 from core.session.manager import SessionManager
@@ -67,6 +73,8 @@ class BridgeService:
         root: Optional[str] = None,
         accounts: Optional[AccountManager] = None,
         modes: Optional[ModeManager] = None,
+        clones: Optional[CloneLifecycle] = None,
+        macros: Optional[MacroStore] = None,
     ) -> None:
         # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
         # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
@@ -86,6 +94,9 @@ class BridgeService:
         self.handoff = HandoffFlow(
             self.registry,
             root=os.path.join(os.path.dirname(os.path.abspath(root)), "projects"))
+        # 分身生命周期治理（心跳+超时回收，对称于租约 TTL）与宏沉淀层（成功序列固化）。
+        self.clones = clones or CloneLifecycle()
+        self.macros = macros or MacroStore()
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -245,6 +256,48 @@ class BridgeService:
         return {"matrix": isolation_matrix(
             app_ids, _parse_tiers(tiers), bool(prefer_strongest))}
 
+    # --- 分身生命周期治理（clone_health 心跳 / clone_gc 超时回收，对称租约 TTL） ---
+    def clone_register(self, clone_id: str, app_id: str, tier: str = "",
+                       ttl: Optional[float] = None) -> dict:
+        rec = self.clones.register(clone_id, app_id, tier=tier or "", ttl=ttl)
+        return rec.to_dict()
+
+    def clone_heartbeat(self, clone_id: str) -> dict:
+        rec = self.clones.heartbeat(clone_id)
+        if rec is None:
+            return {"error": f"分身未登记: {clone_id}（先 clone_register）"}
+        return rec.to_dict()
+
+    def clone_health(self) -> dict:
+        return self.clones.health()
+
+    def clone_gc(self, dry_run: bool = False) -> dict:
+        return self.clones.gc(dry_run=bool(dry_run))
+
+    # --- 宏沉淀层（成功动词序列固化为新动词·经验沉淀） ---
+    def macro_list(self) -> dict:
+        return self.macros.list()
+
+    def macro_get(self, name: str) -> dict:
+        m = self.macros.get(name)
+        return m if m is not None else {"error": f"无此宏: {name}"}
+
+    def macro_save(self, name: str, steps: list, description: str = "") -> dict:
+        return self.macros.save(name, steps or [], description)
+
+    def macro_delete(self, name: str) -> dict:
+        return self.macros.delete(name)
+
+    def macro_run(self, name: str, session_id: str,
+                  overrides: Optional[dict] = None) -> dict:
+        def invoker(app_id: str, verb: str, params: dict) -> dict:
+            return self.session_invoke(session_id, app_id, verb, params)
+
+        norm = None
+        if overrides:
+            norm = {int(k): v for k, v in overrides.items()}
+        return self.macros.run(name, invoker, overrides=norm)
+
     # --- REST 路由分发（纯函数，便于单测） ---
     def dispatch(self, method: str, path: str, payload: Optional[dict] = None) -> tuple[int, dict]:
         payload = payload or {}
@@ -329,6 +382,33 @@ class BridgeService:
                 return 200, self.clone_matrix(
                     list(app_ids), payload.get("tiers"),
                     bool(payload.get("prefer_strongest", False)))
+            if method == "POST" and path == "/api/clone.register":
+                clone_id = _require(payload, "clone_id")
+                app_id = _require(payload, "app_id")
+                return 200, self.clone_register(
+                    clone_id, app_id, str(payload.get("tier") or ""),
+                    payload.get("ttl"))
+            if method == "POST" and path == "/api/clone.heartbeat":
+                clone_id = _require(payload, "clone_id")
+                return 200, self.clone_heartbeat(clone_id)
+            if method == "GET" and path == "/api/clone.health":
+                return 200, self.clone_health()
+            if method == "POST" and path == "/api/clone.gc":
+                return 200, self.clone_gc(bool(payload.get("dry_run", False)))
+            if method == "GET" and path == "/api/macro.list":
+                return 200, self.macro_list()
+            if method == "POST" and path == "/api/macro.get":
+                return 200, self.macro_get(_require(payload, "name"))
+            if method == "POST" and path == "/api/macro.save":
+                name = _require(payload, "name")
+                return 200, self.macro_save(
+                    name, payload.get("steps") or [], str(payload.get("description") or ""))
+            if method == "POST" and path == "/api/macro.delete":
+                return 200, self.macro_delete(_require(payload, "name"))
+            if method == "POST" and path == "/api/macro.run":
+                name = _require(payload, "name")
+                sid = _require(payload, "session_id")
+                return 200, self.macro_run(name, sid, payload.get("overrides"))
         except KeyError as exc:
             return 400, {"error": f"缺少必填参数: {exc.args[0]}"}
         except ValueError as exc:

@@ -17,6 +17,8 @@ import sys
 import time
 from typing import Any, Callable, Optional
 
+from core.ui_nodes import normalize_nodes, summarize
+
 _VENDOR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "gui", "agentctl"))
 
 # 像素兜底 grounder 契约：grounder(desktop, step) -> {"x": int, "y": int} | None
@@ -187,7 +189,15 @@ class OsctlExecutor:
 
     def _op_tree(self, desktop: str, step: dict) -> dict:
         children = self.os.uia_children(self._win.get(desktop))
-        return {"op": "tree", "ok": True, "children": children}
+        nodes = normalize_nodes(
+            children or [],
+            name=str(step.get("name") or ""),
+            control_type=str(step.get("control_type") or ""),
+            actionable_only=bool(step.get("actionable_only")),
+        )
+        return {"op": "tree", "ok": True, "nodes": nodes,
+                "summary": summarize(nodes), "count": len(nodes),
+                "children": children}
 
     def _op_screenshot(self, desktop: str, step: dict) -> dict:
         os.makedirs(self.shot_dir, exist_ok=True)

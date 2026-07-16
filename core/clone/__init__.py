@@ -17,6 +17,12 @@ from core.clone.app_isolation import (
     clone_data_root,
     isolatable_apps,
 )
+from core.clone.lifecycle import (
+    DEFAULT_GRACE,
+    DEFAULT_TTL,
+    CloneLifecycle,
+    CloneRecord,
+)
 from core.clone.isolation_layer import (
     ALL_TIERS,
     NEED_REGISTRY,
@@ -36,6 +42,10 @@ __all__ = [
     "build_clone_launch",
     "clone_data_root",
     "isolatable_apps",
+    "CloneLifecycle",
+    "CloneRecord",
+    "DEFAULT_TTL",
+    "DEFAULT_GRACE",
     "ALL_TIERS",
     "NEED_REGISTRY",
     "ZERO_CONFIG_TIERS",

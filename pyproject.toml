@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dao-windows-agent"
+version = "0.1.0"
+description = "把整台 Windows 电脑做进 IDE 插件：通用应用适配层 + 机控桥（REST 内核 + MCP 外壳），纯标准库。"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# 运行期零第三方依赖（纯标准库）——可安装化只为解决模块查找（`python -m bridge.mcp`
+# 于任意工作目录皆可解析），不引入任何 runtime 依赖，守住"离线可校验"本源。
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+dao-win-bridge = "bridge.server:main"
+dao-win-mcp = "bridge.mcp:main"
+
+[tool.setuptools]
+# 显式列出顶层包，避免 setuptools 把 coldstart/desktop/ide 等非 Python 资源目录误判为包。
+packages = [
+    "bridge",
+    "core",
+    "core.adapter",
+    "core.agent",
+    "core.clone",
+    "core.profiles",
+    "core.profiles.builtin",
+    "core.session",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

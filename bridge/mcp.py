@@ -123,6 +123,38 @@ class RemoteBridge:
                          {"app_ids": app_ids, "tiers": tiers,
                           "prefer_strongest": prefer_strongest})
 
+    def clone_register(self, clone_id: str, app_id: str, tier: str = "", ttl=None):
+        return self._req("POST", "/api/clone.register",
+                         {"clone_id": clone_id, "app_id": app_id,
+                          "tier": tier, "ttl": ttl})
+
+    def clone_heartbeat(self, clone_id: str):
+        return self._req("POST", "/api/clone.heartbeat", {"clone_id": clone_id})
+
+    def clone_health(self):
+        return self._req("GET", "/api/clone.health")
+
+    def clone_gc(self, dry_run: bool = False):
+        return self._req("POST", "/api/clone.gc", {"dry_run": dry_run})
+
+    def macro_list(self):
+        return self._req("GET", "/api/macro.list")
+
+    def macro_get(self, name: str):
+        return self._req("POST", "/api/macro.get", {"name": name})
+
+    def macro_save(self, name: str, steps, description: str = ""):
+        return self._req("POST", "/api/macro.save",
+                         {"name": name, "steps": steps, "description": description})
+
+    def macro_delete(self, name: str):
+        return self._req("POST", "/api/macro.delete", {"name": name})
+
+    def macro_run(self, name: str, session_id: str, overrides=None):
+        return self._req("POST", "/api/macro.run",
+                         {"name": name, "session_id": session_id,
+                          "overrides": overrides})
+
 
 # 本机桥候选：bridge.server 默认 9930；guest 置备(start-bridge.ps1)常用 9920
 _LOCAL_PROBE_URLS = ("http://127.0.0.1:9930", "http://127.0.0.1:9920")
@@ -388,22 +420,170 @@ _TOOLS: dict[str, dict] = {
         "handler": lambda s, a: s.clone_matrix(
             a["app_ids"], a.get("tiers"), bool(a.get("prefer_strongest", False))),
     },
+    "clone_register": {
+        "description": "分身治理：登记一个已启动的分身并记首次心跳（建了就有人管·对称租约 TTL）。",
+        "properties": {
+            "clone_id": {"type": "string", "description": "分身号"},
+            "app_id": {"type": "string", "description": "软件键"},
+            "tier": {"type": "string", "description": "隔离档位(clone_plan 裁决结果·可选)"},
+            "ttl": {"type": "number", "description": "心跳 TTL 秒，默认 90"},
+        },
+        "required": ["clone_id", "app_id"],
+        "handler": lambda s, a: s.clone_register(
+            a["clone_id"], a["app_id"], a.get("tier", ""), a.get("ttl")),
+    },
+    "clone_heartbeat": {
+        "description": "分身治理：为已登记分身续一次心跳（久无心跳 → stale → expired → gc 回收）。",
+        "properties": {"clone_id": {"type": "string"}},
+        "required": ["clone_id"],
+        "handler": lambda s, a: s.clone_heartbeat(a["clone_id"]),
+    },
+    "clone_health": {
+        "description": "分身治理：全体分身存活快照（alive/stale/expired 三态裁决 + 汇总计数）。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.clone_health(),
+    },
+    "clone_gc": {
+        "description": "分身治理：回收已 expired 的分身（dry_run=true 只预演不摘除）。",
+        "properties": {"dry_run": {"type": "boolean", "description": "真=只报告将回收谁"}},
+        "required": [],
+        "handler": lambda s, a: s.clone_gc(bool(a.get("dry_run", False))),
+    },
+    "macro_list": {
+        "description": "宏沉淀层：列出已固化的复合动词（成功动词序列的经验沉淀）。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.macro_list(),
+    },
+    "macro_get": {
+        "description": "宏沉淀层：查看某宏的完整步骤（app_id/verb/params 序列）。",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "handler": lambda s, a: s.macro_get(a["name"]),
+    },
+    "macro_save": {
+        "description": "宏沉淀层：把一段已被证明成功的动词序列固化成宏（下次一句话整段重放）。"
+                       "steps 每项 {app_id, verb, params}。",
+        "properties": {
+            "name": {"type": "string"},
+            "steps": {"type": "array", "description": "步骤序列，每项 {app_id, verb, params}"},
+            "description": {"type": "string"},
+        },
+        "required": ["name", "steps"],
+        "handler": lambda s, a: s.macro_save(a["name"], a["steps"], a.get("description", "")),
+    },
+    "macro_delete": {
+        "description": "宏沉淀层：删除一个已固化的宏。",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "handler": lambda s, a: s.macro_delete(a["name"]),
+    },
+    "macro_run": {
+        "description": "宏沉淀层：在指定会话内整段重放一个宏（任一步失败即如实停下）。"
+                       "overrides 可按步序号覆盖参数，如 {\"0\": {\"path\": \"...\"}}。",
+        "properties": {
+            "name": {"type": "string"},
+            "session_id": {"type": "string"},
+            "overrides": {"type": "object", "description": "{步序号: 参数覆盖}"},
+        },
+        "required": ["name", "session_id"],
+        "handler": lambda s, a: s.macro_run(a["name"], a["session_id"], a.get("overrides")),
+    },
 }
 
 
+# —— R11 工具目录分组/懒加载（对齐 Devin find_command/新工具面收敛思想）——
+# 组划分只作用于 tools/list 的呈现；tools/call 永远可调全量工具（能力不因呈现收敛而丢失）。
+_TOOL_GROUPS: dict[str, dict] = {
+    "discover": {
+        "description": "发现与调度：先搜再调（route/search_verbs/describe_app/capabilities）。",
+        "tools": ("list_apps", "search_verbs", "describe_app", "route", "capabilities"),
+    },
+    "session": {
+        "description": "会话生命周期与动词执行（一 IDE 窗口一会话）。",
+        "tools": ("session_create", "session_list", "session_open_app",
+                  "session_invoke", "session_destroy", "session_prompt"),
+    },
+    "mode": {
+        "description": "模式（提示词覆盖 + 工具面裁剪）。",
+        "tools": ("mode_list", "mode_get", "mode_set"),
+    },
+    "project": {
+        "description": "跨领域工程交接流水。",
+        "tools": ("project_create", "project_advance", "project_status", "project_list"),
+    },
+    "account": {
+        "description": "多账号类虚拟机（Windows 本地账号 + RDP 会话）。",
+        "tools": ("account_create", "account_list", "account_destroy", "account_sessions"),
+    },
+    "clone": {
+        "description": "分身隔离与生命周期治理（隔离裁决 + 心跳 + 超时回收）。",
+        "tools": ("clone_plan", "clone_matrix", "clone_register",
+                  "clone_heartbeat", "clone_health", "clone_gc"),
+    },
+    "macro": {
+        "description": "宏沉淀层：成功动词序列固化为复合动词。",
+        "tools": ("macro_list", "macro_get", "macro_save", "macro_delete", "macro_run"),
+    },
+}
+
+# 懒加载时默认呈现的核心组（发现 + 会话即可起步；其余组经 expand_tools 按需展开）。
+_CORE_GROUPS = ("discover", "session")
+
+
+def _spec_entry(name: str, spec: dict) -> dict:
+    return {
+        "name": name,
+        "description": spec["description"],
+        "inputSchema": {
+            "type": "object",
+            "properties": spec["properties"],
+            "required": spec["required"],
+        },
+    }
+
+
+def _expand_tools(group: str) -> dict:
+    g = _TOOL_GROUPS.get(group)
+    if g is None:
+        return {"error": f"未知工具组: {group}（可用: {sorted(_TOOL_GROUPS)}）"}
+    return {"group": group, "description": g["description"],
+            "tools": [_spec_entry(n, _TOOLS[n]) for n in g["tools"]]}
+
+
+_TOOLS["tool_groups"] = {
+    "description": "工具目录鸟瞰：列出全部工具组（组名/说明/各组工具名）。"
+                    "懒加载形态下先看组、再 expand_tools 展开所需组——不必吞下全量目录。",
+    "properties": {},
+    "required": [],
+    "handler": lambda s, a: {"groups": [
+        {"group": k, "description": v["description"], "tools": list(v["tools"])}
+        for k, v in _TOOL_GROUPS.items()]},
+}
+_TOOLS["expand_tools"] = {
+    "description": "按组展开工具定义（入参 schema 全量）。展开的工具本就可直接 tools/call。",
+    "properties": {"group": {"type": "string", "description": "组名，见 tool_groups"}},
+    "required": ["group"],
+    "handler": lambda s, a: _expand_tools(a["group"]),
+}
+
+
+def _lazy_enabled() -> bool:
+    return os.environ.get("DAO_MCP_LAZY", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _tools_list() -> list[dict]:
-    out = []
-    for name, spec in _TOOLS.items():
-        out.append({
-            "name": name,
-            "description": spec["description"],
-            "inputSchema": {
-                "type": "object",
-                "properties": spec["properties"],
-                "required": spec["required"],
-            },
-        })
-    return out
+    """tools/list 呈现。缺省全量（兼容既有客户端）；置 DAO_MCP_LAZY=1 则懒加载：
+    只列核心组（discover/session）+ tool_groups/expand_tools 两把钥匙，其余组按需展开。
+    收敛只在呈现层——tools/call 永远可调全量工具。"""
+    if _lazy_enabled():
+        names: list[str] = []
+        for g in _CORE_GROUPS:
+            names.extend(_TOOL_GROUPS[g]["tools"])
+        names.extend(("tool_groups", "expand_tools"))
+        return [_spec_entry(n, _TOOLS[n]) for n in names]
+    return [_spec_entry(name, spec) for name, spec in _TOOLS.items()]
 
 
 def _call_tool(name: str, arguments: dict, service=None) -> dict:
