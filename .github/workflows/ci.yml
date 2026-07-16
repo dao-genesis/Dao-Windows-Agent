@@ -77,3 +77,19 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests -q
+
+  pytest-windows:
+    name: 核心单测 (Windows 真机 · 区域码页缺陷显形)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run tests
+        run: python -m pytest tests -q
