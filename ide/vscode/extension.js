@@ -30,6 +30,7 @@ function cfg() {
     pythonPath: c.get("pythonPath") || "python",
     tunnelHttpUrl: (c.get("tunnelHttpUrl") || "http://127.0.0.1:4824").replace(/\/$/, ""),
     tunnelWsPort: parseInt(c.get("tunnelWsPort") || "4823", 10),
+    tunnelToken: c.get("tunnelToken") || "",
   };
 }
 
@@ -229,11 +230,12 @@ async function refreshModeStatus(context, info) {
 }
 
 // —— 令牌铸造 HTTP 取账号清单（供 QuickPick / 面板下拉）——
-function fetchAccounts(tunnelHttpUrl) {
+function fetchAccounts(tunnelHttpUrl, tunnelToken) {
   return new Promise((resolve) => {
     let u;
     try { u = new URL(tunnelHttpUrl + "/accounts"); } catch (e) { return resolve([]); }
-    const req = http.request({ hostname: u.hostname, port: u.port || 80, path: u.pathname, method: "GET" }, (res) => {
+    const headers = tunnelToken ? { "Authorization": "Bearer " + tunnelToken } : {};
+    const req = http.request({ hostname: u.hostname, port: u.port || 80, path: u.pathname, method: "GET", headers }, (res) => {
       let chunks = [];
       res.on("data", (d) => chunks.push(d));
       res.on("end", () => {
@@ -249,7 +251,7 @@ function fetchAccounts(tunnelHttpUrl) {
 
 // —— 桌面路由面板（主前端：guacamole-common-js canvas → WS 隧道 → guacd → RDP 会话）——
 // account 非空=按账号路由（多账号类虚拟机·扩展本源）；否则按 ide_<hash>（向后兼容）。
-function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts) {
+function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts, tunnelToken) {
   const guacUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"));
   const cspSource = webview.cspSource;
   // 隧道主机由 tunnelHttpUrl 推导（自适应任意环境：本机 127.0.0.1 / 宿主 10.0.2.2 / 局域网 IP / 公网）。
@@ -296,6 +298,7 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
 <script>
 const TUNNEL_HTTP = ${JSON.stringify(tunnelHttpUrl)};
 const TUNNEL_WS_PORT = ${tunnelWsPort};
+const TUNNEL_TOKEN = ${JSON.stringify(tunnelToken || "")};
 const IDE_SESSION = ${JSON.stringify(sessionId)};
 const ACCOUNT = ${JSON.stringify(account)};
 const ACCOUNTS = ${JSON.stringify(accounts || [])};
@@ -314,8 +317,10 @@ let nextId = 1;
 // slot = 本窗口内分身的稳定序号（跨 webview 重载不变）→ 隧道租约 key 稳定，
 // IDE/面板重载后同一 slot 命中同一 lease，确定性复归同一路桌面身份。
 let nextSlot = 1;
-// 分身的隧道租约 key：按账号路由时由账号隔离（返 null，走 account 命名空间）；否则 IDE_SESSION.slot 唯一。
-function ideKey(it){ return ACCOUNT ? null : (IDE_SESSION + '.' + it.slot); }
+// 分身的窗口稳定身份：IDE_SESSION.slot。账号路由时也随请求下发（租约 key 按 账号@窗口
+// 隔离）：不同 IDE 窗口同账号同分身号也各自独立租约，一窗一桌面勿跨窗串租。
+function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
+function tunnelAuthQ(){ return TUNNEL_TOKEN ? ('&auth=' + encodeURIComponent(TUNNEL_TOKEN)) : ''; }
 function saveLayout(){
   try {
     vscodeApi.setState({ slots: instances.map(function(x){ return x.slot; }),
@@ -329,8 +334,9 @@ let lastRemoteClip = null;
 // 人手在画布上活动即向隧道 /input 申请/续租 human 租约（human 优先级高于 agent，
 // 动手即抢占后端 Agent；Agent 应让位待归还）。节流续租，静默失败（隧道不可达不阻输入）。
 const HUMAN_OWNER = 'human:' + IDE_SESSION;
+// 与隧道租约 key 同构（账号@窗口#分身）：输入仲裁与桌面租约同一条分身身份。
 function cloneKey(it){
-  return ACCOUNT ? ('account:' + ACCOUNT + '#' + it.slot) : ideKey(it);
+  return ACCOUNT ? ('account:' + ACCOUNT + '@' + ideKey(it) + '#' + it.slot) : ideKey(it);
 }
 let _lastLeaseAt = 0;
 function humanLease(it){
@@ -339,14 +345,14 @@ function humanLease(it){
   _lastLeaseAt = now;
   try {
     fetch(TUNNEL_HTTP + '/input?op=acquire&key=' + encodeURIComponent(cloneKey(it))
-      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000', {method:'POST'});
+      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000' + tunnelAuthQ(), {method:'POST'});
   } catch(e) {}
 }
 // 活动分身被 Agent 持有输入权时在状态栏提示（人可随时动手接管）。
 let _agentHolding = false;
 setInterval(function(){
   var it = active(); if (!it) return;
-  fetch(TUNNEL_HTTP + '/input?key=' + encodeURIComponent(cloneKey(it)))
+  fetch(TUNNEL_HTTP + '/input?key=' + encodeURIComponent(cloneKey(it)) + tunnelAuthQ())
     .then(function(r){ return r.json(); })
     .then(function(d){
       var h = d && d.holders && d.holders[0];
@@ -425,9 +431,9 @@ function closeInstance(id){
   instances.splice(idx, 1);
   // 释放租约（分身销毁）：告知隧道不再保留该窗口会话身份。
   try {
-    var dq = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot)))
-                     : ('ide=' + encodeURIComponent(ideKey(it)));
-    fetch(TUNNEL_HTTP + '/sessions?' + dq, {method:'POST'});
+    var dq = 'ide=' + encodeURIComponent(ideKey(it))
+           + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
+    fetch(TUNNEL_HTTP + '/sessions?' + dq + tunnelAuthQ(), {method:'POST'});
   } catch(e) {}
   if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
   instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
@@ -447,9 +453,9 @@ async function connectInstance(it) {
   try {
     // \u6bcf\u6b21\u94f8\u65b0 token = \u65b0\u5f00\u4e00\u8def\u72ec\u7acb RDP \u8fde\u63a5\uff08guest \u5173\u5355\u4f1a\u8bdd\u9650\u5236\u540e\u5373\u5404\u6210\u4e00\u8def\u72ec\u7acb\u4f1a\u8bdd\uff09
     // 账号路由时带稳定分身号 clone=slot：同账号多分身各自独立租约 key(account:<名>#<slot>)，重连各归其位。
-    const q = ACCOUNT ? ('account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot)))
-                      : ('ide=' + encodeURIComponent(ideKey(it)));
-    const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h);
+    const q = 'ide=' + encodeURIComponent(ideKey(it))
+            + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
+    const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h + tunnelAuthQ());
     tokenData = await r.json();
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
@@ -571,14 +577,14 @@ async function openDesktop(context, account) {
   const key = account || sessionId;
   const existing = desktopPanels.get(key);
   if (existing) { existing.reveal(); return; }
-  const accounts = await fetchAccounts(c.tunnelHttpUrl);
+  const accounts = await fetchAccounts(c.tunnelHttpUrl, c.tunnelToken);
   const title = account ? ("DAO \u684c\u9762 \u00b7 " + account) : ("DAO \u684c\u9762 \u00b7 " + sessionId);
   const p = vscode.window.createWebviewPanel(
     "daoWinDesktop", title, vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media")] }
   );
   desktopPanels.set(key, p);
-  p.webview.html = desktopHtml(p.webview, context, sessionId, account || null, c.tunnelHttpUrl, c.tunnelWsPort, accounts);
+  p.webview.html = desktopHtml(p.webview, context, sessionId, account || null, c.tunnelHttpUrl, c.tunnelWsPort, accounts, c.tunnelToken);
   p.onDidDispose(() => { desktopPanels.delete(key); });
   p.webview.onDidReceiveMessage((msg) => {
     if (msg.type === "state" && msg.state === 3) {
@@ -604,7 +610,7 @@ async function openDesktop(context, account) {
 // 选账号开桌面（QuickPick 列出隧道已知账号 + 手填）
 async function openAccountDesktop(context) {
   const c = cfg();
-  const accounts = await fetchAccounts(c.tunnelHttpUrl);
+  const accounts = await fetchAccounts(c.tunnelHttpUrl, c.tunnelToken);
   const items = accounts.map((a) => ({ label: a.name, description: a.hostname + ":" + a.port }));
   items.push({ label: "$(add) \u5176\u4ed6\u8d26\u53f7\u2026", description: "\u624b\u52a8\u8f93\u5165\u8d26\u53f7\u540d" });
   const pick = await vscode.window.showQuickPick(items, { placeHolder: "\u9009\u62e9\u8981\u6253\u5f00\u684c\u9762\u7684 Windows \u8d26\u53f7" });
@@ -923,7 +929,7 @@ async function homeInfoPayload(context) {
   if (info) {
     try { const r = await apiCall(info.url, info.token, "GET", "/api/account.list"); accounts = (r.body && r.body.accounts) || []; } catch (_) {}
   }
-  if (!accounts.length) { try { accounts = await fetchAccounts(cfg().tunnelHttpUrl); } catch (_) {} }
+  if (!accounts.length) { try { const c2 = cfg(); accounts = await fetchAccounts(c2.tunnelHttpUrl, c2.tunnelToken); } catch (_) {} }
   return {
     platform: process.platform, host: os.hostname(), user: os.userInfo().username,
     os: os.type() + " " + os.release(), bridge: info ? info.url : null,

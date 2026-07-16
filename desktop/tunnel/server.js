@@ -51,6 +51,23 @@ const DEFAULT_RDP = {
 // 输入并发仲裁器（分身级短租约：用户可抢占 Agent，不同分身永不互阻）。
 const inputArbiter = new InputArbiter();
 
+// 控制面 HTTP 鉴权：设 DAO_GUAC_HTTP_TOKEN 后，除 /health 外所有端点需
+// Authorization: Bearer <token> 或 ?auth=<token>。未设且仅回环绑定时可省（本机信任）；
+// 非回环绑定不设 token = 任意远端可铸 token/查账号/夺输入仲裁，启动时重警告。
+const HTTP_TOKEN = process.env.DAO_GUAC_HTTP_TOKEN || "";
+
+function isLoopback(bind) {
+  return bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
+}
+
+// 纯函数（可单测）：本次请求是否获准访问控制面。
+function authorized(pathname, authHeader, authQuery, token) {
+  if (!token) return true;            // 未启用鉴权（回环实验）
+  if (pathname === "/health") return true; // 探活免鉴权（不泄密）
+  if (authQuery && authQuery === token) return true;
+  return authHeader === `Bearer ${token}`;
+}
+
 const SESSIONS_JSON =
   process.env.DAO_SESSIONS_JSON || path.join(__dirname, "..", "sessions.json");
 
@@ -101,11 +118,15 @@ function targetForIde(ide) {
 }
 
 // —— 会话租约台账（窗口↔会话持久绑定）——
-// key = 稳定的窗口/分身身份：ide 或 account:<名>，可再带 #<分身号> 后缀。
+// key = 稳定的窗口/分身身份：ide 或 account:<名>[@<ide>]，可再带 #<分身号> 后缀。
+// 账号路由时若还带 ide（窗口稳定身份），则按 账号@窗口 隔离——不同 IDE 窗口
+// 用同一账号同一分身号也各自独立租约（一窗一桌面本源，勿跨窗口串租）。
 // 单账号多分身：同一账号以不同 clone 号铸 token → 各自独立租约/独立 RDP 会话路，
 // 互不相并（termsrv 同账号多路 = 各自独立桌面/进程，鸡犬相闻互不往来）。
 function leaseKey(ide, account, clone) {
-  const base = account ? `account:${account}` : String(ide || "ide_default");
+  const base = account
+    ? `account:${account}` + (ide ? `@${ide}` : "")
+    : String(ide || "ide_default");
   return clone ? `${base}#${clone}` : base;
 }
 
@@ -204,6 +225,17 @@ function mintTokenForTarget(rdp, opts) {
 const httpServer = http.createServer((req, res) => {
   const u = new URL(req.url, `http://127.0.0.1:${HTTP_PORT}`);
   res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+  if (!authorized(u.pathname, req.headers["authorization"] || "", u.searchParams.get("auth") || "", HTTP_TOKEN)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "需 Authorization: Bearer <DAO_GUAC_HTTP_TOKEN> 或 ?auth=" }));
+    return;
+  }
   if (u.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, ws_port: WS_PORT, guacd: `${GUACD_HOST}:${GUACD_PORT}` }));
@@ -273,8 +305,9 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
   if (u.pathname === "/token") {
-    const ide = u.searchParams.get("ide") || "ide_default";
+    // 账号路由时 ide 不强制缺省：显式带才参与租约 key（旧客户端不带 = 旧 key 不变）。
     const account = u.searchParams.get("account") || undefined;
+    const ide = u.searchParams.get("ide") || (account ? undefined : "ide_default");
     const clone = u.searchParams.get("clone") || undefined;
     const width = parseInt(u.searchParams.get("width") || "0", 10) || undefined;
     const height = parseInt(u.searchParams.get("height") || "0", 10) || undefined;
@@ -288,7 +321,7 @@ const httpServer = http.createServer((req, res) => {
       const lease = recordLease(ide, account, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
-        token, ws_port: WS_PORT, ide, account: account || null, clone: clone || null,
+        token, ws_port: WS_PORT, ide: ide || null, account: account || null, clone: clone || null,
         leaseId: lease.leaseId, reconnect: lease.reconnect,
         remote: !!raw.via,
       }));
@@ -303,8 +336,14 @@ const httpServer = http.createServer((req, res) => {
 });
 // 仅当作为入口进程直接运行时才起监听/隧道；被 require（单测）时只暴露纯函数，不占端口、不连 guacd。
 function startServer() {
+if (!isLoopback(BIND) && !HTTP_TOKEN) {
+  console.error("[tunnel] ⚠ 非回环绑定且未设 DAO_GUAC_HTTP_TOKEN：任意远端可铸 token/查账号/夺输入仲裁，务必设 token 或改回环绑定");
+}
+if (!isLoopback(BIND) && !process.env.DAO_RDP_PASS) {
+  console.error("[tunnel] ⚠ 非回环绑定仍在用实验默认 RDP 口令：生产务必经 DAO_RDP_PASS 注入显式凭据");
+}
 httpServer.listen(HTTP_PORT, BIND, () => {
-  console.log(`[tunnel] 令牌铸造 HTTP 就绪 http://${BIND}:${HTTP_PORT}/token?ide=<hash>`);
+  console.log(`[tunnel] 令牌铸造 HTTP 就绪 http://${BIND}:${HTTP_PORT}/token?ide=<hash>${HTTP_TOKEN ? " · 鉴权已启用" : ""}`);
 });
 
 // —— guacamole-lite 隧道（浏览器 WS ↔ guacd）——
@@ -357,5 +396,6 @@ if (require.main === module) {
 module.exports = {
   mintToken, mintTokenForTarget, encryptToken, startServer, inputArbiter,
   leaseKey, recordLease, listLeases, dropLease, loadLeases,
+  authorized, isLoopback,
   SESSIONS_STATE_JSON,
 };
