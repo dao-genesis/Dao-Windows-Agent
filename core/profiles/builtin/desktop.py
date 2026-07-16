@@ -66,10 +66,18 @@ def _clipboard_set(adapter, instance, text: str, **_):
     return adapter.build_plan("clipboard_set", [{"op": "clipboard_set", "text": text}])
 
 
-def _ui_tree(adapter, instance, title: str, depth: int = 3, **_):
+def _ui_tree(adapter, instance, title: str, depth: int = 3,
+             name: str = "", control_type: str = "", actionable_only: bool = False, **_):
+    tree: dict = {"op": "tree", "depth": depth}
+    if name:
+        tree["name"] = name
+    if control_type:
+        tree["control_type"] = control_type
+    if actionable_only:
+        tree["actionable_only"] = True
     return adapter.build_plan("ui_tree", [
         {"op": "activate", "title": title},
-        {"op": "tree", "depth": depth},
+        tree,
     ])
 
 
@@ -167,8 +175,11 @@ PROFILE = AppProfile(
         Verb("clipboard_get", "读剪贴板文本", handler=_clipboard_get, aliases=("paste_read",)),
         Verb("clipboard_set", "写剪贴板文本", {"text": "文本"}, handler=_clipboard_set,
              aliases=("copy_write",)),
-        Verb("ui_tree", "激活窗口并导出其 UIA 控件树(感知)",
-             {"title": "窗口标题子串", "depth": "深度"}, handler=_ui_tree, aliases=("tree",)),
+        Verb("ui_tree", "激活窗口并导出其 UIA 控件树(结构化之眼·归一 schema + 可按 name/类型过滤)",
+             {"title": "窗口标题子串", "depth": "深度", "name": "按控件名过滤(子串·可选)",
+              "control_type": "按控件类型过滤(如 Button·可选)",
+              "actionable_only": "仅可交互控件(真=只留可点/可填·可选)"},
+             handler=_ui_tree, aliases=("tree",)),
         Verb("find", "激活窗口并按语义定位控件(name 或 control_type)",
              {"title": "窗口标题子串", "name": "控件名", "control_type": "控件类型",
               "timeout": "秒"}, handler=_find),
