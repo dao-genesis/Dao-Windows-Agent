@@ -190,7 +190,7 @@ def test_mcp_mode_and_project_tools():
 def test_mcp_handler_exception_returns_error_not_crash():
     from bridge import mcp as _mcp
     _mcp._TOOLS["_boom"] = {"description": "x", "properties": {}, "required": [],
-                            "handler": lambda a: (_ for _ in ()).throw(RuntimeError("炸"))}
+                            "handler": lambda s, a: (_ for _ in ()).throw(RuntimeError("炸"))}
     try:
         resp = handle_request({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
                                "params": {"name": "_boom", "arguments": {}}})
@@ -299,5 +299,88 @@ def test_probe_skips_token_protected_bridge_we_cannot_auth():
                 os.environ.pop("DAO_WIN_TOKEN", None)
             else:
                 os.environ["DAO_WIN_TOKEN"] = orig_env
+    finally:
+        stop()
+
+
+def _mcp_post(base: str, payload, token: str = "", expect_status: int = 200):
+    import urllib.error
+    import urllib.request
+
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(base + "/mcp", data=json.dumps(payload).encode(),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status = resp.status
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        raw = exc.read()
+    assert status == expect_status, f"HTTP {status} != {expect_status}: {raw[:200]}"
+    return json.loads(raw) if raw else None
+
+
+def test_http_mcp_endpoint_full_protocol():
+    """HTTP /mcp（streamable HTTP）：与 stdio 同一张工具表同一套 JSON-RPC，
+    与 /api/* 共享同一进程内会话态；Cursor/Copilot/云端 Agent 配 url 即插即用。"""
+    import urllib.request
+
+    base, stop = _serve_bridge_with_token("mcp-token")
+    try:
+        # 无 token → 401
+        _mcp_post(base, {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                  token="", expect_status=401)
+        # initialize
+        r = _mcp_post(base, {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                      token="mcp-token")
+        assert r["result"]["serverInfo"]["name"] == "dao-windows-agent-bridge"
+        # 纯通知 → 202 无体
+        r = _mcp_post(base, {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                      token="mcp-token", expect_status=202)
+        assert r is None
+        # tools/list：24 工具全量可见
+        r = _mcp_post(base, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                      token="mcp-token")
+        names = {t["name"] for t in r["result"]["tools"]}
+        assert {"list_apps", "route", "session_invoke", "account_create",
+                "clone_matrix"} <= names
+        # tools/call 真实执行，且与 /api/* 同一会话态
+        r = _mcp_post(base, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                             "params": {"name": "session_create",
+                                        "arguments": {"session_id": "vm-http"}}},
+                      token="mcp-token")
+        assert r["result"]["isError"] is False
+        assert json.loads(r["result"]["content"][0]["text"])["session_id"] == "vm-http"
+        req = urllib.request.Request(base + "/api/session.list",
+                                     headers={"Authorization": "Bearer mcp-token"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            sessions = json.loads(resp.read())["sessions"]
+        assert any(s["session_id"] == "vm-http" for s in sessions)
+        # 批量 JSON-RPC
+        r = _mcp_post(base, [
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "list_apps", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+             "params": {"name": "session_destroy",
+                        "arguments": {"session_id": "vm-http"}}},
+        ], token="mcp-token")
+        assert isinstance(r, list) and [x["id"] for x in r] == [4, 5]
+        assert "kicad" in json.loads(r[0]["result"]["content"][0]["text"])["apps"]
+        # 未知工具 → isError 而非崩溃
+        r = _mcp_post(base, {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                             "params": {"name": "nope", "arguments": {}}},
+                      token="mcp-token")
+        assert r["result"]["isError"] is True
+        # GET /mcp → 405
+        req = urllib.request.Request(base + "/mcp",
+                                     headers={"Authorization": "Bearer mcp-token"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            raise AssertionError("GET /mcp 应 405")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 405 and exc.headers.get("Allow") == "POST"
     finally:
         stop()

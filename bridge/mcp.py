@@ -180,7 +180,16 @@ def _make_service():
     return BridgeService()
 
 
-_SERVICE = _make_service()
+# 惰性裁定：首次工具调用才选形态。HTTP 桥(bridge.server) import 本模块只为复用
+# handle_request，若 import 即探活会误附着到旧桥/自身端口，故延至真用时。
+_SERVICE = None
+
+
+def _default_service():
+    global _SERVICE
+    if _SERVICE is None:
+        _SERVICE = _make_service()
+    return _SERVICE
 
 # 工具定义：name -> (说明, 入参 schema properties, 必填, handler)
 _TOOLS: dict[str, dict] = {
@@ -188,7 +197,7 @@ _TOOLS: dict[str, dict] = {
         "description": "列出所有已注册的软件画像 app_id（樸散則為器：新增软件=加一个 profile）。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.apps(),
+        "handler": lambda s, a: s.apps(),
     },
     "search_verbs": {
         "description": "跨所有软件语义检索能力动词（ha-copilot search_tools 配方）。先搜再调，勿臆测动词名。",
@@ -197,31 +206,31 @@ _TOOLS: dict[str, dict] = {
             "limit": {"type": "integer", "description": "返回条数，默认 10"},
         },
         "required": ["query"],
-        "handler": lambda a: _SERVICE.search_verbs(a["query"], int(a.get("limit", 10))),
+        "handler": lambda s, a: s.search_verbs(a["query"], int(a.get("limit", 10))),
     },
     "describe_app": {
         "description": "查看某软件画像的动词表/参数/领域纪律（ha-copilot describe_tool 配方）。",
         "properties": {"app_id": {"type": "string"}},
         "required": ["app_id"],
-        "handler": lambda a: _SERVICE.describe_app(a["app_id"]),
+        "handler": lambda s, a: s.describe_app(a["app_id"]),
     },
     "session_create": {
         "description": "新建一个类虚拟机隔离会话（对应一个 IDE 窗口）。",
         "properties": {"session_id": {"type": "string", "description": "可选，缺省自动生成"}},
         "required": [],
-        "handler": lambda a: _SERVICE.session_create(a.get("session_id")),
+        "handler": lambda s, a: s.session_create(a.get("session_id")),
     },
     "session_list": {
         "description": "列出所有会话及各自已打开的软件。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.session_list(),
+        "handler": lambda s, a: s.session_list(),
     },
     "session_open_app": {
         "description": "在指定会话内打开/附着一个软件实例（隔离并行、不上可见桌面）。",
         "properties": {"session_id": {"type": "string"}, "app_id": {"type": "string"}},
         "required": ["session_id", "app_id"],
-        "handler": lambda a: _SERVICE.session_open_app(
+        "handler": lambda s, a: s.session_open_app(
             a["session_id"], a["app_id"],
             **{k: v for k, v in a.items() if k not in ("session_id", "app_id")},
         ),
@@ -235,7 +244,7 @@ _TOOLS: dict[str, dict] = {
             "params": {"type": "object"},
         },
         "required": ["session_id", "app_id", "verb"],
-        "handler": lambda a: _SERVICE.session_invoke(
+        "handler": lambda s, a: s.session_invoke(
             a["session_id"], a["app_id"], a["verb"], a.get("params")
         ),
     },
@@ -243,13 +252,13 @@ _TOOLS: dict[str, dict] = {
         "description": "销毁一个会话，释放其中所有软件实例。",
         "properties": {"session_id": {"type": "string"}},
         "required": ["session_id"],
-        "handler": lambda a: _SERVICE.session_destroy(a["session_id"]),
+        "handler": lambda s, a: s.session_destroy(a["session_id"]),
     },
     "session_prompt": {
         "description": "获取该会话当前应注入 Agent 的帛书系统提示（含已开软件的领域纪律）。",
         "properties": {"session_id": {"type": "string"}},
         "required": ["session_id"],
-        "handler": lambda a: _SERVICE.session_prompt(a["session_id"]),
+        "handler": lambda s, a: s.session_prompt(a["session_id"]),
     },
     "route": {
         "description": "通用适配层 @ 调度：把一句自然语言目标裁定到整机通用层或被 @句柄 唤起的领域工作层，"
@@ -260,34 +269,34 @@ _TOOLS: dict[str, dict] = {
             "verb_limit": {"type": "integer", "description": "动词候选条数，默认 5"},
         },
         "required": ["text"],
-        "handler": lambda a: _SERVICE.route(a["text"], int(a.get("verb_limit", 5))),
+        "handler": lambda s, a: s.route(a["text"], int(a.get("verb_limit", 5))),
     },
     "capabilities": {
         "description": "统一能力清单：整机通用层 + 各 @句柄领域工作层（builtin/external 一视同仁）。"
                        "Agent 一览而择路——无 @ 操作整机，需专门领域能力时 @对应句柄 唤起工作层。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.capabilities(),
+        "handler": lambda s, a: s.capabilities(),
     },
     "mode_list": {
         "description": "列出全部可切换模式（primary/coding/windows/native/domain:<app_id>…）及当前模式。"
                        "模式 = 提示词覆盖 + 工具面裁剪（Proxy Pro 联动的三插件融合枢纽）。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.mode_list(),
+        "handler": lambda s, a: s.mode_list(),
     },
     "mode_get": {
         "description": "查看当前模式与该模式下开放的 app 工具面（allowed_apps）。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.mode_get(),
+        "handler": lambda s, a: s.mode_get(),
     },
     "mode_set": {
         "description": "切换模式（态持久化到 ~/.dao/mode.json，Proxy Pro/dao-desktop 同装联动）。"
                        "route/invoke 提示被模式挡住时，先切到对应模式再执行。",
         "properties": {"mode": {"type": "string", "description": "模式 id，如 windows / coding / domain:kicad"}},
         "required": ["mode"],
-        "handler": lambda a: _SERVICE.mode_set(a["mode"]),
+        "handler": lambda s, a: s.mode_set(a["mode"]),
     },
     "project_create": {
         "description": "创建一条跨领域工程交接流水（螺旋递进：各领域工作层完成后交接下一环节）。",
@@ -297,7 +306,7 @@ _TOOLS: dict[str, dict] = {
             "stages": {"type": "array", "description": "阶段清单，每项 {app_id, goal}"},
         },
         "required": ["project_id"],
-        "handler": lambda a: _SERVICE.project_create(a["project_id"], a.get("goal", ""), a.get("stages")),
+        "handler": lambda s, a: s.project_create(a["project_id"], a.get("goal", ""), a.get("stages")),
     },
     "project_advance": {
         "description": "完成当前阶段并交接下一环节（可附产物路径与备注）。",
@@ -307,19 +316,19 @@ _TOOLS: dict[str, dict] = {
             "note": {"type": "string"},
         },
         "required": ["project_id"],
-        "handler": lambda a: _SERVICE.project_advance(a["project_id"], a.get("artifacts"), a.get("note", "")),
+        "handler": lambda s, a: s.project_advance(a["project_id"], a.get("artifacts"), a.get("note", "")),
     },
     "project_status": {
         "description": "查看某工程流水的阶段进度与交接提示。",
         "properties": {"project_id": {"type": "string"}},
         "required": ["project_id"],
-        "handler": lambda a: _SERVICE.project_status(a["project_id"]),
+        "handler": lambda s, a: s.project_status(a["project_id"]),
     },
     "project_list": {
         "description": "列出全部工程交接流水。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.project_list(),
+        "handler": lambda s, a: s.project_list(),
     },
     "account_create": {
         "description": "创建/幂等更新一个 Windows 本地账号并加入 Remote Desktop Users（多账号类虚拟机·扩展本源）。"
@@ -330,13 +339,13 @@ _TOOLS: dict[str, dict] = {
             "admin": {"type": "boolean", "description": "是否加入 Administrators，默认 false"},
         },
         "required": ["name"],
-        "handler": lambda a: _SERVICE.account_create(a["name"], a.get("password"), bool(a.get("admin", False))),
+        "handler": lambda s, a: s.account_create(a["name"], a.get("password"), bool(a.get("admin", False))),
     },
     "account_list": {
         "description": "列出账号（合并注册表 + quser 会话态）。password 永不外泄。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.account_list(),
+        "handler": lambda s, a: s.account_list(),
     },
     "account_destroy": {
         "description": "注销账号所有会话并删除该本地账号（可选删 profile），从注册表摘除。",
@@ -345,13 +354,13 @@ _TOOLS: dict[str, dict] = {
             "delete_profile": {"type": "boolean", "description": "是否删除用户 profile 目录，默认 true"},
         },
         "required": ["name"],
-        "handler": lambda a: _SERVICE.account_destroy(a["name"], bool(a.get("delete_profile", True))),
+        "handler": lambda s, a: s.account_destroy(a["name"], bool(a.get("delete_profile", True))),
     },
     "account_sessions": {
         "description": "查看真机当前 RDP/控制台会话（quser 解析）。",
         "properties": {},
         "required": [],
-        "handler": lambda a: _SERVICE.account_sessions(),
+        "handler": lambda s, a: s.account_sessions(),
     },
     "clone_plan": {
         "description": "通用隔离层：为“分身 clone_id 隔离运行 app_id”选出隔离档位"
@@ -364,7 +373,7 @@ _TOOLS: dict[str, dict] = {
             "prefer_strongest": {"type": "boolean", "description": "真时选最强档而非最省档"},
         },
         "required": ["app_id", "clone_id"],
-        "handler": lambda a: _SERVICE.clone_plan(
+        "handler": lambda s, a: s.clone_plan(
             a["app_id"], a["clone_id"], a.get("tiers"),
             bool(a.get("prefer_strongest", False))),
     },
@@ -376,7 +385,7 @@ _TOOLS: dict[str, dict] = {
             "prefer_strongest": {"type": "boolean"},
         },
         "required": ["app_ids"],
-        "handler": lambda a: _SERVICE.clone_matrix(
+        "handler": lambda s, a: s.clone_matrix(
             a["app_ids"], a.get("tiers"), bool(a.get("prefer_strongest", False))),
     },
 }
@@ -397,19 +406,23 @@ def _tools_list() -> list[dict]:
     return out
 
 
-def _call_tool(name: str, arguments: dict) -> dict:
+def _call_tool(name: str, arguments: dict, service=None) -> dict:
     spec = _TOOLS.get(name)
     if spec is None:
         return {"error": f"未知工具: {name}"}
     for req in spec["required"]:
         if req not in arguments:
             return {"error": f"工具 {name} 缺少必填参数: {req}"}
-    handler: Callable[[dict], Any] = spec["handler"]
-    return handler(arguments)
+    handler: Callable[[Any, dict], Any] = spec["handler"]
+    return handler(service if service is not None else _default_service(), arguments)
 
 
-def handle_request(req: dict) -> dict | None:
-    """处理一条 JSON-RPC 请求；通知（无 id）返回 None。"""
+def handle_request(req: dict, service=None) -> dict | None:
+    """处理一条 JSON-RPC 请求；通知（无 id）返回 None。
+
+    service 缺省用模块级 _SERVICE（stdio 形态）；HTTP /mcp 形态传入桥自身的
+    进程内 BridgeService，与 /api/* 共享同一套会话/模式/工程态（线程安全：
+    不改全局，逐请求显式传递）。"""
     method = req.get("method")
     req_id = req.get("id")
     params = req.get("params") or {}
@@ -426,7 +439,7 @@ def handle_request(req: dict) -> dict | None:
         name = params.get("name", "")
         arguments = params.get("arguments") or {}
         try:
-            payload = _call_tool(name, arguments)
+            payload = _call_tool(name, arguments, service)
         except Exception as exc:  # 处理器异常绝不掀翻整个 MCP 服务；如实降级为 isError
             payload = {"error": f"{type(exc).__name__}: {exc}"}
         result = {

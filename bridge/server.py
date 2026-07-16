@@ -4,6 +4,13 @@
 
 除 /api/health 外，若设了 --token（或环境变量 DAO_WIN_TOKEN），需带
 `Authorization: Bearer <TOKEN>`。纯标准库，无第三方依赖。
+
+另暴露 MCP over HTTP（streamable HTTP）于 `POST /mcp`：与 stdio 形态（
+`python -m bridge.mcp`）同一张工具表、同一套 JSON-RPC 处理，且与 /api/*
+共享同一进程内 BridgeService（会话/模式/工程态归一）。Cursor/Copilot/云端
+Agent 等任意 MCP 客户端配置 `{"url": "http(s)://…/mcp"}` 即插即用；鉴权与
+/api/* 同源（Bearer token）。dao-desktop 的 registerRemote({serverUrl:…/mcp})
+与本端点同形。
 """
 from __future__ import annotations
 
@@ -13,6 +20,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List
 
+from bridge import mcp as mcp_shell
 from bridge.service import BridgeService
 from bridge.subplugin_host import SubpluginHost, load_spec
 
@@ -65,10 +73,50 @@ class _Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         return auth == f"Bearer {_TOKEN}"
 
+    def _handle_mcp(self, method: str) -> None:
+        """MCP over HTTP（streamable HTTP）：POST 单条/批量 JSON-RPC → JSON 应答。
+
+        纯通知（无 id，如 notifications/initialized）按规范回 202 无体。
+        GET/DELETE 回 405（本端不开服务端主动流，请求/应答已覆盖全部工具语义）。"""
+        if method != "POST":
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b""
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            self._send(400, {"jsonrpc": "2.0", "id": None,
+                             "error": {"code": -32700, "message": f"parse error: {exc}"}})
+            return
+        batch = isinstance(body, list)
+        reqs = body if batch else [body]
+        replies = []
+        for one in reqs:
+            if not isinstance(one, dict):
+                replies.append({"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32600, "message": "invalid request"}})
+                continue
+            resp = mcp_shell.handle_request(one, service=_SERVICE)
+            if resp is not None:
+                replies.append(resp)
+        if not replies:  # 全为通知
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._send(200, replies if batch else replies[0])
+
     def _handle(self, method: str) -> None:
         path = self.path.split("?", 1)[0]
         if not self._authed(path):
             self._send(401, {"error": "未授权：需 Authorization: Bearer <token>"})
+            return
+        if path == "/mcp" or path == "/mcp/":
+            self._handle_mcp(method)
             return
         payload = {}
         if method == "POST":
@@ -126,6 +174,7 @@ def main() -> None:
     _SERVICE = BridgeService()
     httpd = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(f"[bridge] REST 内核就绪 http://{args.host}:{args.port}/api/  "
+          f"· MCP http://{args.host}:{args.port}/mcp  "
           f"(token={'on' if _TOKEN else 'off'})", flush=True)
     try:
         httpd.serve_forever()
