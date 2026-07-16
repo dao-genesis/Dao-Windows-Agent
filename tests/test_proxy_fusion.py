@@ -42,7 +42,7 @@ def _invert_under_home(home: str) -> str:
     )
     r = subprocess.run(
         ["node", "-e", script, _SP, _OFFICIAL],
-        capture_output=True, text=True, env=env, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=30,
     )
     assert r.returncode == 0, r.stderr
     return r.stdout
