@@ -131,6 +131,11 @@
           "type": "number",
           "default": 4823,
           "description": "桌面路由隧道 WebSocket 端口（浏览器 WS ↔ guacd）"
+        },
+        "daoWin.tunnelToken": {
+          "type": "string",
+          "default": "",
+          "description": "隧道控制面鉴权 token（与隧道 DAO_GUAC_HTTP_TOKEN 一致；隧道仅回环绑定时可留空）"
         }
       }
     },

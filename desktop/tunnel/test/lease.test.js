@@ -60,6 +60,30 @@ assert.strictEqual(srv.dropLease(null, "dao", "2"), true);
 assert.strictEqual(srv.listLeases().length, 4, "drop 分身只释放该分身");
 console.log("✓ drop 指定分身不波及其它分身");
 
+// 4c) 一窗一桌面：账号路由带窗口稳定身份(ide) → 不同 IDE 窗口同账号同分身号也各自独立租约。
+const lw1 = srv.recordLease("ide_winA.1", "dao", { hostname: "127.0.0.1", port: "13389", username: "dao" }, "1");
+const lw2 = srv.recordLease("ide_winB.1", "dao", { hostname: "127.0.0.1", port: "13389", username: "dao" }, "1");
+assert.strictEqual(lw1.key, "account:dao@ide_winA.1#1");
+assert.strictEqual(lw2.key, "account:dao@ide_winB.1#1");
+assert.notStrictEqual(lw1.leaseId, lw2.leaseId, "不同窗口同账号同分身号必须各自独立租约（勿跨窗串租）");
+const lw1b = srv.recordLease("ide_winA.1", "dao", { hostname: "127.0.0.1", port: "13389", username: "dao" }, "1");
+assert.strictEqual(lw1b.leaseId, lw1.leaseId, "同窗口复连命中同一 lease");
+assert.strictEqual(srv.dropLease("ide_winA.1", "dao", "1"), true);
+assert.strictEqual(srv.dropLease("ide_winB.1", "dao", "1"), true);
+console.log("✓ 账号@窗口隔离：跨 IDE 窗口同账号不串租");
+
+// 4d) 控制面鉴权纯函数：未设 token 全放行；设 token 后 /health 免鉴权，其余需 Bearer 或 ?auth=。
+assert.strictEqual(srv.authorized("/token", "", "", ""), true, "未启用鉴权应放行");
+assert.strictEqual(srv.authorized("/health", "", "", "sec"), true, "/health 免鉴权");
+assert.strictEqual(srv.authorized("/token", "", "", "sec"), false, "无凭据应拒");
+assert.strictEqual(srv.authorized("/token", "Bearer sec", "", "sec"), true, "Bearer 应放行");
+assert.strictEqual(srv.authorized("/token", "Bearer wrong", "", "sec"), false, "错误 Bearer 应拒");
+assert.strictEqual(srv.authorized("/sessions", "", "sec", "sec"), true, "?auth= 应放行");
+assert.strictEqual(srv.authorized("/input", "", "wrong", "sec"), false, "错误 ?auth= 应拒");
+assert.strictEqual(srv.isLoopback("127.0.0.1"), true);
+assert.strictEqual(srv.isLoopback("0.0.0.0"), false);
+console.log("✓ 控制面鉴权语义（DAO_GUAC_HTTP_TOKEN）");
+
 // 5) 落盘持久化：另起进程重新读取应保留（模拟隧道重启后台账仍在）。
 const disk = JSON.parse(fs.readFileSync(process.env.DAO_SESSIONS_STATE_JSON, "utf8"));
 assert.ok(disk.leases["ide_win1.1"] && disk.leases["ide_win1.1"].leaseId === l1.leaseId, "租约应落盘");
