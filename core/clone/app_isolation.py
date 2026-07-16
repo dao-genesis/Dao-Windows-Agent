@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
@@ -197,12 +198,14 @@ def build_clone_launch(
     """
     resolved = _resolve_app(app_id)
     data_dir = clone_data_root(clone_id, resolved, root)
+    # 非标准安装路径经 DAO_CLONE_EXE_<APP>（如 DAO_CLONE_EXE_CHROME）显式指定，置于候选首位。
+    override = os.environ.get("DAO_CLONE_EXE_" + re.sub(r"[^A-Za-z0-9]", "_", resolved).upper())
     strat = ISOLATION_REGISTRY.get(resolved)
     if strat is None:
         return CloneLaunchSpec(
             app_id=resolved,
             clone_id=_safe(clone_id),
-            exe_candidates=[],
+            exe_candidates=[override] if override else [],
             args=list(extra_args or []),
             env={},
             data_dir=data_dir,
@@ -215,7 +218,7 @@ def build_clone_launch(
     return CloneLaunchSpec(
         app_id=resolved,
         clone_id=_safe(clone_id),
-        exe_candidates=list(strat.exe_candidates),
+        exe_candidates=([override] if override else []) + list(strat.exe_candidates),
         args=args,
         env=dict(strat.env_from_dir(data_dir)),
         data_dir=data_dir,

@@ -37,6 +37,18 @@ def test_vscode_isolates_user_data_and_extensions():
     assert any("Code.exe" in e for e in s.exe_candidates)
 
 
+def test_exe_env_override_prepends_candidate(monkeypatch):
+    """非标准安装（如 Chrome 在 C:\\devin\\chrome）经 DAO_CLONE_EXE_<APP> 显式指定。"""
+    monkeypatch.setenv("DAO_CLONE_EXE_CHROME", r"C:\devin\chrome\chrome-win64\chrome.exe")
+    s = build_clone_launch("chrome", "c1")
+    assert s.exe_candidates[0] == r"C:\devin\chrome\chrome-win64\chrome.exe"
+    assert s.isolatable
+    # 未登记软件亦可经 override 裸启动
+    monkeypatch.setenv("DAO_CLONE_EXE_MYAPP", r"C:\tools\myapp.exe")
+    u = build_clone_launch("myapp", "c1")
+    assert u.exe_candidates == [r"C:\tools\myapp.exe"] and not u.isolatable
+
+
 def test_devin_desktop_same_mechanism_as_vscode():
     s = build_clone_launch("devin-desktop", "session-3")
     assert s.isolatable
