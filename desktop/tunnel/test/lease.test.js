@@ -84,6 +84,28 @@ assert.strictEqual(srv.isLoopback("127.0.0.1"), true);
 assert.strictEqual(srv.isLoopback("0.0.0.0"), false);
 console.log("✓ 控制面鉴权语义（DAO_GUAC_HTTP_TOKEN）");
 
+// 4e) 会话策略入 token：剪贴板策略/驱动器重定向/只观察，密文解开逐项核对。
+{
+  const Crypt = require("guacamole-lite/lib/Crypt");
+  const KEY = (process.env.DAO_GUAC_KEY || "dao-benyuan-desktop-routing-2026").padEnd(32, "0").slice(0, 32);
+  const crypt = new Crypt("AES-256-CBC", KEY);
+  const rdp = { hostname: "127.0.0.1", port: "13389", username: "dao", password: "x" };
+  const s0 = crypt.decrypt(srv.mintTokenForTarget(rdp, {})).connection.settings;
+  assert.strictEqual(s0["disable-copy"], undefined, "缺省剪贴板双向");
+  assert.strictEqual(s0["read-only"], undefined, "缺省可控制");
+  const s1 = crypt.decrypt(srv.mintTokenForTarget(rdp, { clipboard: "off" })).connection.settings;
+  assert.strictEqual(s1["disable-copy"], "true");
+  assert.strictEqual(s1["disable-paste"], "true");
+  const s2 = crypt.decrypt(srv.mintTokenForTarget(rdp, { clipboard: "in" })).connection.settings;
+  assert.strictEqual(s2["disable-copy"], "true", "in=只允本地→远端，禁远端→本地");
+  assert.strictEqual(s2["disable-paste"], undefined);
+  const s3 = crypt.decrypt(srv.mintTokenForTarget(rdp, { drive: "C:\\dao-share", readonly: true })).connection.settings;
+  assert.strictEqual(s3["enable-drive"], "true");
+  assert.strictEqual(s3["drive-path"], "C:\\dao-share");
+  assert.strictEqual(s3["read-only"], "true");
+  console.log("✓ 会话策略入 token（clipboard/drive/readonly）");
+}
+
 // 5) 落盘持久化：另起进程重新读取应保留（模拟隧道重启后台账仍在）。
 const disk = JSON.parse(fs.readFileSync(process.env.DAO_SESSIONS_STATE_JSON, "utf8"));
 assert.ok(disk.leases["ide_win1.1"] && disk.leases["ide_win1.1"].leaseId === l1.leaseId, "租约应落盘");
