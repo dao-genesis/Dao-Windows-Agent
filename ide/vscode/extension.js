@@ -229,6 +229,30 @@ async function refreshModeStatus(context, info) {
   } catch (e) { /* 桥未就绪时静默，切换命令仍可用 */ }
 }
 
+// —— 桌面 webview 控制面 HTTP 代发（宿主 Node 侧直连隧道；带 Bearer 鉴权）——
+function tunnelHttpJson(tunnelHttpUrl, pathq, method, tunnelToken) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(tunnelHttpUrl + String(pathq || "")); } catch (e) { return reject(new Error("隧道地址无效")); }
+    if (!u.pathname || u.pathname === "/") return reject(new Error("控制面路径无效"));
+    const headers = tunnelToken ? { "Authorization": "Bearer " + tunnelToken } : {};
+    const req = http.request({
+      hostname: u.hostname, port: u.port || 80,
+      path: u.pathname + u.search, method: method === "POST" ? "POST" : "GET", headers,
+    }, (res) => {
+      let chunks = [];
+      res.on("data", (d) => chunks.push(d));
+      res.on("end", () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+        catch (e) { reject(new Error("控制面响应非 JSON (HTTP " + res.statusCode + ")")); }
+      });
+    });
+    req.on("error", (e) => reject(e));
+    req.setTimeout(8000, () => { req.destroy(); reject(new Error("控制面请求超时")); });
+    req.end();
+  });
+}
+
 // —— 令牌铸造 HTTP 取账号清单（供 QuickPick / 面板下拉）——
 function fetchAccounts(tunnelHttpUrl, tunnelToken) {
   return new Promise((resolve) => {
@@ -321,6 +345,18 @@ let nextSlot = 1;
 // 隔离）：不同 IDE 窗口同账号同分身号也各自独立租约，一窗一桌面勿跨窗串租。
 function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
 function tunnelAuthQ(){ return TUNNEL_TOKEN ? ('&auth=' + encodeURIComponent(TUNNEL_TOKEN)) : ''; }
+// 控制面 HTTP 经宿主侧代发（webview 直连 127.0.0.1 在部分 IDE 被 service worker 拦截而 ERR_FAILED）。
+var _rpcSeq = 1; var _rpcPending = {};
+function hostFetch(pathq, method){
+  return new Promise(function(resolve, reject){
+    var id = _rpcSeq++;
+    _rpcPending[id] = { resolve: resolve, reject: reject };
+    vscodeApi.postMessage({ type: 'tunnelFetch', id: id, path: pathq, method: method || 'GET' });
+    setTimeout(function(){
+      if (_rpcPending[id]) { delete _rpcPending[id]; reject(new Error('控制面请求超时')); }
+    }, 10000);
+  });
+}
 function saveLayout(){
   try {
     vscodeApi.setState({ slots: instances.map(function(x){ return x.slot; }),
@@ -344,16 +380,15 @@ function humanLease(it){
   if (now - _lastLeaseAt < 1500) return;
   _lastLeaseAt = now;
   try {
-    fetch(TUNNEL_HTTP + '/input?op=acquire&key=' + encodeURIComponent(cloneKey(it))
-      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000' + tunnelAuthQ(), {method:'POST'});
+    hostFetch('/input?op=acquire&key=' + encodeURIComponent(cloneKey(it))
+      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000', 'POST')['catch'](function(){});
   } catch(e) {}
 }
 // 活动分身被 Agent 持有输入权时在状态栏提示（人可随时动手接管）。
 let _agentHolding = false;
 setInterval(function(){
   var it = active(); if (!it) return;
-  fetch(TUNNEL_HTTP + '/input?key=' + encodeURIComponent(cloneKey(it)) + tunnelAuthQ())
-    .then(function(r){ return r.json(); })
+  hostFetch('/input?key=' + encodeURIComponent(cloneKey(it)))
     .then(function(d){
       var h = d && d.holders && d.holders[0];
       var holding = !!(h && h.kind === 'agent');
@@ -433,7 +468,7 @@ function closeInstance(id){
   try {
     var dq = 'ide=' + encodeURIComponent(ideKey(it))
            + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
-    fetch(TUNNEL_HTTP + '/sessions?' + dq + tunnelAuthQ(), {method:'POST'});
+    hostFetch('/sessions?' + dq, 'POST')['catch'](function(){});
   } catch(e) {}
   if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
   instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
@@ -455,8 +490,7 @@ async function connectInstance(it) {
     // 账号路由时带稳定分身号 clone=slot：同账号多分身各自独立租约 key(account:<名>#<slot>)，重连各归其位。
     const q = 'ide=' + encodeURIComponent(ideKey(it))
             + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
-    const r = await fetch(TUNNEL_HTTP + '/token?' + q + '&width=' + w + '&height=' + h + tunnelAuthQ());
-    tokenData = await r.json();
+    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h);
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' \u00b7 \u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); it.connecting = false; return; }
@@ -552,6 +586,14 @@ window.addEventListener('message', function(ev) {
   var msg = ev.data || {};
   if (msg.type === 'clipboardData') sendClipboard(msg.text);
   if (msg.type === 'addInstance') addInstance();
+  if (msg.type === 'tunnelFetchResult') {
+    var pend = _rpcPending[msg.id];
+    if (pend) {
+      delete _rpcPending[msg.id];
+      if (msg.ok) pend.resolve(msg.data);
+      else pend.reject(new Error(msg.error || '控制面请求失败'));
+    }
+  }
 });
 window.addEventListener('focus', function() { var it = active(); if (it && it.client) vscodeApi.postMessage({type:'readClipboard'}); });
 
@@ -603,6 +645,11 @@ async function openDesktop(context, account) {
       vscode.env.clipboard.readText().then((text) => {
         try { p.webview.postMessage({ type: "clipboardData", text }); } catch (e) {}
       });
+    }
+    if (msg.type === "tunnelFetch") {
+      tunnelHttpJson(c.tunnelHttpUrl, msg.path, msg.method, c.tunnelToken)
+        .then((data) => { try { p.webview.postMessage({ type: "tunnelFetchResult", id: msg.id, ok: true, data }); } catch (e) {} })
+        .catch((err) => { try { p.webview.postMessage({ type: "tunnelFetchResult", id: msg.id, ok: false, error: String((err && err.message) || err) }); } catch (e) {} });
     }
   });
 }
