@@ -32,7 +32,7 @@ def _shell_cmd(cmd: str) -> list[str]:
     return ["/bin/sh", "-c", cmd]
 
 
-def _exec(adapter, instance, cmd: str, timeout: int = 120, **_):
+def _exec(adapter, instance, cmd: str = "", timeout: int = 120, **_):
     """在会话工作目录内执行一行 shell 命令（Windows→PowerShell / Unix→sh），回传输出。"""
     if not cmd:
         return ActionResult.bad("需提供 cmd")

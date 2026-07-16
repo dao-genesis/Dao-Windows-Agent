@@ -55,6 +55,10 @@ def test_system_profile_real_roundtrip(tmp_path):
     r = mgr.invoke("vm_sys", "system", "exec", cmd="echo 道法自然")
     assert r.ok and "道法自然" in r.value["stdout"]
 
+    # 缺 cmd（如误传 command=）：如实报缺参而非 TypeError 掀翻
+    r = mgr.invoke("vm_sys", "system", "exec", command="echo x")
+    assert not r.ok and "需提供 cmd" in r.error
+
     # 文件往返：写入→读回一致（自动建父目录）
     fpath = str(tmp_path / "sub" / "dao.txt")
     assert mgr.invoke("vm_sys", "system", "write_file", path=fpath, content="一生二").ok
