@@ -64,8 +64,10 @@ class AccountManager:
         )
     )
     default_password: str = _DEFAULT_PASSWORD
-    rdp_host: str = _DEFAULT_HOST
-    rdp_port: str = _DEFAULT_PORT
+    # 真机直建的本地账号 RDP 在 :3389；QEMU-sim lab 经 hostfwd 落 :13389。
+    # 默认沿用 lab 端口(测试契约)，真机场景经 DAO_RDP_HOST/DAO_RDP_PORT 覆盖。
+    rdp_host: str = field(default_factory=lambda: os.environ.get("DAO_RDP_HOST", _DEFAULT_HOST))
+    rdp_port: str = field(default_factory=lambda: os.environ.get("DAO_RDP_PORT", _DEFAULT_PORT))
 
     # ---- 注册表读写（隧道与桥共享的同一真相源） ----
     def _load(self) -> dict:

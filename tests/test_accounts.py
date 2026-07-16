@@ -60,6 +60,16 @@ def test_create_registers_and_persists(tmp_path):
     assert "New-LocalUser" in joined and "Remote Desktop Users" in joined
 
 
+def test_rdp_target_env_override(tmp_path, monkeypatch):
+    """真机（RDP 直听 :3389）经 DAO_RDP_HOST/DAO_RDP_PORT 覆盖 lab 默认 13389。"""
+    monkeypatch.setenv("DAO_RDP_HOST", "10.0.0.5")
+    monkeypatch.setenv("DAO_RDP_PORT", "3389")
+    mgr = _mgr(tmp_path)
+    res = mgr.create("vm02", password="Pw@123456")
+    assert res["ok"] and res["target"]["hostname"] == "10.0.0.5"
+    assert res["target"]["port"] == "3389"
+
+
 def test_create_admin_adds_administrators(tmp_path):
     runner = FakeRunner()
     mgr = _mgr(tmp_path, runner=runner)
