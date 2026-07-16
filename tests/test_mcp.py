@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 
 from bridge import mcp as mcp_mod
 from bridge.mcp import RemoteBridge, _make_service, handle_request
 from bridge.service import BridgeService
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_explicit_remote_url_wins(monkeypatch):
@@ -67,3 +72,25 @@ def test_handle_request_initialize_and_bad_tool():
     assert r2["result"]["isError"] is True
     payload = json.loads(r2["result"]["content"][0]["text"])
     assert "未知工具" in payload["error"]
+
+
+def test_stdio_roundtrip_chinese_args():
+    """stdio 全链路中文回环：非 UTF-8 码页 Windows（cp1252/GBK）下 stdin 若按区域
+    码页解码，客户端 UTF-8 JSON 的中文参数会被静默解成乱码（route 检索即失准）。"""
+    req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+           "params": {"name": "route", "arguments": {"text": "@kicad 导出 gerber"}}}
+    env = os.environ.copy()
+    env.pop("PYTHONUTF8", None)
+    env.pop("PYTHONIOENCODING", None)
+    env["DAO_WIN_LOCAL_BRIDGE"] = "http://127.0.0.1:1"  # 探活必败 → 进程内直驱，勿附着外部桥
+    boot = f"import sys;sys.path.insert(0,{_ROOT!r});from bridge.mcp import main;main()"
+    p = subprocess.run(
+        [sys.executable, "-c", boot],
+        input=(json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"),
+        capture_output=True, timeout=60, env=env, cwd=_ROOT,
+    )
+    assert p.returncode == 0, p.stderr.decode("utf-8", errors="replace")
+    resp = json.loads(p.stdout.decode("utf-8"))
+    inner = json.loads(resp["result"]["content"][0]["text"])
+    assert inner["clean_text"] == "导出 gerber"
+    assert inner["targets"] == ["kicad"]

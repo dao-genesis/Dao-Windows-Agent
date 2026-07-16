@@ -446,7 +446,9 @@ def handle_request(req: dict) -> dict | None:
 
 
 def main() -> None:
-    # Windows 控制台默认 cp1252 无法编码中文工具描述，统一走 UTF-8
+    # Windows 控制台默认区域码页（cp1252/GBK）：出向无法编码中文工具描述，入向把客户端
+    # UTF-8 JSON 的中文参数（如 route 的 @句柄 中文动词）静默解成乱码。收发统一 UTF-8。
+    sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     for line in sys.stdin:

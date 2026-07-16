@@ -14,6 +14,19 @@ from core.adapter.base import ActionResult, AppAdapter, Instance
 from core.profiles.schema import AutomationLevel
 
 
+def utf8_child_env() -> "dict[str, str]":
+    """子进程环境：强制 Python 子进程 UTF-8 IO。
+
+    非 UTF-8 码页的 Windows 下，Python 子进程 stdout 默认按区域码页编码，
+    回显非 Latin 文本即 UnicodeEncodeError 而整条命令失败。setdefault 不覆盖
+    既有值，对非 Python 命令与 POSIX 主机均无害。
+    """
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 def decode_output(data: "bytes | str | None") -> str:
     """子进程输出稳健解码：先 UTF-8，失败退本地区域编码（中文 Windows 控制台为 GBK）。"""
     if data is None:
@@ -61,6 +74,7 @@ class SubprocessApiAdapter(AppAdapter):
                 cwd=instance.workdir or None,
                 capture_output=True,
                 timeout=timeout,
+                env=utf8_child_env(),
             )
         except FileNotFoundError:
             return ActionResult.bad(f"可执行文件不存在: {args[0]}（Windows 冷启动/真机才装）")
