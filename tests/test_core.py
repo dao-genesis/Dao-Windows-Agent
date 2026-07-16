@@ -179,6 +179,24 @@ def test_search_verbs_finds_gerber():
     assert hits[0]["score"] > 0
 
 
+def test_run_cli_python_child_chinese_output(tmp_path):
+    """run_cli 中文回环：非 UTF-8 码页 Windows 下 Python 子进程按区域码页写 stdout，
+    回显非 Latin 文本即 UnicodeEncodeError 整条失败——需注入 UTF-8 子进程环境。"""
+    import sys
+    from core.adapter.subprocess_api import SubprocessApiAdapter
+    from core.adapter.base import Instance
+
+    prof = AppProfile(app_id="cli", display_name="CLI", level=AutomationLevel.API, verbs=[])
+    adapter = SubprocessApiAdapter(prof)
+    inst = Instance(app_id="cli", workdir=str(tmp_path))
+    r = adapter.run_cli(
+        [sys.executable, "-c", "import sys;sys.stdout.write(sys.argv[1])", "道法自然"],
+        inst,
+    )
+    assert r.ok, r.error
+    assert r.value["stdout"] == "道法自然"
+
+
 def test_profile_validation_rejects_dupes():
     from core.profiles.registry import ProfileRegistry
     bad = AppProfile(app_id="x", display_name="X", level=AutomationLevel.API,
