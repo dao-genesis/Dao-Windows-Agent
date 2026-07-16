@@ -23,3 +23,6 @@ ide/vscode/vendor/
 # 隧道会话租约运行时台账（窗口↔会话持久绑定）——运行时生成，不入库
 desktop/sessions-state.json
 desktop/sessions-state.json.tmp
+
+# pip install -e . build metadata
+*.egg-info/
