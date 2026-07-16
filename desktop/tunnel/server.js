@@ -203,6 +203,10 @@ function mintToken(ide, opts) {
 }
 
 // 目标已解析（含 via 后端换机已重写为本地 connector 口）时直接铸 token。
+// 会话策略（可选）：
+//   opts.clipboard = "off"|"in"|"out"|"on"  剪贴板策略（off 全禁；in 只允本地→远端；out 只允远端→本地；缺省 on 双向）
+//   opts.drive     = 非空字符串     挂载远端驱动器重定向（值为 guest 侧目录，如 C:\\dao-share）
+//   opts.readonly  = true            只观察不控制（旁观分身：画面流照常，鼠键输入不下发）
 function mintTokenForTarget(rdp, opts) {
   opts = opts || {};
   const settings = {
@@ -217,6 +221,14 @@ function mintTokenForTarget(rdp, opts) {
     dpi: String((opts && opts.dpi) || 96),
     "resize-method": "display-update",
   };
+  if (opts.clipboard === "off" || opts.clipboard === "out") settings["disable-paste"] = "true";
+  if (opts.clipboard === "off" || opts.clipboard === "in") settings["disable-copy"] = "true";
+  if (opts.drive) {
+    settings["enable-drive"] = "true";
+    settings["drive-path"] = String(opts.drive);
+    settings["create-drive-path"] = "true";
+  }
+  if (opts.readonly) settings["read-only"] = "true";
   if (rdp.domain) settings.domain = rdp.domain;
   return encryptToken({ connection: { type: "rdp", settings } });
 }
@@ -312,12 +324,15 @@ const httpServer = http.createServer((req, res) => {
     const width = parseInt(u.searchParams.get("width") || "0", 10) || undefined;
     const height = parseInt(u.searchParams.get("height") || "0", 10) || undefined;
     const dpi = parseInt(u.searchParams.get("dpi") || "0", 10) || undefined;
+    const clipboard = u.searchParams.get("clipboard") || undefined;
+    const drive = u.searchParams.get("drive") || undefined;
+    const readonly = u.searchParams.get("readonly") === "1";
     (async () => {
       const raw = account ? targetForAccount(account) : targetForIde(ide);
       if (!raw) throw new Error(`未知账号: ${account}`);
       // 后端换机：目标带 via(穿透 WS 端点，如用户本地电脑) → 惰性起本地 connector 口并重写目标。
       const target = await forward.resolveTarget(raw);
-      const token = mintTokenForTarget(target, { width, height, dpi });
+      const token = mintTokenForTarget(target, { width, height, dpi, clipboard, drive, readonly });
       const lease = recordLease(ide, account, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
