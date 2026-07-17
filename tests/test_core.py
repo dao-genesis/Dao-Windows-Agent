@@ -405,9 +405,94 @@ def test_win_desktop_name_sanitize_and_availability():
             win_desktop.enum_windows("dao_x")
         # 新增的消息级/取图基石在非 Windows 上同样占位报错（引导退回 dry-run）
         for fn in (win_desktop.list_children, win_desktop.find_edit_control,
-                   win_desktop.send_chars, win_desktop.capture_window):
+                   win_desktop.send_chars, win_desktop.capture_window,
+                   win_desktop.window_rect, win_desktop.find_main_window):
             with pytest.raises(RuntimeError):
                 fn(0) if fn is not win_desktop.send_chars else fn(0, "x")
+
+
+def test_win_desktop_multi_desktop_parallel_isolation():
+    """道并行而不相悖：多隔离桌面并行跑同一软件，各写各的、互不污染、不泄漏到主桌面。
+
+    仅 Windows guest 内真跑（非 Windows 上 available()==False，直接跳过——守约不假装）。
+    以经典 notepad（消息级 WM_SETTEXT 往返、可落隔离桌面）为标靶，验证本源诉求：
+    同一账号造出"类多账号"分离效果，三分身文本互异且主桌面枚举不到分身窗口。
+    """
+    import sys
+
+    if sys.platform != "win32":
+        import pytest
+
+        pytest.skip("多桌面隔离仅在 Windows guest 内可真跑")
+
+    import ctypes
+    import time
+
+    from core.adapter import win_desktop as wd
+
+    if not wd.available():
+        import pytest
+
+        pytest.skip("当前环境无隔离桌面能力")
+
+    def _await(pred, timeout: float) -> bool:
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                if pred():
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.4)
+        return False
+
+    exe = r"C:\Windows\system32\notepad.exe"
+    clones = ["dao_test_iso_a", "dao_test_iso_b"]
+    pids = {}
+    texts = {}
+    try:
+        for c in clones:
+            wd.ensure_desktop(c)
+            pids[c] = wd.launch_on_desktop(c, exe)
+        assert _await(
+            lambda: all(wd.find_top_window(c, class_name="Notepad") for c in clones),
+            timeout=15), "隔离桌面上 Notepad 窗口未在时限内出现"
+        for i, c in enumerate(clones, 1):
+            hwnd = wd.find_top_window(c, class_name="Notepad")
+            assert hwnd, f"{c} 未起出 Notepad 窗口"
+            edit = wd.find_edit_control(hwnd)
+            assert edit, f"{c} 未找到编辑控件"
+            msg = f"dao-parallel-{i}-{c}"
+            wd.replace_text(edit, msg)
+            texts[c] = msg
+        # 各分身回读须等于各自写入，互不污染
+        assert _await(lambda: all(
+            wd.get_text(wd.find_edit_control(wd.find_top_window(c, class_name="Notepad")))
+            == texts[c] for c in clones), timeout=10), "分身文本回读不一致或互相污染"
+        assert len({texts[c] for c in clones}) == len(clones)
+
+        # 主(默认)桌面枚举不到任何分身进程窗口 → 隔离成立
+        main_pids: list[int] = []
+        proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def _cb(hwnd, _l):
+            p = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+            main_pids.append(p.value)
+            return True
+
+        ctypes.windll.user32.EnumWindows(proc(_cb), 0)
+        assert not [c for c, pid in pids.items() if pid in main_pids], "分身窗口泄漏到主桌面"
+    finally:
+        for c in clones:
+            hwnd = wd.find_top_window(c, class_name="Notepad")
+            if hwnd:
+                wd.close_window(hwnd)
+        for c, pid in pids.items():
+            import subprocess
+
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True)
 
 
 def test_win_desktop_edit_classes_present():
