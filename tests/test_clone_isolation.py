@@ -77,6 +77,64 @@ def test_freecad_isolates_via_env_not_args():
     assert s.env == {"FREECAD_USER_HOME": f"{s.data_dir}\\home"}
 
 
+def test_notepadpp_multi_inst_plus_settings_dir():
+    s = build_clone_launch("notepad++", "session-2")
+    assert s.app_id == "notepadpp" and s.isolatable
+    assert "-multiInst" in s.args
+    assert f"-settingsDir={s.data_dir}\\settings" in s.args
+    # 真机取证：-settingsDir 目录不存在时 N++ 静默回退共享 %APPDATA%，预建目录必须在规格内
+    assert f"{s.data_dir}\\settings" in s.pre_create
+
+
+def test_vlc_no_one_instance_plus_config():
+    s = build_clone_launch("vlc", "session-2")
+    assert s.isolatable
+    assert "--no-one-instance" in s.args
+    assert f"--config={s.data_dir}\\vlcrc" in s.args
+
+
+def test_sumatra_appdata_plus_new_window():
+    s = build_clone_launch("sumatra", "session-2")
+    assert s.app_id == "sumatrapdf" and s.isolatable
+    i = s.args.index("-appdata")
+    assert s.args[i + 1] == f"{s.data_dir}\\appdata"
+    assert "-new-window" in s.args
+
+
+def test_firefox_no_remote_plus_profile():
+    s = build_clone_launch("firefox", "session-2")
+    assert s.isolatable
+    assert "-no-remote" in s.args
+    i = s.args.index("-profile")
+    assert s.args[i + 1] == f"{s.data_dir}\\profile"
+
+
+def test_inkscape_per_clone_app_id_and_profile_env():
+    s = build_clone_launch("inkscape", "session-2")
+    assert s.isolatable
+    # 真机取证：Inkscape 1.x GApplication 单实例，需 per-clone --app-id-tag 才能多开
+    tags = [a for a in s.args if a.startswith("--app-id-tag=dao_")]
+    assert len(tags) == 1
+    s2 = build_clone_launch("inkscape", "session-3")
+    assert tags != [a for a in s2.args if a.startswith("--app-id-tag=")]
+    assert s.env == {"INKSCAPE_PROFILE_DIR": f"{s.data_dir}\\profile"}
+
+
+def test_pre_create_always_contains_data_dir():
+    for app in ("vscode", "notepadpp", "inkscape", "nonexistent-app"):
+        s = build_clone_launch(app, "session-2")
+        assert s.data_dir in s.pre_create, app
+        assert s.to_dict()["pre_create"] == s.pre_create
+
+
+def test_two_clones_third_party_apps_disjoint():
+    for app in ("notepadpp", "vlc", "sumatrapdf", "firefox", "inkscape"):
+        s1 = build_clone_launch(app, "session-2")
+        s2 = build_clone_launch(app, "session-3")
+        assert s1.data_dir != s2.data_dir, app
+        assert (s1.args, s1.env) != (s2.args, s2.env), app
+
+
 def test_unknown_app_is_honestly_not_isolatable():
     s = build_clone_launch("some-legacy-app", "session-2")
     assert s.isolatable is False

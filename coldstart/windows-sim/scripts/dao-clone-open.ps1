@@ -26,7 +26,8 @@ if (-not $CloneId) {
 $safeClone = ($CloneId -replace '[^A-Za-z0-9._-]', '_').Trim('._-'); if (-not $safeClone) { $safeClone = 'default' }
 $appKey = $App.Trim().ToLower()
 $alias = @{ 'code'='vscode'; 'vs-code'='vscode'; 'devin'='devin-desktop'; 'windsurf'='devin-desktop';
-           'google-chrome'='chrome'; 'msedge'='edge'; 'browser'='edge' }
+           'google-chrome'='chrome'; 'msedge'='edge'; 'browser'='edge';
+           'notepad++'='notepadpp'; 'npp'='notepadpp'; 'notepad-plus-plus'='notepadpp'; 'sumatra'='sumatrapdf' }
 if ($alias.ContainsKey($appKey)) { $appKey = $alias[$appKey] }
 $safeApp = ($appKey -replace '[^A-Za-z0-9._-]', '_').Trim('._-'); if (-not $safeApp) { $safeApp = 'default' }
 $dataDir = Join-Path (Join-Path $Root $safeClone) $safeApp
@@ -44,12 +45,25 @@ $reg = @{
                 args=@("--user-data-dir=$dataDir\data"); env=@{} }
   'freecad' = @{ exe=@("$env:ProgramFiles\FreeCAD 1.0\bin\FreeCAD.exe","$env:LOCALAPPDATA\Programs\FreeCAD 1.0\bin\FreeCAD.exe");
                 args=@(); env=@{ 'FREECAD_USER_HOME'="$dataDir\home" } }
+  # 真机取证：-settingsDir 目录不存在时 Notepad++ 静默回退共享 %APPDATA%（隔离失效），需预建。
+  'notepadpp' = @{ exe=@("$env:ProgramFiles\Notepad++\notepad++.exe","${env:ProgramFiles(x86)}\Notepad++\notepad++.exe");
+                args=@('-multiInst',"-settingsDir=$dataDir\settings"); env=@{}; dirs=@("$dataDir\settings") }
+  'vlc' = @{ exe=@("$env:ProgramFiles\VideoLAN\VLC\vlc.exe","${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe");
+                args=@('--no-one-instance',"--config=$dataDir\vlcrc"); env=@{} }
+  'sumatrapdf' = @{ exe=@("$env:ProgramFiles\SumatraPDF\SumatraPDF.exe","$env:LOCALAPPDATA\SumatraPDF\SumatraPDF.exe");
+                args=@('-appdata',"$dataDir\appdata",'-new-window'); env=@{} }
+  'firefox' = @{ exe=@("$env:ProgramFiles\Mozilla Firefox\firefox.exe","${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe");
+                args=@('-no-remote','-profile',"$dataDir\profile"); env=@{} }
+  # Inkscape 1.x 是 GApplication 单实例；--app-id-tag 把应用 id 收窄到 per-clone。
+  'inkscape' = @{ exe=@("$env:ProgramFiles\Inkscape\bin\inkscape.exe","${env:ProgramFiles(x86)}\Inkscape\bin\inkscape.exe");
+                args=@("--app-id-tag=dao_$(($dataDir -replace '[^A-Za-z0-9]','_').Trim('_'))"); env=@{ 'INKSCAPE_PROFILE_DIR'="$dataDir\profile" } }
 }
 if (-not $reg.ContainsKey($appKey)) {
   Write-Error "未登记隔离策略的软件: $App（可用: $($reg.Keys -join ', ')）。裸启动无法保证 per-user 单实例软件的分身隔离。"
   exit 2
 }
 $spec = $reg[$appKey]
+foreach ($d in @($spec.dirs)) { if ($d) { New-Item -ItemType Directory -Force $d | Out-Null } }
 $exe = $spec.exe | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $exe) { Write-Error "$appKey 可执行文件未找到，候选: $($spec.exe -join '; ')"; exit 3 }
 
