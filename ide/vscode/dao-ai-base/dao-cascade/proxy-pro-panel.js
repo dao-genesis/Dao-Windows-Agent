@@ -47,7 +47,7 @@ class ProxyProPanel {
     }
   }
 
-  // 模式融合(提示词层×工具层 = 3×4 = 12): 真源在 mode-fusion.js(headless)。
+  // 模式融合(提示词层×工具层 = 4×4 = 16): 真源在 mode-fusion.js(headless)。
   _mfState() {
     try { this._post({ type: "mf-state", data: modeFusion.state() }); }
     catch (e) { this._post({ type: "mf-state", error: e.message }); }
@@ -57,14 +57,17 @@ class ProxyProPanel {
     try {
       if (layer === "prompt") {
         modeFusion.setPromptMode(id);
-        // 本源反代在跑则即刻热切(/origin/mode); 不在跑不算失败(_origin_mode.txt 读盘生效)。
+        // 本源反代在跑则即刻热切(/origin/mode + /origin/canon); 不在跑不算失败(读盘生效)。
         modeFusion.syncOrigin(id).then((r) => {
           if (r.synced) vscode.window.showInformationMessage("提示词层模式已热切在跑反代: " + id);
         });
-        if (id === "custom") return this._mfCustom();
       } else if (layer === "tool") {
         modeFusion.setToolMode(id);
-        // 桥在跑则即刻联动; 不在跑不算失败(契约文件已是真源)。
+        // 反代在跑则即刻热切工具契约(/origin/tools); 桥在跑则即刻联动(/api/mode.set);
+        // 皆不在跑不算失败(契约文件已是真源)。
+        modeFusion.syncOriginTools(id).then((r) => {
+          if (r.synced) vscode.window.showInformationMessage("工具层契约已热切在跑反代: " + id);
+        });
         modeFusion.syncBridge(id).then((r) => {
           if (r.synced) vscode.window.showInformationMessage("工具层模式已同步在跑桥: " + id);
         });
@@ -210,8 +213,10 @@ body{margin:0;font:13px/1.5 var(--vscode-font-family,system-ui);color:var(--vsco
 .badge{font-size:10px;padding:1px 7px;border-radius:10px;background:#0a53;margin-left:6px;font-weight:400}
 .badge.cloud{background:#37a3}
 .conv{padding:6px 12px;border-top:1px solid var(--vscode-panel-border,#2223);display:flex;justify-content:space-between;gap:8px}
-.btn{background:var(--vscode-button-background,#0a5);color:var(--vscode-button-foreground,#fff);border:none;border-radius:5px;padding:5px 12px;cursor:pointer;font:inherit;white-space:nowrap;flex:0 0 auto}
-.btn.sec{background:var(--vscode-button-secondaryBackground,#4443)}
+/* 官方视觉语言: 扁平静默钮(透底+细边框, 悬停提亮) —— 与归一面板同构 */
+.btn{background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border,#3335);border-radius:6px;padding:4px 12px;cursor:pointer;font:inherit;white-space:nowrap;flex:0 0 auto}
+.btn:hover{background:var(--vscode-list-hoverBackground,#8881)}
+.btn.sec{opacity:.8}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
 .muted{opacity:.55}
 .back{cursor:pointer;color:var(--vscode-textLink-foreground,#4af)}
@@ -224,19 +229,19 @@ function E(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<
 function cr(l,v){return '<div class="cr"><span class="l">'+E(l)+'</span><span class="v">'+v+'</span></div>';}
 let PX=null;let PXRS=[];let MF=null;
 function renderModes(){
-  let h='<div class="st">模式矩阵 · 提示词层 × 工具层 = 3×4 = 12</div>';
+  let h='<div class="st">模式矩阵 · 提示词层 × 工具层 = 4×4 = 16</div>';
   if(MF===null)return h+'<div class="card muted">加载模式…</div>';
   if(MF.error)return h+'<div class="card">⚠ '+E(MF.error)+'</div>';
   const d=MF;
   h+='<div class="card">'+cr('当前组合',E(d.combinedName)+' <span class="badge">'+E(d.combined)+'</span>')+'</div>';
-  h+='<div class="card"><div class="cr"><span class="l">提示词层(经藏契约)</span><span class="v">'+
+  h+='<div class="card"><div class="cr"><span class="l">提示词层(官方/道德经/阴符经/二经合)</span><span class="v">'+
     d.promptModes.map(m=>'<button class="btn'+(m.id===d.prompt?'':' sec')+'" data-mfp="'+E(m.id)+'" title="'+E(m.summary)+'">'+(m.id===d.prompt?'✓ ':'')+E(m.name)+'</button>').join(' ')+
-    (d.prompt==='custom'?' <button class="btn sec" id="mfCustomEdit" title="编辑自定义提示词全文, 热切在跑反代">编辑经文…</button>':'')+'</span></div>'+
-    '<div class="cr"><span class="l">工具层(~/.dao/mode.json 契约)</span><span class="v">'+
+    ' <button class="btn sec" id="mfCustomEdit" title="编辑自定义提示词全文, 热切在跑反代(留空清除回本源)">自定经文…</button></span></div>'+
+    '<div class="cr"><span class="l">工具层(默认/Windows/FreeCAD/KiCad 契约)</span><span class="v">'+
     d.toolModes.map(m=>'<button class="btn'+(m.id===d.tool?'':' sec')+'" data-mft="'+E(m.id)+'" title="'+E(m.summary)+'">'+(m.id===d.tool?'✓ ':'')+E(m.name)+'</button>').join(' ')+'</span></div>'+
     '<div class="cr"><span class="l">域叠加(与三模式正交可叠)</span><span class="v">'+
     (d.overlays||[]).map(m=>'<button class="btn'+(m.on?'':' sec')+'" data-mfo="'+E(m.id)+'|'+(m.on?'0':'1')+'" title="'+E(m.summary)+'">'+(m.on?'✓ ':'◌ ')+E(m.name)+' '+(m.on?'开':'关')+'</button>').join(' ')+'</span></div></div>';
-  h+='<div class="muted" style="margin-bottom:10px">提示词层与 Proxy Pro 经藏契约同源(invert/passthrough/custom); 工具层与 Dao-Windows-Agent ModeManager 同一契约文件, 桥在跑即刻联动。</div>';
+  h+='<div class="muted" style="margin-bottom:10px">提示词层与 Proxy Pro 本源引擎同源(/origin/mode × /origin/canon); 工具层热切反代工具契约(/origin/tools)并与 Dao-Windows-Agent ModeManager 同一契约文件, 桥在跑即刻联动。</div>';
   return h;
 }
 function renderProxy(){
