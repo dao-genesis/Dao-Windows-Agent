@@ -123,7 +123,8 @@ function log(msg) {
 async function tryHealth(base, token) {
   try {
     const r = await apiCall(base, token, "GET", "/api/health", null, 4000);
-    return r.status === 200 && r.body && r.body.ok === true;
+    // 机控桥指纹：必须带 apps 数组，避免同机其他服务(如 dao-freecad-shell)的 {ok:true} 被误认
+    return r.status === 200 && r.body && r.body.ok === true && Array.isArray(r.body.apps);
   } catch (e) { return false; }
 }
 
@@ -148,9 +149,11 @@ async function ensureBridge(context) {
   const localUrl = "http://127.0.0.1:" + port;
   log("桥连不上，用自带 runtime 自启本地桥 @ " + localUrl);
   try {
+    // 用 -c 注入 sys.path 后再起桥：embedded 发行版(._pth 锁 sys.path、无视 cwd)与常规 Python 均可用
+    const boot = "import sys; sys.path.insert(0, " + JSON.stringify(runtime) + "); from bridge.server import main; main()";
     spawnedBridge = cp.spawn(
       c.pythonPath,
-      ["-m", "bridge.server", "--host", "127.0.0.1", "--port", String(port), "--token", c.token],
+      ["-c", boot, "--host", "127.0.0.1", "--port", String(port), "--token", c.token],
       { cwd: runtime, env: Object.assign({}, process.env, { DAO_WIN_TOKEN: c.token }), windowsHide: true }
     );
     spawnedBridge.stdout.on("data", (d) => log("[bridge] " + String(d).trim()));
