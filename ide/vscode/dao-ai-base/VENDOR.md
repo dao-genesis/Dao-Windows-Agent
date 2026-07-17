@@ -13,3 +13,5 @@
 - dao-cascade/ls-bridge.js: apiKeyCandidates TTL 缓存 + invalidateKeyCache(state.vscdb 重活防阻塞)
 - dao-cascade/host-discover.js: win32 短路 / 先廉后贵 / 轮询退避(保留本仓版, 未取上游)
 - dao-cascade/host-state.js: hostFire 重入护栏 + publishFused 不动点(保留本仓版, 未取上游)
+- index.js: 宿主接线 dao.unified 归一面板 + dao.proxyPro 独立面板(②b/②c, 与真源 dao-desktop/extension.js 同构; 视图声明落宿主 package.json daoWin-cascade 容器)
+- dao-cascade/unified-panel.js: 主页复位归一总览(Windows 只留环境卡) + 🪟 Windows 子板块收编官方 mstsc 五页 RDP 配置/子板块管理(win-rdp-*/win-sub-toggle/win-reveal-dir, 原语经宿主 extension.js __DAO_WIN_HOME__ 上交, 单页统管不另起独立主页)

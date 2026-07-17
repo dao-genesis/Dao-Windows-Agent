@@ -123,7 +123,8 @@ function log(msg) {
 async function tryHealth(base, token) {
   try {
     const r = await apiCall(base, token, "GET", "/api/health", null, 4000);
-    return r.status === 200 && r.body && r.body.ok === true;
+    // 机控桥指纹：必须带 apps 数组，避免同机其他服务(如 dao-freecad-shell)的 {ok:true} 被误认
+    return r.status === 200 && r.body && r.body.ok === true && Array.isArray(r.body.apps);
   } catch (e) { return false; }
 }
 
@@ -148,9 +149,11 @@ async function ensureBridge(context) {
   const localUrl = "http://127.0.0.1:" + port;
   log("桥连不上，用自带 runtime 自启本地桥 @ " + localUrl);
   try {
+    // 用 -c 注入 sys.path 后再起桥：embedded 发行版(._pth 锁 sys.path、无视 cwd)与常规 Python 均可用
+    const boot = "import sys; sys.path.insert(0, " + JSON.stringify(runtime) + "); from bridge.server import main; main()";
     spawnedBridge = cp.spawn(
       c.pythonPath,
-      ["-m", "bridge.server", "--host", "127.0.0.1", "--port", String(port), "--token", c.token],
+      ["-c", boot, "--host", "127.0.0.1", "--port", String(port), "--token", c.token],
       { cwd: runtime, env: Object.assign({}, process.env, { DAO_WIN_TOKEN: c.token }), windowsHide: true }
     );
     spawnedBridge.stdout.on("data", (d) => log("[bridge] " + String(d).trim()));
@@ -935,9 +938,8 @@ function openAsk(context) {
   askPanel.webview.onDidReceiveMessage((msg) => handleAskMessage(context, msg));
 }
 
-// —— 归一主页 · Windows 总控（吸收 dao-vsix 六大板块「分而治之·网页套网页」范式）——
-// 主页 = 统领全局：RDP 连接管理（官方 mstsc 五页配置收编）+ Windows 账号 + 子板块管理。
-let homePanel = null;
+// —— Windows 总控原语（官方 mstsc 五页配置收编 + 子板块管理）——
+// 单页统管：不另起独立主页，原语经 __DAO_WIN_HOME__ 上交归一面板(dao.unified)的 🪟 Windows 子板块。
 
 function daoDir() { return path.join(require("os").homedir(), ".dao"); }
 function rdpDir() { return path.join(daoDir(), "rdp"); }
@@ -1020,45 +1022,29 @@ function listSubplugins() {
   return rows;
 }
 
-async function homeInfoPayload(context) {
-  const os = require("os");
-  let accounts = [];
-  const info = await ensureBridge(context).catch(() => null);
-  if (info) {
-    try { const r = await apiCall(info.url, info.token, "GET", "/api/account.list"); accounts = (r.body && r.body.accounts) || []; } catch (_) {}
-  }
-  if (!accounts.length) { try { const c2 = cfg(); accounts = await fetchAccounts(c2.tunnelHttpUrl, c2.tunnelToken); } catch (_) {} }
-  return {
-    platform: process.platform, host: os.hostname(), user: os.userInfo().username,
-    os: os.type() + " " + os.release(), bridge: info ? info.url : null,
-    accounts, rdp: listRdpProfiles(), subplugins: listSubplugins(),
-  };
-}
-
-async function handleHomeMessage(context, msg) {
-  const reply = (data) => { try { homePanel.webview.postMessage(Object.assign({ kind: "homeData" }, { data })); } catch (_) {} };
-  const refresh = async () => reply(await homeInfoPayload(context));
-  try {
-    if (msg.cmd === "homeInfo") return await refresh();
-    if (msg.cmd === "rdpSave") {
-      const nm = rdpSafeName(msg.profile && msg.profile.name);
-      if (!nm) return reply({ error: "连接名不合法" });
+// Windows 总控原语上交(单页统管): 归一面板 🪟 Windows 板块经此钩子做 RDP 收编/子板块/目录管理。
+function installWinHomeHook() {
+  globalThis.__DAO_WIN_HOME__ = {
+    info() { return { platform: process.platform, rdp: listRdpProfiles(), subplugins: listSubplugins() }; },
+    rdpSave(profile) {
+      const nm = rdpSafeName(profile && profile.name);
+      if (!nm) return { ok: false, error: "连接名不合法" };
       fs.mkdirSync(rdpDir(), { recursive: true });
-      const p = Object.assign({}, msg.profile, { name: nm });
+      const p = Object.assign({}, profile, { name: nm });
       fs.writeFileSync(path.join(rdpDir(), nm + ".json"), JSON.stringify(p, null, 2), "utf-8");
       fs.writeFileSync(path.join(rdpDir(), nm + ".rdp"), rdpFileContent(p), "utf-8");
       log("RDP 连接已存: " + nm);
-      return await refresh();
-    }
-    if (msg.cmd === "rdpDelete") {
-      const nm = rdpSafeName(msg.name);
+      return { ok: true, name: nm };
+    },
+    rdpDelete(name) {
+      const nm = rdpSafeName(name);
       if (nm) for (const ext of [".json", ".rdp"]) { try { fs.unlinkSync(path.join(rdpDir(), nm + ext)); } catch (_) {} }
-      return await refresh();
-    }
-    if (msg.cmd === "rdpLaunch") {
-      const nm = rdpSafeName(msg.name);
+      return { ok: true };
+    },
+    rdpLaunch(name) {
+      const nm = rdpSafeName(name);
       const rdpFile = nm && path.join(rdpDir(), nm + ".rdp");
-      if (!rdpFile || !fs.existsSync(rdpFile)) return reply({ error: "连接不存在: " + msg.name });
+      if (!rdpFile || !fs.existsSync(rdpFile)) return { ok: false, error: "连接不存在: " + name };
       if (process.platform === "win32") {
         cp.spawn("mstsc.exe", [rdpFile], { detached: true, stdio: "ignore", windowsHide: false }).unref();
         vscode.window.showInformationMessage("DAO: 已启动远程桌面连接 " + nm);
@@ -1067,132 +1053,30 @@ async function handleHomeMessage(context, msg) {
           const prof = JSON.parse(fs.readFileSync(path.join(rdpDir(), nm + ".json"), "utf-8"));
           cp.spawn("xfreerdp", ["/v:" + prof.host + (prof.port ? ":" + prof.port : ""), "/u:" + (prof.username || ""), "/cert:ignore"], { detached: true, stdio: "ignore" }).unref();
           vscode.window.showInformationMessage("DAO: 已尝试 xfreerdp 连接 " + nm);
-        } catch (e) { vscode.window.showWarningMessage("DAO: 本平台无 mstsc，且 xfreerdp 启动失败: " + e.message); }
+        } catch (e) { return { ok: false, error: "本平台无 mstsc，且 xfreerdp 启动失败: " + e.message }; }
       }
-      return;
-    }
-    if (msg.cmd === "subToggle") {
+      return { ok: true };
+    },
+    subToggle(id) {
       const dir = subpluginDir();
-      const on = path.join(dir, msg.id + ".json"), off = path.join(dir, msg.id + ".json.off");
+      const on = path.join(dir, String(id || "") + ".json"), off = path.join(dir, String(id || "") + ".json.off");
       if (fs.existsSync(on)) fs.renameSync(on, off);
       else if (fs.existsSync(off)) fs.renameSync(off, on);
-      return await refresh();
-    }
-    if (msg.cmd === "revealDir") {
-      const dir = msg.which === "rdp" ? rdpDir() : subpluginDir();
+      return { ok: true };
+    },
+    revealDir(which) {
+      const dir = which === "rdp" ? rdpDir() : subpluginDir();
       fs.mkdirSync(dir, { recursive: true });
       vscode.env.openExternal(vscode.Uri.file(dir));
-      return;
-    }
-    if (msg.cmd === "openAccountDesktop") return openDesktop(context, msg.account);
-    if (msg.cmd === "accountCreate") return manageAccount(context, "create");
-    if (msg.cmd === "accountDestroy") return manageAccount(context, "destroy");
-    if (msg.cmd === "switchMode") return switchMode(context);
-  } catch (e) { reply({ error: e.message }); }
+      return { ok: true };
+    },
+  };
 }
 
-function homeHtml() {
-  return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><style>
- :root{--muted:var(--vscode-descriptionForeground)}
- body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:0;margin:0;display:flex;height:100vh;overflow:hidden}
- .sb{width:46px;background:var(--vscode-sideBar-background);border-right:1px solid var(--vscode-panel-border);display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px;flex-shrink:0}
- .ni{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:7px;cursor:pointer;font-size:17px;opacity:.65}
- .ni:hover{background:var(--vscode-list-hoverBackground);opacity:1}
- .ni.on{background:var(--vscode-list-activeSelectionBackground);opacity:1}
- .main{flex:1;overflow:auto;padding:14px 16px}
- h2{margin:2px 0 10px} h3{margin:14px 0 6px}
- .card{border:1px solid var(--vscode-panel-border);border-radius:8px;padding:8px 12px;margin:6px 0;display:flex;align-items:center;gap:10px}
- .card .grow{flex:1;min-width:0} .sub{font-size:12px;color:var(--muted)}
- button{padding:4px 10px;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:5px;font-size:12px}
- button.ghost{background:transparent;border:1px solid var(--vscode-panel-border);color:var(--vscode-foreground)}
- input,select{background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);border-radius:4px;padding:3px 6px;margin:2px;font-size:12px}
- .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px}
- .empty{opacity:.6;font-size:13px;padding:8px 2px}
- .badge{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}
- fieldset{border:1px solid var(--vscode-panel-border);border-radius:8px;margin:8px 0;padding:8px 10px} legend{font-size:12px;font-weight:600}
- .hide{display:none}
-</style></head><body>
-<div class="sb">
- <div class="ni on" data-v="win" onclick="sw('win')" title="Windows 总控 · RDP/账号/子板块">🪟</div>
- <div class="ni" data-v="mode" onclick="post({cmd:'switchMode'})" title="模式切换">⚙️</div>
-</div>
-<div class="main" id="main"><div class="empty">正在读取 Windows 总控数据…</div></div>
-<script>
-const vscodeApi = acquireVsCodeApi();
-let S = null, editing = null;
-function post(m){ vscodeApi.postMessage(m); }
-function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
-function sw(v){ /* 单板块阶段一：仅 win */ render(); }
-function render(){
-  var m = document.getElementById('main');
-  if (!S) { m.innerHTML = '<div class="empty">正在读取…</div>'; return; }
-  var h = '<h2>🪟 Windows 总控</h2><div class="sub">' + esc(S.host) + ' · ' + esc(S.user) + ' · ' + esc(S.os) + (S.bridge ? ' · 桥 ' + esc(S.bridge) : ' · 桥未连') + '</div>';
-  h += '<h3>远程桌面连接 <button class="ghost" onclick="editRdp(null)">＋新建</button> <button class="ghost" onclick="post({cmd:\\'revealDir\\',which:\\'rdp\\'})">打开目录</button></h3>';
-  if (!(S.rdp||[]).length) h += '<div class="empty">尚无连接配置——「＋新建」收编官方 mstsc 五页配置（常规/显示/本地资源/体验/高级）</div>';
-  (S.rdp||[]).forEach(function(p){
-    h += '<div class="card"><div class="grow"><b>' + esc(p.name) + '</b><div class="sub">' + esc(p.host||'') + (p.port?':'+esc(p.port):'') + (p.username?' · '+esc(p.username):'') + '</div></div>'
-      + '<button onclick="post({cmd:\\'rdpLaunch\\',name:\\''+esc(p.name)+'\\'})">连接</button>'
-      + '<button class="ghost" onclick="editRdp(\\''+esc(p.name)+'\\')">编辑</button>'
-      + '<button class="ghost" onclick="post({cmd:\\'rdpDelete\\',name:\\''+esc(p.name)+'\\'})">删除</button></div>';
-  });
-  h += '<div id="rdpForm" class="hide"></div>';
-  h += '<h3>本机 Windows 账号 <button class="ghost" onclick="post({cmd:\\'accountCreate\\'})">＋建号</button> <button class="ghost" onclick="post({cmd:\\'accountDestroy\\'})">销号</button></h3>';
-  if (!(S.accounts||[]).length) h += '<div class="empty">' + (S.platform === 'win32' ? '暂无账号数据（桥/隧道未连）' : '非 Windows 平台——账号盘点在真机/冷启动 VM 生效') + '</div>';
-  (S.accounts||[]).forEach(function(a){
-    var nm = a.name || a;
-    h += '<div class="card"><div class="grow"><b>' + esc(nm) + '</b><div class="sub">' + esc(a.hostname? a.hostname+':'+a.port : (a.session? '会话 '+a.session.state : '')) + '</div></div>'
-      + '<button onclick="post({cmd:\\'openAccountDesktop\\',account:\\''+esc(nm)+'\\'})">开桌面</button></div>';
-  });
-  h += '<h3>子板块 · 可安装可移除（类 VS Code 插件） <button class="ghost" onclick="post({cmd:\\'revealDir\\',which:\\'sub\\'})">打开目录</button></h3>';
-  (S.subplugins||[]).forEach(function(s){
-    h += '<div class="card"><div class="grow"><b>' + esc(s.name) + '</b> <span class="badge">@' + esc(s.mention) + '</span>'
-      + (s.installed ? ' <span class="badge">' + (s.enabled?'已启用':'已停用') + (s.verbs?' · '+s.verbs+' 动词':'') + '</span>' : '')
-      + '<div class="sub">' + esc(s.desc) + (s.repo? ' · '+esc(s.repo):'') + '</div></div>'
-      + (s.installed ? '<button class="ghost" onclick="post({cmd:\\'subToggle\\',id:\\''+esc(s.id)+'\\'})">' + (s.enabled?'停用':'启用') + '</button>'
-                     : '<span class="sub">未安装（装同名子插件或落描述符即收编）</span>')
-      + '</div>';
-  });
-  m.innerHTML = h;
-  if (editing !== null) showRdpForm(editing);
-}
-function editRdp(name){ editing = name || ''; render(); }
-function showRdpForm(name){
-  var p = {}; (S.rdp||[]).forEach(function(x){ if (x.name === name) p = x; });
-  var f = document.getElementById('rdpForm'); f.className = '';
-  function iv(k,d){ return esc(p[k] !== undefined ? p[k] : (d===undefined?'':d)); }
-  function ck(k,d){ return (p[k] !== undefined ? p[k] : d) ? ' checked' : ''; }
-  f.innerHTML = '<fieldset><legend>' + (name?'编辑':'新建') + ' RDP 连接（官方五页配置收编）</legend>'
-   + '<div>常规：<input id="f_name" placeholder="连接名" value="' + iv('name') + '"' + (name?' disabled':'') + '> <input id="f_host" placeholder="主机/IP" value="' + iv('host') + '"> <input id="f_port" placeholder="端口 3389" size="6" value="' + iv('port') + '"> <input id="f_user" placeholder="用户名" value="' + iv('username') + '"></div>'
-   + '<div>显示：<input id="f_w" size="5" placeholder="宽 1920" value="' + iv('width') + '"> × <input id="f_h" size="5" placeholder="高 1080" value="' + iv('height') + '"> <label><input type="checkbox" id="f_full"' + ck('fullscreen',true) + '>全屏</label> <label><input type="checkbox" id="f_multi"' + ck('multimon',false) + '>多显示器</label></div>'
-   + '<div>本地资源：<label><input type="checkbox" id="f_clip"' + ck('clipboard',true) + '>剪贴板</label> <label><input type="checkbox" id="f_prn"' + ck('printers',false) + '>打印机</label> <label><input type="checkbox" id="f_drv"' + ck('drives',false) + '>驱动器</label> 音频<select id="f_audio"><option value="0"' + (String(p.audiomode||0)==='0'?' selected':'') + '>本机播放</option><option value="1"' + (String(p.audiomode)==='1'?' selected':'') + '>远程播放</option><option value="2"' + (String(p.audiomode)==='2'?' selected':'') + '>不播放</option></select></div>'
-   + '<div>体验：<select id="f_conn"><option value="7"' + (String(p.conntype||7)==='7'?' selected':'') + '>自动检测</option><option value="1"' + (String(p.conntype)==='1'?' selected':'') + '>调制解调器</option><option value="6"' + (String(p.conntype)==='6'?' selected':'') + '>LAN</option></select> <label><input type="checkbox" id="f_reconn"' + ck('autoreconnect',true) + '>断线自动重连</label></div>'
-   + '<div>高级：认证<select id="f_auth"><option value="2"' + (String(p.authlevel||2)==='2'?' selected':'') + '>警告</option><option value="1"' + (String(p.authlevel)==='1'?' selected':'') + '>不连接</option><option value="0"' + (String(p.authlevel)==='0'?' selected':'') + '>直接连</option></select> 网关<input id="f_gw" placeholder="RD 网关(可空)" value="' + iv('gateway') + '"></div>'
-   + '<div style="margin-top:6px"><button onclick="saveRdp()">保存(.json+.rdp)</button> <button class="ghost" onclick="editing=null;render()">取消</button></div></fieldset>';
-}
-function saveRdp(){
-  var g = function(id){ return document.getElementById(id); };
-  post({cmd:'rdpSave', profile:{
-    name: g('f_name').value, host: g('f_host').value, port: g('f_port').value, username: g('f_user').value,
-    width: g('f_w').value, height: g('f_h').value, fullscreen: g('f_full').checked, multimon: g('f_multi').checked,
-    clipboard: g('f_clip').checked, printers: g('f_prn').checked, drives: g('f_drv').checked, audiomode: g('f_audio').value,
-    conntype: g('f_conn').value, autoreconnect: g('f_reconn').checked, authlevel: g('f_auth').value, gateway: g('f_gw').value,
-  }});
-  editing = null;
-}
-window.addEventListener('message', function(ev){
-  var m = ev.data || {};
-  if (m.kind === 'homeData') { if (m.data && m.data.error) { /* 保留当前视图 */ } else S = m.data; render(); }
-});
-post({cmd:'homeInfo'});
-</script></body></html>`;
-}
-
-function openHome(context) {
-  if (homePanel) { homePanel.reveal(); return; }
-  homePanel = vscode.window.createWebviewPanel("daoWinHome", "\u262f DAO \u5f52\u4e00\u4e3b\u9875 \u00b7 Windows \u603b\u63a7", vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
-  homePanel.webview.html = homeHtml();
-  homePanel.onDidDispose(() => { homePanel = null; });
-  homePanel.webview.onDidReceiveMessage((msg) => handleHomeMessage(context, msg));
+// 归一主页 = dao.unified 面板本身(单页统管); 命令仅聚焦面板, 不再另起独立 webview。
+function openHome() {
+  return vscode.commands.executeCommand("dao.unified.open").then(null, () =>
+    vscode.window.showWarningMessage("DAO: 归一面板不可达(dao.unified.open)"));
 }
 
 // 二合一统领(参照 devin-remote/dao-one): 子引擎 vendored 在 vendor/<名>/extension.js,
@@ -1290,6 +1174,7 @@ async function activate(context) {
   // 归一枢纽: 全仓只此一个 Cascade 基底(得一以为天下正)。各领域子模块(FreeCAD/KiCad/嘉立创)
   // 折入时不再各自另起基底/代理(避免多面板碎片化), 而是把本领域塑形器登记到下方分派器,
   // 由宿主按活动模式(~/.dao/mode.json 的 domain:<app_id>)分派——一个基底, 一切领域随模式流转。
+  installWinHomeHook();
   try {
     const daoAiBase = require("./dao-ai-base");
     daoAiBase.activateDaoAiBase(context, { ns: "daoWin", log: (m) => log("[dao-ai-base] " + m) });
@@ -1320,7 +1205,7 @@ async function activate(context) {
   try { const nsp = harvestSubplugins(path.join(context.extensionPath, "vendor")); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("daoWin.home", () => openHome(context)),
+    vscode.commands.registerCommand("daoWin.home", () => openHome()),
     vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
     vscode.commands.registerCommand("daoWin.openAccountDesktop", () => openAccountDesktop(context)),
     vscode.commands.registerCommand("daoWin.accountCreate", () => manageAccount(context, "create")),
