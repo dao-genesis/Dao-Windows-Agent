@@ -20,6 +20,7 @@ const path = require("path");
 const { AcpClient, resolveDevinBin } = require("./acp-client");
 const { AcpWssClient } = require("./acp-wss");
 const { authStatus, startLogin } = require("./devin-provision");
+const proxyRuntime = require("./proxy-runtime");
 let hostState = null;
 try { ({ hostState } = require("../windsurf-shim")); } catch (_) {}
 
@@ -38,7 +39,9 @@ function _shapeText(text, ctx) {
     if (typeof fn !== "function") return text;
     const out = fn.call(_promptShaper, text, ctx || {});
     return typeof out === "string" ? out : text;
-  } catch (_) { return text; }
+  } catch (_) {
+    return text;
+  }
 }
 
 // 三 agent —— 与官方 agent 切换器对齐(id / 标签 / 传输轨 / 是否 Preview)。
@@ -72,12 +75,8 @@ class CascadePanelProvider {
     this._view = webviewView;
     this._disposed = false;
     // 官方宿主态(LS 端口/CSRF/登录)变更 → 刷新 env 行，与官方登录模式同源
-    // 去抖合流: 宿主态变更可能连发(fused 各分片相继落定), 300ms 收口只刷一次
-    if (hostState) { const h = hostState(); let t = null;
-      const fn = () => { if (t) clearTimeout(t);
-        t = setTimeout(() => { t = null; this._pushEnv(); this._handleSessionsList(); this._pushCascadeConfigOptions(); }, 300); };
-      h.listeners.add(fn);
-      webviewView.onDidDispose(() => { h.listeners.delete(fn); if (t) clearTimeout(t); }); }
+    if (hostState) { const h = hostState(); const fn = () => { this._pushEnvSoon(); this._handleSessionsList(); this._pushCascadeConfigOptions(); }; h.listeners.add(fn);
+      webviewView.onDidDispose(() => h.listeners.delete(fn)); }
     const w = webviewView.webview;
     w.options = { enableScripts: true, localResourceRoots: [this._ctx.extensionUri] };
     w.html = this._html(w);
@@ -262,7 +261,7 @@ class CascadePanelProvider {
         id: "model", category: "model", currentValue: this._cascadeModel,
         options: models.map((m) => ({
           value: m.uid,
-          name: m.label + (m.credit != null ? "  ·  " + m.credit + "x" : ""),
+          name: m.label + (m.credit != null ? " · " + m.credit + "x" : ""),
           disabled: !!m.disabled,
           description: [
             (mStatus[m.uid] && (mStatus[m.uid].message || mStatus[m.uid].status)) || "",
@@ -278,12 +277,14 @@ class CascadePanelProvider {
       }, {
         id: "mode", category: "mode", currentValue: "cx:" + (this._cascadeMode || "write"),
         options: [
-          { value: "cx:write", name: "Write", description: "默认 agentic, 可读写" },
-          { value: "cx:plan", name: "Plan", description: "agentic + exit_plan_mode 工具(官方 Plan 模式配方)" },
-          { value: "cx:chat", name: "Chat", description: "conversationalV2 · DEFAULT" },
-          { value: "cx:readOnly", name: "Read-Only", description: "conversationalV2 · READ_ONLY" },
-          { value: "cx:explore", name: "Explore", description: "conversationalV2 · EXPLORE" },
-          { value: "cx:noTool", name: "No-Tool", description: "conversationalV2 · NO_TOOL" },
+          // 官方 3.4.x 模式三元组(实机菜单 1:1: Code/Ask/Plan + 官方描述文案)
+          { value: "cx:write", name: "Code", description: "Can write and edit code" },
+          { value: "cx:readOnly", name: "Ask", description: "Reads but won't edit" },
+          { value: "cx:plan", name: "Plan", description: "Plan changes before implementing" },
+          // 扩展(LS conversationalV2 直通, 官方菜单不露出)
+          { value: "cx:chat", name: "Chat", description: "扩展 · conversationalV2 · DEFAULT" },
+          { value: "cx:explore", name: "Explore", description: "扩展 · conversationalV2 · EXPLORE" },
+          { value: "cx:noTool", name: "No-Tool", description: "扩展 · conversationalV2 · NO_TOOL" },
         ],
       }] });
       return true;
@@ -314,30 +315,48 @@ class CascadePanelProvider {
       this._ctx.globalStorageUri && this._ctx.globalStorageUri.fsPath);
   }
 
+  // 宿主态广播可能短窗内连发(端口/CSRF/登录态逐项到位各 fire 一次) —— 400ms 尾沿去抖,
+  // 配合 devin-provision.authStatus 的单飞+TTL 缓存, 根治 auth status 子进程风暴。
+  _pushEnvSoon() {
+    if (this._envDebounce) clearTimeout(this._envDebounce);
+    this._envDebounce = setTimeout(() => { this._envDebounce = null; this._pushEnv(); }, 400);
+  }
+
   // 环境探测:引擎二进制 + 自持鉴权状态(决定 Devin Local/Cloud 能否真实驱动)。
-  async _pushEnv() {
+  // force=true 绕过去抖缓存(登录/登出后需立即取真值)。
+  async _pushEnv(force) {
     const bin = this._bin();
-    const auth = await authStatus(bin);
+    const auth = await authStatus(bin, force ? { force: true } : undefined);
     // 官方本体上报的宿主态: language_server 端口/CSRF(Cascade 轨) + 官方登录态(1:1 同源)
     const h = hostState ? hostState() : null;
-    const ws = h ? { lsPort: h.lsPort || 0, lsCsrf: !!h.csrfToken,
+    // 端口活性裁决: 宿主退出后落盘态仍留旧端口, TCP 探活防「陈旧就绪」假象。
+    let lsAlive = false;
+    try { lsAlive = await require("./ls-bridge").probeAlive(); } catch (_) {}
+    const ws = h ? { lsPort: lsAlive ? (h.lsPort || 0) : 0, lsCsrf: !!h.csrfToken,
       authName: (h.auth && (h.auth.userName || h.auth.name || h.auth.email)) || null,
       authSignedIn: !!(h.auth && (h.auth.loggedIn === true || h.auth.state === "signed-in" || h.auth.apiKey || h.auth.userName || h.auth.name)) } : null;
     const folder = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
       && vscode.workspace.workspaceFolders[0].name) || null;
+    // ACP 会话已就绪即证明凭据有效 — `devin auth status` 冷启动超时时以此兜底, 避免误显未登录
+    const loggedIn = auth.loggedIn || !!(this._acpReady && this._acp);
+    if (bin && !loggedIn && (this._envRetries = (this._envRetries || 0) + 1) <= 3)
+      setTimeout(() => this._pushEnv(), 10000);
     this._post({ type: "env", devinBin: bin || null, agents: AGENTS,
-      loggedIn: auth.loggedIn, userName: auth.name, windsurf: ws, folder });
+      loggedIn, userName: auth.name, windsurf: ws, folder });
     // 三模式引擎态归一发布(fused.engines): 归一面板主页/桥接 API 直接消费, 与本面板 env 同源。
+    // Cascade 登录态经 ls-bridge.cascadeAuth 单一裁决(复用官方唯一登录, 与归一面板同判据)。
+    let ca = { signedIn: !!(ws && ws.authSignedIn), name: (ws && ws.authName) || "" };
+    try { ca = require("./ls-bridge").cascadeAuth(); } catch (_) {}
     try {
       require("./host-state").publishFused("engines", {
         cascade: { ready: !!(ws && ws.lsPort), lsPort: (ws && ws.lsPort) || 0,
-          signedIn: !!(ws && ws.authSignedIn), name: (ws && ws.authName) || "" },
+          signedIn: ca.signedIn, name: ca.name },
         devinLocal: { bin: !!bin, signedIn: !!auth.loggedIn, name: auth.name || "" },
         devinCloud: { signedIn: !!auth.loggedIn, name: auth.name || "",
           endpoint: "wss://app.devin.ai/api/acp/live" },
       });
     } catch (_) {}
-    this._sbSet({ lsReady: !!(ws && ws.lsPort), user: (ws && ws.authName) || auth.name || null });
+    this._sbSet({ lsReady: !!(ws && ws.lsPort), user: (ws && ws.authName) || (ca && ca.name) || auth.name || null });
     this._cxPushWorkflows();
   }
 
@@ -371,7 +390,7 @@ class CascadePanelProvider {
       onDone: (r) => {
         this._loginCtrl = null;
         this._post({ type: "login-state", state: r.ok ? "ok" : "error", text: r.message });
-        this._pushEnv();
+        this._pushEnv(true);
       },
     });
   }
@@ -415,6 +434,7 @@ class CascadePanelProvider {
         this._acp = acp;
         this._acpReady = true;
         this._acpFailAt = 0; this._acpBackoff = 0;
+        this._pushEnv();
         this._pushSessionMeta(res);
         this._handleSessionsList();
         return true;
@@ -1173,15 +1193,7 @@ class CascadePanelProvider {
     try {
       const ls = require("./ls-bridge");
       const r = await ls.call("GetMcpServerStates", {});
-      const servers = ((r && r.states) || []).map((s) => ({
-        name: (s.spec || {}).serverName || "",
-        status: (s.status || "").replace("MCP_SERVER_STATUS_", ""),
-        disabled: !!(s.spec || {}).disabled,
-        error: s.error || "",
-        tools: ((s2) => { const off = new Set((s2.spec || {}).disabledTools || []);
-          return (s2.tools || []).map((t) => ({ name: t.name, description: t.description || "", off: off.has(t.name) })); })(s),
-        prompts: (s.prompts || []).map((p) => ({ name: p.name, description: p.description || "",
-          args: (p.arguments || []).map((a) => a.name || "") })) }));
+      const servers = require("./mcp-config").mergedServers((r && r.states) || []);
       this._post({ type: "mcp", servers });
       this._fusePublish("mcp", { servers: servers.map((s) => ({ name: s.name, status: s.status,
         disabled: s.disabled, toolCount: (s.tools || []).length })) });
@@ -1829,6 +1841,15 @@ class CascadePanelProvider {
           rules.push({ name, trigger: "global", path: p });
         }
       } catch (_) {}
+      // 官方设置页「+ Global」写入 ~/.codeium/windsurf/memories/global_rules.md, GetAllRules 不含, 直读补显
+      try {
+        const fs = require("fs");
+        const gp = path.join(os.homedir(), ".codeium", "windsurf", "memories", "global_rules.md");
+        if (!rules.some((x) => x.path === gp) && fs.statSync(gp).size > 0) {
+          const first = (fs.readFileSync(gp, "utf8").split(/\r?\n/).find((l) => l.trim()) || "").replace(/^#\s*/, "").slice(0, 80);
+          rules.push({ name: first || "global_rules.md", trigger: "global", path: gp });
+        }
+      } catch (_) {}
       const skills = (sk.skills || r.skills || []).map((s) => ({
         name: s.name || s.skillName || "", description: s.description || "", path: fromUri(s.path) }));
       const workflows = (wf.workflows || []).map((w) => ({
@@ -1839,19 +1860,24 @@ class CascadePanelProvider {
 
   // 官方式新建定制文件: CreateCustomizationFile{fileName,fileType,workspaceConfigDir:".windsurf"} → filePath 开编辑器
   // 实测: RULES → .windsurf/rules/<name>; SKILLS → .windsurf/skills/<name>/SKILL.md; WORKFLOWS → .windsurf/workflows/<name>
+  // 全局变体(官方 processCreateWorkflow 同源): GLOBAL_WORKFLOWS/GLOBAL_SKILLS 落 ~/.codeium/windsurf 下, 不需 workspaceConfigDir
   async _handleCustomizationCreate(kind) {
     const ft = { rule: "CUSTOMIZATION_FILE_TYPE_RULES", skill: "CUSTOMIZATION_FILE_TYPE_SKILLS",
-      workflow: "CUSTOMIZATION_FILE_TYPE_WORKFLOWS" }[kind];
+      workflow: "CUSTOMIZATION_FILE_TYPE_WORKFLOWS", gskill: "CUSTOMIZATION_FILE_TYPE_GLOBAL_SKILLS",
+      gworkflow: "CUSTOMIZATION_FILE_TYPE_GLOBAL_WORKFLOWS" }[kind];
     if (!ft) return;
-    const name = await vscode.window.showInputBox({ prompt: "新建 " + kind + " 名称(文件名)" });
+    const isGlobal = kind === "gskill" || kind === "gworkflow";
+    const isSkill = kind === "skill" || kind === "gskill";
+    const name = await vscode.window.showInputBox({ prompt: "新建" + (isGlobal ? "全局 " : " ") + kind.replace(/^g/, "") + " 名称(文件名)" });
     if (!name || !name.trim()) return;
     try {
       const ls = require("./ls-bridge");
       // rule/workflow 是 markdown 文件, LS 不自动补扩展名, 无 .md 会不被扫描收录
       let fn = name.trim();
-      if (kind !== "skill" && !/\.md$/i.test(fn)) fn += ".md";
-      const r = await ls.call("CreateCustomizationFile", {
-        fileName: fn, fileType: ft, workspaceConfigDir: ".windsurf" });
+      if (!isSkill && !/\.md$/i.test(fn)) fn += ".md";
+      const req = { fileName: fn, fileType: ft };
+      if (!isGlobal) req.workspaceConfigDir = ".windsurf";
+      const r = await ls.call("CreateCustomizationFile", req);
       const p = ((r && r.filePath) || "").replace(/^file:\/\//, "");
       if (p) await this._handleOpenFile(p);
       this._handleCustomizationsList();
@@ -2008,6 +2034,24 @@ class CascadePanelProvider {
     }
   }
 
+  // Proxy Pro 路由轨: 周流一轮对话到路由渠道, 维持面板内多轮上下文。
+  async _pxChatTurn(msg, uid) {
+    this._pxHistory = this._pxHistory || [];
+    this._pxHistory.push({ role: "user", content: String(msg.text || "") });
+    try {
+      const r = await proxyRuntime.chat(uid, { messages: this._pxHistory.slice(-40), maxTokens: 4096, timeoutMs: 120000 });
+      if (!r.ok) throw new Error(r.error || ("HTTP " + r.httpCode));
+      this._pxHistory.push({ role: "assistant", content: r.content });
+      this._post({ type: "px-route-info", uid, channel: r.channel, model: r.model });
+      this._log("cascade: 路由生效 " + uid + " → " + r.channel + "/" + r.model);
+      return this._post({ type: "assistant-done", id: msg.id, text: r.content });
+    } catch (e) {
+      this._pxHistory.pop();
+      return this._post({ type: "assistant-done", id: msg.id,
+        text: "⚠ Proxy Pro 路由投递失败(" + uid + "): " + (e && e.message || e) });
+    }
+  }
+
   async _handleChat(msg) {
     const agent = msg.agent || "devin-local";
     msg = Object.assign({}, msg, { text: _shapeText(msg.text, { agent, epoch: this._sessionEpoch }) });
@@ -2024,6 +2068,14 @@ class CascadePanelProvider {
         await this._acp.prompt(msg.text);
         return this._post({ type: "assistant-done", id: msg.id });
       } catch (e) {
+        // 鉴权失败多为 ACP 起在登录之前(旧凭据驻留子进程) —— 杀掉令下轮
+        // _ensureAcp 以新 credentials.toml 重生, 免手动 Reload Window。
+        if (/authenticat|log ?in/i.test(String(e && e.message || e)) && this._acp) {
+          try { this._acp.stop(); } catch (_) {}
+          this._acp = null; this._acpReady = false;
+          return this._post({ type: "assistant-done", id: msg.id,
+            text: "ACP 请求失败: " + e.message + "\n(已重置 ACP 进程; 登录后直接重发即可)" });
+        }
         return this._post({ type: "assistant-done", id: msg.id, text: "ACP 请求失败: " + e.message });
       }
     }
@@ -2041,6 +2093,11 @@ class CascadePanelProvider {
           await this._pushCascadeConfigOptions();
           if (!this._cascadeModel) this._cascadeModel = "swe-1-6-slow";
           this._log("cascade: 可用模型 → " + this._cascadeModel);
+        }
+        // 格利替换·路由生效层: 选中官方模型 UID 命中 Proxy Pro 路由 → 本轮对话
+        // 整体改投第三方渠道(含面板内多轮上下文), 官方 LS 不再收到该消息。
+        if (proxyRuntime.resolve(this._cascadeModel)) {
+          return await this._pxChatTurn(msg, this._cascadeModel);
         }
         // 图像附件(官方 ImageData{base64Data,mimeType,caption} · 顶层 images[]): 仅当模型支持
         const imgs = this._cxImages(msg.images);
@@ -2101,7 +2158,8 @@ class CascadePanelProvider {
         // R70: 驱动流帧即轨迹变更信号 —— 帧到立即唤醒拉增量(静默时 1s 兜底), 降出字延迟
         let wake = null, pendingFrame = false;
         drive = ls.driveStream(this._cascadeLsId, () => { if (wake) { const w = wake; wake = null; w(); } else pendingFrame = true; });
-        let out = "", grew = false, stable = 0;
+        const emitted = {}; let firstK = -1, grew = false, stable = 0;
+        const sidOf = (k) => (firstK < 0 || k === firstK) ? msg.id : msg.id + "@" + k;
         for (let i = 0; i < 200; i++) {
           await new Promise((r) => setTimeout(r, 150)); // 帧风暴限速: 两次拉取至少间隔 150ms
           if (pendingFrame) pendingFrame = false;
@@ -2110,7 +2168,7 @@ class CascadePanelProvider {
           try { r = await ls.call("GetCascadeTrajectorySteps", { cascadeId: this._cascadeLsId }); }
           catch (_) { continue; }
           const steps = ((r.trajectory || r).steps) || [];
-          let full = "", allDone = true;
+          let progress = false, allDone = true;
           for (let k = this._cascadeSeen || 0; k < steps.length; k++) {
             const st = steps[k];
             // 队列消息已续驱 → 摘除待发 chip
@@ -2119,12 +2177,21 @@ class CascadePanelProvider {
               const qi = this._cxQueue.findIndex((q) => q.text === ut);
               if (qi >= 0) { this._cxQueue.splice(qi, 1); this._post({ type: "cx-queue", queue: this._cxQueue }); }
             }
-            if (st.plannerResponse && st.plannerResponse.response) full += st.plannerResponse.response;
+            // 官方式逐步泡: 各 plannerResponse 步各自成泡, 与工具步卡按轨迹顺序内联穿插(官方渲染同序)
+            if (st.plannerResponse && st.plannerResponse.response) {
+              const resp = st.plannerResponse.response;
+              if (firstK < 0) firstK = k;
+              const prev = emitted[k] || "";
+              if (resp.length > prev.length) {
+                this._post({ type: "assistant-delta", id: sidOf(k), text: resp.slice(prev.length) });
+                emitted[k] = resp; grew = true; progress = true;
+              }
+            }
             // 官方式思考流: plannerResponse.thinking → thought 泡(与 ACP agent_thought_chunk 同渠)
             if (st.plannerResponse && st.plannerResponse.thinking && !this._cxThoughtSeen) this._cxThoughtSeen = new Set();
             if (st.plannerResponse && st.plannerResponse.thinking && !this._cxThoughtSeen.has(this._cascadeLsId + ":" + k)) {
               this._cxThoughtSeen.add(this._cascadeLsId + ":" + k);
-              this._post({ type: "thought-delta", id: msg.id, text: st.plannerResponse.thinking });
+              this._post({ type: "thought-delta", id: sidOf(k), text: st.plannerResponse.thinking });
             }
             // 官方式步卡: 工具类轨迹步以 tool-call 呈现(真实工具名+关键参数, 出自 metadata.toolCall)
             const ty = st.type || "";
@@ -2135,7 +2202,11 @@ class CascadePanelProvider {
             if (st.errorMessage && st.errorMessage.shouldShowUser !== false) {
               const em = (st.errorMessage.error && (st.errorMessage.error.userErrorMessage || st.errorMessage.error.shortError)) || "Cascade 后端错误";
               this._cascadeSeen = steps.length;
-              return this._post({ type: "assistant-done", id: msg.id, text: (full ? full + "\n\n" : "") + "⚠ " + em });
+              if (firstK >= 0) {
+                this._post({ type: "assistant-done", id: msg.id + "@e" + k, text: "⚠ " + em });
+                return this._post({ type: "assistant-done", id: msg.id });
+              }
+              return this._post({ type: "assistant-done", id: msg.id, text: "⚠ " + em });
             }
             // 官方式命令审批: RUN_COMMAND 待确认步 → Run/Skip → HandleCascadeUserInteraction
             if (ty === "CORTEX_STEP_TYPE_RUN_COMMAND" && /WAITING|HALTED/.test(st.status || "")) {
@@ -2185,10 +2256,8 @@ class CascadePanelProvider {
             }
             if (st.status && !/DONE|ERROR/.test(st.status)) allDone = false;
           }
-          if (full.length > out.length) {
-            this._post({ type: "assistant-delta", id: msg.id, text: full.slice(out.length) });
-            out = full; grew = true; stable = 0;
-          } else if (grew && allDone && ++stable >= 3) { this._cascadeSeen = steps.length; break; }
+          if (progress) stable = 0;
+          else if (grew && allDone && ++stable >= 3) { this._cascadeSeen = steps.length; break; }
         }
         this._post({ type: "assistant-done", id: msg.id, text: grew ? undefined : "(Cascade 无输出)" });
         if (grew) { try { const gs = await this._cxGenStats(this._cascadeLsId); if (gs.last) this._post({ type: "msg-stats", id: msg.id, text: gs.last }); } catch (_) {} }
@@ -2248,9 +2317,13 @@ class CascadePanelProvider {
   #log > * { flex-shrink:0; }
   /* 空态 = 官方 New session 首页:居中 logo + 近期会话 */
   .empty { margin:auto auto 0; text-align:center; max-width:320px; width:100%; }
-  .empty .logo { font-size:26px; opacity:.85; margin-bottom:10px; }
+  .empty .logo { opacity:.10; margin-bottom:10px; color:var(--vscode-foreground); }
   .empty .ttl { font-size:15px; font-weight:600; margin-bottom:4px; }
   .empty .sub { font-size:12px; color:var(--dim); line-height:1.5; }
+  .empty .kbd, .mhint .kbd { display:inline-block; font-size:10px; color:var(--dim); border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; vertical-align:2px; }
+  .empty .trycloud { margin-top:12px; background:transparent; color:inherit; border:1px solid var(--line); border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; }
+  .empty .trycloud:hover { background:var(--pill-hover); }
+  .mhint { padding:6px 10px; font-size:10.5px; color:var(--dim); border-top:1px solid var(--line); }
   #recent { margin:14px auto 0; width:100%; max-width:420px; text-align:left; font-size:12px; display:none; }
   #recent.show { display:block; }
   #recent .rhead { display:flex; align-items:center; color:var(--dim); margin-bottom:4px; }
@@ -2264,6 +2337,8 @@ class CascadePanelProvider {
   .msg { padding:8px 10px; border-radius:10px; word-break:break-word; max-width:100%; line-height:1.5; }
   .msg.user { white-space:pre-wrap; }
   .msg pre { position:relative; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; overflow:auto; margin:6px 0; font:12px var(--vscode-editor-font-family, monospace); }
+  .msg pre code { white-space:pre-wrap; word-break:break-word; }
+  .cblang { font-size:10px; color:var(--dim); border-bottom:1px solid var(--line); margin:-8px -10px 6px; padding:3px 10px; }
   .copybtn { position:absolute; top:4px; right:4px; font-size:10px; padding:1px 6px; border-radius:5px; border:1px solid var(--line); background:var(--vscode-sideBar-background); color:var(--dim); cursor:pointer; opacity:0; transition:opacity .12s; }
   .msg pre:hover .copybtn, .copybtn:hover { opacity:1; }
   .copybtn.done { color:var(--vscode-testing-iconPassed,#4caf50); }
@@ -2315,8 +2390,17 @@ class CascadePanelProvider {
   .pill:hover { background:var(--pill-hover); color:var(--vscode-foreground); }
   .pill select { appearance:none; -webkit-appearance:none; background:transparent; color:inherit; border:none; font:inherit; cursor:pointer; outline:none; max-width:110px; text-overflow:ellipsis; }
   .pill select option { background:var(--vscode-dropdown-background); color:var(--vscode-dropdown-foreground); }
-  #plusBtn, #imgBtn, #arenaBtn, #wtBtn { width:24px; height:24px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--dim); cursor:pointer; font-size:14px; line-height:1; }
+  /* 官方真源: ＋钮 radius 6px · bg rgba(255,255,255,.05) */
+  #plusBtn, #imgBtn, #arenaBtn, #wtBtn { width:24px; height:24px; border-radius:6px; border:none; background:rgba(255,255,255,.05); color:var(--dim); cursor:pointer; font-size:14px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
+  #imgBtn, #arenaBtn, #wtBtn { background:transparent; }
+  #micBtn.bare { width:24px; height:24px; border:none; background:transparent; color:var(--dim); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; }
+  #micBtn.bare:hover { background:var(--pill-hover); }
   #plusBtn:hover, #imgBtn:hover, #arenaBtn:hover, #wtBtn:hover { background:var(--pill-hover); }
+  /* 官方 1:1: 默认行只有 ＋ / Code / 模型 / agent / 🎙 / ↑ —— 增强钮(图/竞技场/worktree)悬停或聚焦时才现身, 静态外观与官方一致 */
+  #imgBtn, #arenaBtn, #wtBtn, #tokCount { display:none; }
+  .card:hover #imgBtn, .card:focus-within #imgBtn,
+  .card:hover #arenaBtn, .card:focus-within #arenaBtn,
+  .card:hover #wtBtn, .card:focus-within #wtBtn,
   #arenaBtn.on, #wtBtn.on { border-color:var(--accent,#4a9eff); color:var(--accent,#4a9eff); }
   #wtBar { display:none; align-items:center; gap:8px; font-size:11px; color:var(--dim); padding:3px 8px; border:1px dashed var(--line); border-radius:6px; margin:4px 0; }
   #wtBar button { background:transparent; border:1px solid var(--line); border-radius:6px; color:inherit; cursor:pointer; font-size:11px; padding:1px 8px; }
@@ -2339,8 +2423,11 @@ class CascadePanelProvider {
   .msg .imgthumb img { height:auto; }
   .badge { font-size:9px; padding:0 4px; border-radius:6px; border:1px solid var(--line); color:var(--dim); }
   .spacer { flex:1; }
-  button.send { width:26px; height:26px; border-radius:999px; background:var(--vscode-button-background); color:var(--vscode-button-foreground); border:none; cursor:pointer; font-size:13px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
+  /* 官方真源: 发送钮白底圆(rgb 255,255,255 · radius 9999px), 箭头深色 */
+  button.send { width:26px; height:26px; border-radius:999px; background:#fff; color:#1e1e1e; border:none; cursor:pointer; font-size:13px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
   button.send:disabled { opacity:.4; cursor:default; }
+  /* 官方式发送钮: 空输入灰圆, 有内容才亮主题色 */
+  button.send.idle { background:var(--pill-hover); color:var(--dim); }
   /* 卡片下方目标行: Local · 工作区 —— 与官方一致 */
   .target { display:flex; gap:10px; align-items:center; font-size:11.5px; color:var(--dim); padding:5px 4px 0; }
   .target .seg { display:inline-flex; gap:4px; align-items:center; }
@@ -2416,21 +2503,13 @@ class CascadePanelProvider {
 </style></head><body>
   <div id="log">
     <div class="empty" id="empty">
-      <div class="logo">⬡</div>
-      <div class="ttl">Cascade · 三模式</div>
+      <div class="logo"><svg width="64" height="64" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18.5847 20.1289L18.5847 20.1321C19.2629 19.7407 20.0334 19.5339 20.8136 19.5339L20.8709 19.5339L20.9521 19.5355C21.0062 19.537 21.0587 19.5386 21.1129 19.5434L21.1527 19.5466C21.7959 19.5943 22.4072 19.7757 22.9772 20.0892C23.0345 20.121 23.0902 20.1528 23.1459 20.1862C23.1889 20.2133 23.2319 20.2403 23.2765 20.269L23.3179 20.296C23.6697 20.5331 23.9865 20.8211 24.2667 21.1584C24.3049 21.2045 24.3415 21.2507 24.3861 21.3095L24.4084 21.3382C24.4371 21.3764 24.4657 21.4161 24.4928 21.4559L24.5421 21.5275C24.5644 21.5609 24.5851 21.5943 24.6058 21.6278C24.6233 21.6564 24.6408 21.685 24.6584 21.7137L24.6886 21.7646C25.0802 22.4408 25.2872 23.2141 25.2872 23.9969L25.2856 23.9969C25.2856 24.7813 25.0787 25.553 24.687 26.2292L24.6186 26.3454C24.5899 26.3915 24.5612 26.4361 24.5326 26.4806L24.5103 26.5141C24.1473 27.0471 23.6856 27.4846 23.1268 27.8219C23.0711 27.8554 23.0154 27.8872 22.958 27.919C22.9135 27.9445 22.8673 27.9667 22.8211 27.9906L22.7766 28.0129C22.3945 28.199 21.9869 28.3295 21.5554 28.4027C21.4965 28.4122 21.4376 28.4202 21.3787 28.4282L21.3294 28.4345C21.2816 28.4393 21.2339 28.4441 21.1845 28.4488C21.1558 28.4504 21.1272 28.4536 21.0985 28.4552C21.0587 28.4584 21.0205 28.46 20.9807 28.46C20.9473 28.46 20.9139 28.4616 20.8804 28.4632L20.8199 28.4632L20.8167 28.4632C20.035 28.4632 19.2645 28.2563 18.5863 27.8649L14.4533 25.4814L6.18421 30.2611L6.18102 39.7998L14.4501 44.5715L22.7224 39.7982L22.7224 35.0265C22.7224 34.2421 22.9294 33.4704 23.321 32.7942L23.3895 32.678C23.4181 32.6319 23.4468 32.5873 23.4755 32.5428L23.4977 32.5093C23.8607 31.9763 24.3224 31.5388 24.8812 31.2015C24.937 31.168 24.9927 31.1362 25.05 31.1044C25.0946 31.0805 25.1392 31.0567 25.1869 31.0328L25.2315 31.0105C25.6136 30.8244 26.0212 30.6939 26.4526 30.6207C26.5115 30.6112 26.5704 30.6032 26.6293 30.5952L26.6787 30.5889C26.7264 30.5841 26.7742 30.5793 26.8251 30.5746L26.9095 30.5682C26.9493 30.565 26.9875 30.5634 27.0273 30.5634C27.0608 30.5634 27.0942 30.5618 27.1276 30.5602L27.1881 30.5602L27.1913 30.5602C27.973 30.5602 28.7436 30.7671 29.4218 31.1585L33.5563 33.542L41.8286 28.7687L41.8254 19.2268L33.5579 14.4535L29.4234 16.8433L29.4202 16.8369C28.7404 17.2283 27.9714 17.4304 27.1849 17.4352L27.1324 17.4352L27.0496 17.4336C26.9955 17.432 26.9429 17.4304 26.8888 17.4256L26.849 17.4225C26.2058 17.3747 25.5945 17.1933 25.0245 16.8799C24.9672 16.8481 24.9115 16.8163 24.8558 16.7828C24.8112 16.7558 24.7682 16.7271 24.7252 16.7001L24.6838 16.6731C24.332 16.436 24.0152 16.148 23.735 15.8107C23.6968 15.7645 23.6601 15.7184 23.6156 15.6595L23.5933 15.6309C23.5646 15.5927 23.536 15.5529 23.5089 15.5131L23.4595 15.4415C23.4373 15.4081 23.4166 15.3747 23.3959 15.3413C23.3783 15.3127 23.3592 15.284 23.3417 15.2538L23.3131 15.2045C22.9214 14.5282 22.7145 13.755 22.7145 12.9721L22.7129 12.9721L22.7129 8.202L14.4836 3.45095L14.4438 3.42867L6.17466 8.20836L6.17147 17.747L14.4406 22.5188L18.5767 20.1321L18.5847 20.1289Z" fill="currentColor"></path></svg></div>
+      <div class="ttl" id="emptyTtl">Cascade Code <span class="kbd">Ctrl</span><span class="kbd">.</span></div>
       <div class="sub">Kick off a new project. Make changes across your entire codebase.</div>
+      <button id="tryCloud" class="trycloud" title="切换到 Devin Cloud agent">☁ Try Devin Cloud</button>
       <div id="recent">
-        <div class="rhead"><span>Recent sessions</span><span class="va" id="agBtn">Agents</span><span class="va" id="cmBtn">Maps</span><span class="va" id="cusBtn">Rules</span><span class="va" id="mcpBtn">MCP</span><span class="va" id="memsBtn">Memories</span><span class="va" id="olBtn">Outline</span><span class="va" id="plBtn">Plans</span><span class="va" id="stBtn">Status</span><span class="va" id="tlBtn">Timeline</span><span class="va" id="viewAll">View all</span></div>
+        <div class="rhead"><span>Recent sessions</span><span class="va" id="viewAll">View all</span></div>
         <div id="recentList"></div>
-        <div id="memList" style="display:none"></div>
-        <div id="stList" style="display:none"></div>
-        <div id="tlList" style="display:none"></div>
-        <div id="olList" style="display:none"></div>
-        <div id="plList" style="display:none"></div>
-        <div id="mcpList" style="display:none"></div>
-        <div id="cusList" style="display:none"></div>
-        <div id="agList" style="display:none"></div>
-        <div id="cmList" style="display:none"></div>
         <label id="autoOpenRow" style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;color:var(--dim);cursor:pointer;"><input type="checkbox" id="autoOpenCk" style="margin:0;">启动时自动打开最近会话</label>
       </div>
     </div>
@@ -2451,20 +2530,21 @@ class CascadePanelProvider {
     <div id="agentMenu"><div id="agentList"></div></div>
     <div class="card">
       <div id="imgStrip" class="imgstrip"></div>
-      <textarea id="input" rows="1" placeholder="Type @ to bring in another conversation"></textarea>
+      <textarea id="input" rows="1" placeholder="Ask anything (Ctrl+L)"></textarea>
       <input type="file" id="imgFile" accept="image/*" multiple style="display:none">
       <div class="row">
-        <button id="plusBtn" title="附加上下文">＋</button>
+        <button id="plusBtn" title="附加上下文"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+        <span class="pill" id="modeWrap" title="Session Mode (Ctrl+.)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg><button id="modeBtn" type="button"></button></span>
+        <span class="pill" id="modelWrap" title="Model"><button id="modelBtn" type="button"></button></span>
         <button id="imgBtn" title="附加图片（支持粘贴）">🖼</button>
         <button id="arenaBtn" title="Arena 模式：同题双轨候选，择优续行（新会话/会话中途均可）">⚔</button>
         <button id="wtBtn" title="Worktree 模式：新会话在隔离 git worktree 中运行，改动不直接落入主工作区，可随后合并">⎇</button>
         <span class="pill" id="daoModePill" title="领域模式切换(提示词隔离/替换)" style="display:none"></span>
-        <span class="pill" id="modeWrap" title="Session Mode">&lt;&gt;<button id="modeBtn" type="button"></button></span>
-        <span class="pill" id="modelWrap" title="Model"><button id="modelBtn" type="button"></button></span>
         <span class="spacer"></span>
         <span id="tokCount" title="输入 token / 上限 (GetMessageTokenCount)" style="font-size:10.5px;color:var(--dim);"></span>
         <span class="pill" id="agentWrap" title="切换 agent (Ctrl+')"><span id="agentIcon">⬡</span><button id="agentBtn" type="button"></button><span class="badge" id="badge"></span></span>
-        <button class="send" id="send" title="发送 (Enter)">↑</button>
+        <button id="micBtn" class="bare" title="语音输入 (Web Speech)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg></button>
+        <button class="send" id="send" title="发送 (Enter)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.7 3.08 C 11.59 3.13,10.52 4.17,8.29 6.41 C 5.22 9.49,5.05 9.67,5.02 9.83 C 4.98 10.08,5.03 10.29,5.17 10.46 C 5.30 10.62,5.56 10.76,5.72 10.76 C 6.06 10.76,6.01 10.80,8.69 8.13 L 11.24 5.58 11.24 12.98 L 11.24 20.38 11.33 20.56 C 11.38 20.66,11.49 20.79,11.57 20.86 C 11.71 20.97,11.76 20.98,12.00 20.98 C 12.24 20.98,12.29 20.97,12.43 20.86 C 12.51 20.79,12.62 20.66,12.67 20.56 L 12.76 20.38 12.76 12.98 L 12.76 5.58 15.31 8.13 C 17.99 10.80,17.94 10.76,18.28 10.76 C 18.45 10.76,18.70 10.62,18.83 10.46 C 18.97 10.29,19.02 10.08,18.98 9.83 C 18.95 9.67,18.78 9.49,15.71 6.41 C 13.48 4.17,12.41 3.13,12.30 3.08 C 12.21 3.04,12.08 3.00,12.00 3.00 C 11.92 3.00,11.79 3.04,11.70 3.08"/></svg></button>
       </div>
     </div>
     <div class="target">
@@ -2489,35 +2569,17 @@ class CascadePanelProvider {
         modeBtn=$("modeBtn"), modeMenu=$("modeMenu"), modeList=$("modeList"),
         usageEl=$("usage"), folderSeg=$("folderSeg"),
         modeWrap=$("modeWrap"), modelWrap=$("modelWrap"), recentEl=$("recent"),
-        recentList=$("recentList"), viewAll=$("viewAll"),
-        memList=$("memList"), memsBtn=$("memsBtn"),
-        mcpList=$("mcpList"), mcpBtn=$("mcpBtn"),
-        cusList=$("cusList"), cusBtn=$("cusBtn"),
-        agList=$("agList"), agBtn=$("agBtn"),
-        cmList=$("cmList"), cmBtn=$("cmBtn");
+        recentList=$("recentList"), viewAll=$("viewAll");
   viewAll.onclick=()=>vscode.postMessage({type:"history-open"});
-  const stList=$("stList"), tlList=$("tlList"), olList=$("olList"), plList=$("plList");
-  const homeLists={memList,mcpList,cusList,agList,cmList,stList,tlList,olList,plList};
-  function openHomeList(name,msgType){ const el=homeLists[name]; const open=el.style.display==="none";
-    for(const k in homeLists) homeLists[k].style.display="none";
-    el.style.display=open?"":"none"; recentList.style.display=open?"none":"";
-    if(open&&msgType) vscode.postMessage({type:msgType}); }
-  memsBtn.onclick=()=>openHomeList("memList","memories-list");
-  $("stBtn").onclick=()=>openHomeList("stList","status-info");
-  $("tlBtn").onclick=()=>openHomeList("tlList","timeline-list");
-  $("olBtn").onclick=()=>openHomeList("olList","outline-list");
-  $("plBtn").onclick=()=>openHomeList("plList","plans-list");
-  mcpBtn.onclick=()=>openHomeList("mcpList","mcp-list");
-  cusBtn.onclick=()=>openHomeList("cusList","custom-list");
-  agBtn.onclick=()=>openHomeList("agList","agents-registry");
-  cmBtn.onclick=()=>openHomeList("cmList","codemaps-list");
 
   // 官方式富模型下拉: 自定义弹层(分族分组 + 搜索 + 徽标 + 价目副行), 替代 native select(R61 局限)
   let modelCur=null;
-  function modelLabel(o){ return (o.recommended?"⭐ ":"")+(o.disabled?"🔒 ":"")+(o.name||o.value)+(o.images?" 🖼":""); }
+  const stripCredit=(s)=>String(s||"").replace(/\\s*·\\s*[\\d.]+x\\s*$/,"");
+  function modelLabel(o){ return (o.recommended?"⭐ ":"")+(o.disabled?"🔒 ":"")+stripCredit(o.name||o.value)+(o.images?" 🖼":""); }
   function modelBtnSync(s){
     const o=(s.options||[]).find(x=>x.value===s.currentValue);
-    modelCur=s; modelBtn.textContent=o?modelLabel(o):(s.currentValue||"模型");
+    // 官方 1:1: composer 按钮显模型名+倍率(与官方右栏实机一致, 徽标仅留下拉列表行)
+    modelCur=s; modelBtn.textContent=stripCredit(o?(o.name||o.value):(s.currentValue||"模型"));
     modelBtn.title=o&&o.description?o.description:"Model";
   }
   function modelMenuRender(q){
@@ -2528,7 +2590,7 @@ class CascadePanelProvider {
       const it=document.createElement("div"); it.className="mit"+(o.disabled?" dis":"")+(o.value===s.currentValue?" sel":"");
       const row=document.createElement("div"); row.className="mrow";
       const nm=document.createElement("span"); nm.className="mnm"; nm.textContent=modelLabel(o); row.appendChild(nm);
-      const mx=(o.description||"").match(/·\\s*([\\d.]+x)/);
+      const mx=((o.name||"")+" "+(o.description||"")).match(/·\\s*([\\d.]+x)/);
       if(mx){ const x=document.createElement("span"); x.className="mx"; x.textContent=mx[1]; row.appendChild(x); }
       it.appendChild(row);
       if(o.description){ const ds=document.createElement("div"); ds.className="mds"; ds.textContent=o.description; it.appendChild(ds); }
@@ -2569,15 +2631,19 @@ class CascadePanelProvider {
     if(!agentMenu.contains(e.target)&&e.target!==agentBtn) agentMenuClose(); });
   // 发送钮在回合进行中变为停止钮(官方式)
   let busy=false;
-  function setBusy(b){ busy=b; sendEl.textContent=b?"■":"↑"; sendEl.title=b?"中断当前回合":"发送 (Enter)"; }
+  const SEND_SVG=sendEl.innerHTML;
+  function setBusy(b){ busy=b; sendEl.innerHTML=b?'<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>':SEND_SVG; sendEl.title=b?"中断当前回合":"发送 (Enter)"; }
 
   loginBtn.onclick=()=>{ authmsg.textContent="正在拉起登录…"; vscode.postMessage({type:"login"}); };
   authsubmit.onclick=()=>{ if(authcode.value.trim()){ vscode.postMessage({type:"login-code", code:authcode.value.trim()}); authmsg.textContent="校验中…"; } };
   authcode.addEventListener("keydown",(e)=>{ if(e.key==="Enter") authsubmit.onclick(); });
   // 官方式模式下拉(同 R100 模型弹层): 行=名称 + description 副行
   let modeOpts=[], modeVal=null;
+  const emptyTtl=document.getElementById("emptyTtl");
   function modeBtnSync(){ const o=modeOpts.find(x=>x.value===modeVal);
-    modeBtn.textContent=o?(o.name||o.value):(modeVal||"模式"); modeBtn.title=o&&o.description?o.description:"Session Mode"; }
+    modeBtn.textContent=o?(o.name||o.value):(modeVal||"模式"); modeBtn.title=o&&o.description?o.description:"Session Mode";
+    // 官方式空态标题随模式同步: "Cascade Code" / "Cascade Ask" / "Cascade Plan"
+    if(emptyTtl&&agent==="cascade"&&o) emptyTtl.firstChild.textContent="Cascade "+(o.name||"")+" "; }
   function modeSet(opts,cur){ modeOpts=opts; modeVal=cur; modeBtnSync(); }
   function modeMenuClose(){ modeMenu.classList.remove("show"); }
   function modeMenuRender(){ modeList.innerHTML="";
@@ -2587,30 +2653,39 @@ class CascadePanelProvider {
       it.onclick=()=>{ modeMenuClose(); modeVal=o.value; modeBtnSync();
         vscode.postMessage({type:"set-mode", modeId:o.value});
         const grp=curGroup(); if(cfgStore[grp]&&cfgStore[grp].mode) cfgStore[grp].mode.currentValue=o.value; };
-      modeList.appendChild(it); } }
+      modeList.appendChild(it); }
+    // 官方菜单尾行提示 1:1: Use Ctrl+. to switch modes
+    const h=document.createElement("div"); h.className="mhint";
+    h.innerHTML='Use <span class="kbd">Ctrl</span><span class="kbd">.</span> to switch modes';
+    modeList.appendChild(h); }
   modeBtn.onclick=(e)=>{ e.stopPropagation(); modelMenuClose();
     if(modeMenu.classList.contains("show")) return modeMenuClose();
     modeMenuRender(); modeMenu.classList.add("show"); };
 
   function renderAgents(){ onAgentChange(); }
   // 官方式 agent 图标:Cascade=波形,Devin Local/Cloud=Devin 六边形(cloud 带云标)
-  const AGENT_ICONS={cascade:"🌊","devin-local":"⬢","devin-cloud":"☁"};
+  // 反者道之动·官方真源 W 标(自官方本体 workbench DOM 逆流提取, viewBox 512x297)
+  const W_SVG='<svg width="14" height="9" viewBox="0 0 512 297" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M507.28 0.142623H502.4C476.721 0.10263 455.882 20.899 455.882 46.5745V150.416C455.882 171.153 438.743 187.95 418.344 187.95C406.224 187.95 394.125 181.851 386.945 171.613L280.889 20.1391C272.089 7.56133 257.77 0.0626373 242.271 0.0626373C218.091 0.0626373 196.332 20.6191 196.332 45.9946V150.436C196.332 171.173 179.333 187.97 158.794 187.97C146.634 187.97 134.555 181.871 127.375 171.633L8.69966 2.12228C6.01976 -1.71705 0 0.182617 0 4.8618V95.426C0 100.005 1.39995 104.444 4.01984 108.204L120.815 274.995C127.715 284.853 137.895 292.172 149.634 294.831C179.013 301.51 206.052 278.894 206.052 250.079V145.697C206.052 124.961 222.851 108.164 243.59 108.164H243.65C256.15 108.164 267.87 114.263 275.049 124.501L381.125 275.955C389.945 288.552 403.524 296.031 419.724 296.031C444.443 296.031 465.622 275.455 465.622 250.099V145.677C465.622 124.941 482.421 108.144 503.16 108.144H507.3C509.9 108.144 512 106.044 512 103.445V4.8418C512 2.24226 509.9 0.142623 507.3 0.142623H507.28Z"/></svg>';
+  const AGENT_ICONS={cascade:"","devin-local":"⬢","devin-cloud":"☁"};
   const agentIcon=$("agentIcon");
   // 每 agent 轨各存一份 model/mode 配置; cascade=LS 本地轨, acp=Devin Local/Cloud 云端轨。
   const cfgStore={cascade:{model:null,mode:null},acp:{model:null,mode:null}};
   function curGroup(){ return agent==="cascade"?"cascade":"acp"; }
   function renderConfigFor(grp){
     const s=cfgStore[grp]||{};
-    if(s.model){ modelBtnSync(s.model); modelMenuClose(); modelWrap.classList.add("show"); }
+    // 配置推送不强制关闭已开弹层(否则频繁 config-options 推送会把刚点开的菜单秒关), 仅刷新内容
+    if(s.model){ modelBtnSync(s.model); modelWrap.classList.add("show");
+      if(modelMenu.classList.contains("show")) modelMenuRender(modelFilter.value); }
     else { modelWrap.classList.remove("show"); modelMenuClose(); }
-    if(s.mode){ modeSet(s.mode.options||[], s.mode.currentValue); modeMenuClose(); modeWrap.classList.add("show"); }
+    if(s.mode){ modeSet(s.mode.options||[], s.mode.currentValue); modeWrap.classList.add("show");
+      if(modeMenu.classList.contains("show")) modeMenuRender(); }
     else { modeWrap.classList.remove("show"); modeMenuClose(); }
   }
   function onAgentChange(){
     if(typeof slashSync==="function") slashSync();
     const a=AGENTS.find(x=>x.id===agent);
     badgeEl.textContent=a&&a.preview?"Preview":"";
-    agentIcon.textContent=AGENT_ICONS[agent]||"⬡";
+    if(agent==="cascade") agentIcon.innerHTML=W_SVG; else agentIcon.textContent=AGENT_ICONS[agent]||"⬡";
     agentBtn.textContent=a?a.label:agent;
     const pill=agentBtn.closest(".pill"); if(pill&&a) pill.title=a.label+" · "+a.hint+" (Ctrl+')";
     renderConfigFor(curGroup());
@@ -2620,18 +2695,35 @@ class CascadePanelProvider {
   function agentMenuRender(){ agentList.innerHTML="";
     for(const a of AGENTS){ const it=document.createElement("div"); it.className="mit"+(a.id===agent?" sel":"");
       const row=document.createElement("div"); row.className="mrow";
-      const nm=document.createElement("span"); nm.className="mnm"; nm.textContent=(AGENT_ICONS[a.id]||"⬡")+" "+a.label; row.appendChild(nm);
+      const nm=document.createElement("span"); nm.className="mnm"; if(a.id==="cascade"){ nm.innerHTML=W_SVG+" "; nm.appendChild(document.createTextNode(a.label)); } else { nm.textContent=(AGENT_ICONS[a.id]||"⬡")+" "+a.label; } row.appendChild(nm);
       if(a.preview){ const b=document.createElement("span"); b.className="bdg"; b.textContent="Preview"; row.appendChild(b); }
       it.appendChild(row);
-      const ds=document.createElement("div"); ds.className="mds"; ds.textContent=a.hint; it.appendChild(ds);
+      it.title=a.hint; // 官方菜单仅显名称, 技术轨道信息降为悬停提示
       it.onclick=()=>{ agentMenuClose(); agent=a.id; onAgentChange(); };
-      agentList.appendChild(it); } }
+      agentList.appendChild(it); }
+    const h=document.createElement("div"); h.className="mhint";
+    h.innerHTML='Use <span class="kbd">Ctrl</span><span class="kbd">&#39;</span> to switch agents';
+    agentList.appendChild(h); }
   agentBtn.onclick=(e)=>{ e.stopPropagation(); modelMenuClose(); modeMenuClose();
     if(agentMenu.classList.contains("show")) return agentMenuClose();
     agentMenuRender(); agentMenu.classList.add("show"); };
   // Ctrl+' 循环切换 agent(复刻官方快捷键)
   document.addEventListener("keydown",(e)=>{ if(e.ctrlKey && e.key==="'"){ e.preventDefault();
     const i=AGENTS.findIndex(x=>x.id===agent); agent=AGENTS[(i+1)%AGENTS.length].id; onAgentChange(); }});
+  // 官方快捷键组: Ctrl+/ 开模型选择器 · Ctrl+Shift+/ 切下一模型 · Ctrl+. 切会话模式
+  document.addEventListener("keydown",(e)=>{
+    if(!e.ctrlKey) return;
+    if(e.key==="/"&&!e.shiftKey){ e.preventDefault(); modelBtn.click(); return; }
+    if((e.key==="?"||(e.key==="/"&&e.shiftKey))){ e.preventDefault();
+      const s=modelCur; if(!s) return;
+      const opts=(s.options||[]).filter(o=>!o.disabled); if(!opts.length) return;
+      const i=opts.findIndex(o=>o.value===s.currentValue); const o=opts[(i+1)%opts.length];
+      vscode.postMessage({type:"set-config", configId:"model", value:o.value, agent});
+      modelCur=Object.assign({},s,{currentValue:o.value}); modelBtnSync(modelCur);
+      const grp=curGroup(); if(cfgStore[grp]&&cfgStore[grp].model) cfgStore[grp].model.currentValue=o.value;
+      return; }
+    if(e.key==="."&&!e.shiftKey){ e.preventDefault(); modeBtn.click(); }
+  });
   // mode/agent 弹层键盘导航(同 R101): ↑↓ 循环 .kbd 高亮, Enter 选中, Escape 关闭
   document.addEventListener("keydown",(e)=>{
     const open=[[modeMenu,modeList],[agentMenu,agentList]].find(([m])=>m.classList.contains("show"));
@@ -2647,13 +2739,22 @@ class CascadePanelProvider {
     items[i].classList.add("kbd"); items[i].scrollIntoView({block:"nearest"});
   });
 
-  // 官方式轮换占位文案
-  const HINTS=["Type @ to bring in another conversation",
-    "Try typing 'megaplan' to plan deeply before building",
-    "Ask to explain, refactor or fix anything in this repo"];
-  let hintIdx=0;
-  setInterval(()=>{ if(document.activeElement!==inputEl && !inputEl.value){
-    hintIdx=(hintIdx+1)%HINTS.length; inputEl.placeholder=HINTS[hintIdx]; } }, 8000);
+  // 官方式空态 Try Devin Cloud: 一键切到 devin-cloud agent(与官方按钮同位同义)
+  const tryCloudBtn=document.getElementById("tryCloud");
+  if(tryCloudBtn) tryCloudBtn.onclick=()=>{ agent="devin-cloud"; onAgentChange(); inputEl.focus(); };
+  // 官方式麦克风: Web Speech 可用则听写入 composer, 不可用则隐藏(不留死按钮)
+  const micBtn=document.getElementById("micBtn");
+  (function(){ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){ if(micBtn) micBtn.style.display="none"; return; }
+    let rec=null, on=false;
+    micBtn.onclick=()=>{ if(on){ try{rec.stop();}catch(_){} return; }
+      rec=new SR(); rec.continuous=false; rec.interimResults=false;
+      rec.onresult=(ev)=>{ const t=Array.from(ev.results).map(r=>r[0].transcript).join(" ");
+        if(t){ inputEl.value=(inputEl.value?inputEl.value+" ":"")+t; inputEl.dispatchEvent(new Event("input")); } };
+      rec.onend=()=>{ on=false; micBtn.style.opacity=""; };
+      rec.onerror=()=>{ on=false; micBtn.style.opacity=""; };
+      try{ rec.start(); on=true; micBtn.style.opacity="0.5"; }catch(_){ on=false; } };
+  })();
 
   // 极简 markdown 渲染(围栏代码块/行内码/粗斜体/链接/标题/列表)，先转义再替换
   function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -2666,8 +2767,11 @@ class CascadePanelProvider {
   function md(src){
     const parts=String(src).split(FENCE); let html="";
     for(let i=0;i<parts.length;i++){
-      if(i%2===1){ const body=parts[i].replace(/^[a-zA-Z0-9+-]*\\n?/,"");
-        html+='<pre><button class="copybtn" title="复制">Copy</button><code>'+esc(body)+"</code></pre>"; continue; }
+      if(i%2===1){ const lm=parts[i].match(/^([a-zA-Z0-9+-]*)\\n?/); const lang=lm&&lm[1]?lm[1]:"";
+        const body=parts[i].replace(/^[a-zA-Z0-9+-]*\\n?/,"");
+        if(i===parts.length-1 && !body.trim()) continue; // 末尾未闭合且为空的 fence 不产出空代码块
+
+        html+='<pre>'+(lang?'<div class="cblang">'+esc(lang)+'</div>':'')+'<button class="copybtn" title="复制">Copy</button><code>'+esc(body)+"</code></pre>"; continue; }
       const lines=esc(parts[i]).split("\\n"); let inList=false;
       for(const ln of lines){
         const li=ln.match(/^\\s*[-*] (.*)$/), h=ln.match(/^(#{1,3}) (.*)$/);
@@ -2748,6 +2852,11 @@ class CascadePanelProvider {
   });
   // 官方式 composer 随内容增高(单行 → 最多 ~120px 后内部滚动)。
   function autoGrow(){ inputEl.style.height="auto"; inputEl.style.height=Math.min(inputEl.scrollHeight,120)+"px"; }
+  // 官方式: 点击 composer 卡片任意空白处即聚焦输入框
+  document.querySelector(".composer .card").addEventListener("mousedown",(e)=>{
+    if(e.target.closest("button,.pill,textarea,input,select,a")) return;
+    e.preventDefault(); inputEl.focus();
+  });
   function send(){
     const text=inputEl.value.trim(); const images=pendingImages.slice();
     if(!text && !images.length) return;
@@ -2840,7 +2949,9 @@ class CascadePanelProvider {
     const t=inputEl.value;
     if(!t.trim()){ tokEl.textContent=""; return; }
     tokTimer=setTimeout(()=>vscode.postMessage({type:"token-query", reqId:++tokReq, text:t}),500); }
-  inputEl.addEventListener("input",()=>{ autoGrow(); slashSel=0; slashFilter(); atSel=0; atFilter(); tokQuery(); });
+  inputEl.addEventListener("input",()=>{ autoGrow(); slashSel=0; slashFilter(); atSel=0; atFilter(); tokQuery();
+    sendEl.classList.toggle("idle", !inputEl.value.trim()); });
+  sendEl.classList.add("idle");
   inputEl.addEventListener("blur",()=>setTimeout(()=>{ slashMenu.classList.remove("show"); atClose(); },150));
   inputEl.addEventListener("keydown",(e)=>{
     if(slashItems.length&&slashMenu.classList.contains("show")){
@@ -2948,279 +3059,12 @@ class CascadePanelProvider {
         rv.onclick=(e)=>{ e.stopPropagation(); vscode.postMessage({type:"cx-revert", stepIndex:m.stepIndex}); }; n.appendChild(rv);
         const br=document.createElement("button"); br.className="msgbranch"; br.title="从此消息开分支(原会话保持不变)"; br.textContent="⑂";
         br.onclick=(e)=>{ e.stopPropagation(); vscode.postMessage({type:"cx-branch", stepIndex:m.stepIndex, text:m.text}); }; n.appendChild(br); } }
-    else if(m.type==="customizations"){
-      // 官方式 Rules · Skills 定制面板: 规则(.windsurf/rules)与技能(.agents/skills)清单, 点击在编辑器打开源文件
-      cusList.innerHTML="";
-      const cbar=document.createElement("div"); cbar.className="mh";
-      const cbt=document.createElement("span"); cbt.className="mt"; cbt.textContent="Customizations";
-      const crf=document.createElement("span"); crf.className="mi"; crf.title="重新扫描 rules/skills/workflows"; crf.textContent="↻"; crf.style.cursor="pointer";
-      crf.onclick=()=>vscode.postMessage({type:"custom-refresh"});
-      cbar.appendChild(cbt); cbar.appendChild(crf); cusList.appendChild(cbar);
-      const secs=[["Rules",m.rules||[],"rule"],["Skills",m.skills||[],"skill"],["Workflows",m.workflows||[],"workflow"]];
-      for(const [ttl,arr,kind] of secs){
-        const h=document.createElement("div"); h.style.cssText="color:var(--dim);margin:6px 0 2px;font-size:11px;display:flex;justify-content:space-between;";
-        const hl=document.createElement("span"); hl.textContent=ttl; h.appendChild(hl);
-        const ad=document.createElement("span"); ad.className="mi"; ad.title="新建 "+ttl.slice(0,-1); ad.textContent="＋"; ad.style.cursor="pointer";
-        ad.onclick=()=>vscode.postMessage({type:"custom-create", kind}); h.appendChild(ad);
-        if(kind==="rule"){ const im=document.createElement("span"); im.className="mi"; im.title="从 Cursor 导入规则(.cursor/rules → 全局规则)"; im.textContent="⇤"; im.style.cursor="pointer";
-          im.onclick=()=>vscode.postMessage({type:"custom-import-cursor"}); h.appendChild(im); }
-        cusList.appendChild(h);
-        if(!arr.length){ const d=document.createElement("div"); d.textContent="(无)"; d.style.opacity=".6"; cusList.appendChild(d); continue; }
-        for(const it of arr){ const el=document.createElement("div"); el.className="mem"; el.style.cursor="pointer";
-          const hd=document.createElement("div"); hd.className="mh";
-          const t=document.createElement("span"); t.className="mt"; t.textContent=it.name; t.title=it.path||"";
-          hd.appendChild(t);
-          if(it.trigger){ const b=document.createElement("span"); b.className="mtags"; b.textContent=it.trigger; hd.appendChild(b); }
-          if(it.builtin){ const b=document.createElement("span"); b.className="mtags"; b.textContent="builtin"; hd.appendChild(b);
-            const cp=document.createElement("span"); cp.className="mi"; cp.title="拷入工作区定制"; cp.textContent="⤵";
-            cp.onclick=(e)=>{ e.stopPropagation(); vscode.postMessage({type:"custom-wf-copy", name:it.name}); }; hd.appendChild(cp); }
-          el.appendChild(hd);
-          if(it.description){ const c=document.createElement("div"); c.className="mc"; c.textContent=it.description.slice(0,120); el.appendChild(c); }
-          if(it.path) el.onclick=()=>vscode.postMessage({type:"open-file", path:it.path});
-          cusList.appendChild(el); }
-      }
-    }
-    else if(m.type==="memories"){
-      // 官方式 Memories 管理: 标题+内容+标签, ✐ 编辑 / 🗑 删除
-      memList.innerHTML="";
-      const arr=m.memories||[];
-      if(!arr.length){ const d=document.createElement("div"); d.textContent="(无记忆)"; d.style.opacity=".6"; memList.appendChild(d); }
-      for(const mm of arr){ const it=document.createElement("div"); it.className="mem";
-        const h=document.createElement("div"); h.className="mh";
-        const t=document.createElement("span"); t.className="mt"; t.textContent=mm.title||mm.id; t.title=mm.title||"";
-        const ed=document.createElement("span"); ed.className="mi"; ed.title="编辑记忆"; ed.textContent="✎";
-        ed.onclick=()=>vscode.postMessage({type:"memory-edit", memory:mm});
-        const del=document.createElement("span"); del.className="mi"; del.title="删除记忆"; del.textContent="🗑";
-        del.onclick=()=>vscode.postMessage({type:"memory-delete", id:mm.id});
-        h.appendChild(t); h.appendChild(ed); h.appendChild(del);
-        const c=document.createElement("div"); c.className="mc"; c.textContent=mm.content||"";
-        it.appendChild(h); it.appendChild(c);
-        if(mm.tags&&mm.tags.length){ const tg=document.createElement("div"); tg.className="mtags"; tg.textContent=mm.tags.join(" · "); it.appendChild(tg); }
-        memList.appendChild(it); }
-    }
-    else if(m.type==="timeline"){
-      // 官方式用户主线轨迹: 时间戳 + 图标 + 摘要(倒序近 40 步)
-      tlList.innerHTML="";
-      const h=document.createElement("div"); h.className="mh";
-      const t=document.createElement("span"); t.className="mt"; t.textContent="活动轨迹 ("+(m.items||[]).length+") · "+(m.branch||""); h.appendChild(t); tlList.appendChild(h);
-      if(!(m.items||[]).length){ const d=document.createElement("div"); d.textContent="(无轨迹步骤)"; d.style.opacity=".6"; tlList.appendChild(d); }
-      for(const it of m.items||[]){ const d=document.createElement("div"); d.className="mc"; d.textContent=(it.ts?it.ts+"  ":"")+it.icon+" "+(it.text||""); tlList.appendChild(d); }
-    }
-    else if(m.type==="outline"){
-      // 官方式文件大纲: 类◆/函数ƒ 按行号升序, 点击跳行
-      olList.innerHTML="";
-      const h=document.createElement("div"); h.className="mh";
-      const t=document.createElement("span"); t.className="mt"; t.textContent="大纲 ("+(m.items||[]).length+") · "+String(m.file||"").split("/").pop(); h.appendChild(t); olList.appendChild(h);
-      if(!(m.items||[]).length){ const d=document.createElement("div"); d.textContent="(无符号)"; d.style.opacity=".6"; olList.appendChild(d); }
-      for(const it of m.items||[]){ const d=document.createElement("div"); d.className="mc"; d.style.cursor="pointer"; d.textContent=String(it.line).padStart(4," ")+"  "+it.icon+" "+(it.text||""); d.onclick=()=>vscode.postMessage({type:"open-file-line", path:m.file, line:it.line}); olList.appendChild(d); }
-    }
-    else if(m.type==="plans"){
-      // 官方式 Plans 面板: .windsurf/plans/*.md 计划文档清单(标题+摘要), 点击打开, ＋ 新建
-      plList.innerHTML="";
-      const h=document.createElement("div"); h.className="mh";
-      const t=document.createElement("span"); t.className="mt"; t.textContent="Plans ("+(m.items||[]).length+")"; h.appendChild(t);
-      const add=document.createElement("span"); add.className="mi"; add.title="新建计划文档"; add.textContent="＋"; add.onclick=()=>vscode.postMessage({type:"plan-create"}); h.appendChild(add);
-      plList.appendChild(h);
-      if(!(m.items||[]).length){ const d=document.createElement("div"); d.textContent="(无计划 · Plan 模式或 ＋ 会生成 .windsurf/plans/*.md)"; d.style.opacity=".6"; plList.appendChild(d); }
-      for(const it of m.items||[]){ const d=document.createElement("div"); d.className="mc"; d.style.cursor="pointer";
-        d.textContent="▤ "+(it.title||"")+(it.description?" — "+it.description:"");
-        d.title=it.path||""; d.onclick=()=>vscode.postMessage({type:"open-file", path:it.path}); plList.appendChild(d); }
-    }
-    else if(m.type==="status-info"){
-      // 官方式诊断页: LS 端口/工作区/仓库分支/日志尾部
-      stList.innerHTML="";
-      const info=m.info||{};
-      function sec(title){ const h=document.createElement("div"); h.className="mh"; const t=document.createElement("span"); t.className="mt"; t.textContent=title; h.appendChild(t); stList.appendChild(h); }
-      function row(txt){ const d=document.createElement("div"); d.className="mc"; d.textContent=txt; stList.appendChild(d); }
-      sec("Language Server");
-      { const h=stList.lastElementChild; const bt=document.createElement("span"); bt.className="mi"; bt.title="CreateWorktree: 新建隔离 worktree"; bt.textContent="⎇＋"; bt.onclick=()=>vscode.postMessage({type:"worktree-create"}); h.appendChild(bt); }
-      row("RPC: "+(info.lsUrl||"?")+"  ·  LSP port: "+(info.lspPort||"?"));
-      sec("Workspaces ("+(info.workspaces||[]).length+")");
-      for(const w of info.workspaces||[]) row(w);
-      sec("Repos");
-      for(const r of info.repos||[]) row(r.name+" · "+(r.branches||[]).length+" branches: "+(r.branches||[]).slice(0,8).join(", ")+((r.branches||[]).length>8?" …":""));
-      if(info.rateLimit){ sec("消息额度");
-        const rl=info.rateLimit;
-        row(rl.hasCapacity?("可用"+(rl.max>0?" · 剩余 "+rl.remaining+"/"+rl.max:" · 无限额")):("已限流"+(rl.resetsIn?" · "+Math.ceil(rl.resetsIn/60)+" 分钟后重置":""))); }
-      if((info.workspaceEdits||[]).length){ sec("Cascade 待处置编辑");
-        for(const x of info.workspaceEdits) row(x.repoRoot+(x.files?" · "+x.files+" 文件":"")); }
-      if(info.lifeguard){ sec("Lifeguard 审阅");
-        row((info.lifeguard.enabled?"已启用":"已禁用")+" · "+(info.lifeguard.modelDisplayName||info.lifeguard.model||"")+(info.lifeguard.agentVersion?" · "+info.lifeguard.agentVersion:"")); }
-      if((info.webOrigins||[]).length){ sec("Cascade Web 默认白名单 ("+info.webOrigins.length+")");
-        row(info.webOrigins.map(function(u){return u.replace(/^https?:\\/\\//,"");}).join(" · ")); }
-      if((info.commandModels||[]).length){ sec("Command 模型 ("+info.commandModels.length+")");
-        row(info.commandModels.join(" · ")); }
-      sec("LS 日志尾部");
-      for(const l of info.logs||[]) row(l);
-    }
-    else if(m.type==="mcp"){
-      // 官方式 MCP 面板: server 状态 + 工具清单; ↻ 刷新 / ＋ 添加 / ⚙ 打开 mcp_config.json
-      mcpList.innerHTML="";
-      const bar=document.createElement("div"); bar.className="mh";
-      const bt=document.createElement("span"); bt.className="mt"; bt.textContent="MCP Servers";
-      const rf=document.createElement("span"); rf.className="mi"; rf.title="刷新 servers"; rf.textContent="↻";
-      rf.onclick=()=>vscode.postMessage({type:"mcp-refresh"});
-      const ad=document.createElement("span"); ad.className="mi"; ad.title="添加 server"; ad.textContent="＋";
-      ad.onclick=()=>vscode.postMessage({type:"mcp-add"});
-      const cf=document.createElement("span"); cf.className="mi"; cf.title="打开 mcp_config.json"; cf.textContent="⚙";
-      cf.onclick=()=>vscode.postMessage({type:"mcp-config-open"});
-      const sb=document.createElement("span"); sb.className="mi"; sb.title="插件市场"; sb.textContent="▤";
-      sb.onclick=()=>vscode.postMessage({type:"mcp-store"});
-      bar.appendChild(bt); bar.appendChild(rf); bar.appendChild(ad); bar.appendChild(cf); bar.appendChild(sb);
-      mcpList.appendChild(bar);
-      const arr=m.servers||[];
-      if(!arr.length){ const d=document.createElement("div"); d.textContent="(无 MCP server)"; d.style.opacity=".6"; mcpList.appendChild(d); }
-      for(const sv of arr){ const it=document.createElement("div"); it.className="mem";
-        const h=document.createElement("div"); h.className="mh";
-        const t=document.createElement("span"); t.className="mt"; t.textContent=sv.name;
-        const st=document.createElement("span"); st.className="mi"; st.textContent=sv.disabled?"◌":(sv.status==="READY"?"●":"○");
-        st.title=sv.disabled?"disabled":(sv.status||""); st.style.color=sv.disabled?"#8b949e":(sv.status==="READY"?"#3fb950":"#d29922");
-        const tg=document.createElement("span"); tg.className="mi"; tg.textContent="⏻";
-        tg.title=sv.disabled?"启用":"禁用"; tg.style.color=sv.disabled?"#8b949e":"#3fb950";
-        tg.onclick=()=>vscode.postMessage({type:"mcp-toggle",name:sv.name});
-        if(sv.disabled){ t.style.opacity=".5"; }
-        h.appendChild(t); h.appendChild(st); h.appendChild(tg);
-        const c=document.createElement("div"); c.className="mc";
-        if(sv.error){ c.textContent="错误: "+sv.error; }
-        else if(!(sv.tools||[]).length){ c.textContent="(无工具)"; }
-        else for(const x of sv.tools){ const tp=document.createElement("span"); tp.textContent=(x.off?"◌ ":"● ")+x.name;
-          tp.title=(x.off?"已禁用 · 点击启用":"点击禁用")+(x.description?" — "+x.description:"");
-          tp.style.cssText="margin-right:8px;cursor:pointer;"+(x.off?"opacity:.45;text-decoration:line-through;":"");
-          tp.onclick=()=>vscode.postMessage({type:"mcp-tool-toggle", server:sv.name, tool:x.name}); c.appendChild(tp); }
-        if((sv.prompts||[]).length){ const pc=document.createElement("div"); pc.className="mc";
-          for(const p of sv.prompts){ const pp=document.createElement("span"); pp.textContent="▤ "+p.name;
-            pp.title="插入 prompt 到输入框"+(p.description?" — "+p.description:"")+(p.args.length?"（参数: "+p.args.join(", ")+"）":"");
-            pp.style.cssText="margin-right:8px;cursor:pointer;color:#58a6ff;";
-            pp.onclick=()=>vscode.postMessage({type:"mcp-prompt-run", server:sv.name, prompt:p.name, args:p.args}); pc.appendChild(pp); }
-          it.appendChild(h); it.appendChild(c); it.appendChild(pc); mcpList.appendChild(it); continue; }
-        it.appendChild(h); it.appendChild(c);
-        mcpList.appendChild(it); }
-    }
-    else if(m.type==="mcp-store"){
-      // 官方式插件市场: 安装量/信任级清单, ⤓ 一键安装(注册表模板), 点击开主页
-      mcpList.innerHTML="";
-      const bar=document.createElement("div"); bar.className="mh";
-      const bt=document.createElement("span"); bt.className="mt"; bt.textContent="Plugin Store ("+(m.plugins||[]).length+")";
-      const bk=document.createElement("span"); bk.className="mi"; bk.title="返回 MCP servers"; bk.textContent="←";
-      bk.onclick=()=>vscode.postMessage({type:"mcp-list"});
-      bar.appendChild(bt); bar.appendChild(bk); mcpList.appendChild(bar);
-      for(const p of m.plugins||[]){ const it=document.createElement("div"); it.className="mem"; it.style.cursor="pointer";
-        const h=document.createElement("div"); h.className="mh";
-        const t=document.createElement("span"); t.className="mt"; t.textContent=p.title; t.title=p.id;
-        const tag=document.createElement("span"); tag.className="mtags"; tag.textContent=(p.trust||"")+(p.installs?" · "+p.installs:"");
-        const ins=document.createElement("span"); ins.className="mi"; ins.title="安装到 mcp_config.json"; ins.textContent="⤓";
-        ins.onclick=(e)=>{ e.stopPropagation(); vscode.postMessage({type:"mcp-store-install", id:p.id, link:p.link}); };
-        h.appendChild(t); h.appendChild(tag); h.appendChild(ins);
-        const c=document.createElement("div"); c.className="mc"; c.textContent=(p.desc||"").slice(0,140);
-        it.appendChild(h); it.appendChild(c);
-        if(p.link) it.onclick=()=>vscode.postMessage({type:"store-open", url:p.link});
-        mcpList.appendChild(it); }
-    }
-    else if(m.type==="codemaps"){
-      // 官方式 Code Maps: 生成栏 + 地图卡(展开见 trace 文本图与可点击 locations)
-      cmList.innerHTML="";
-      const bar=document.createElement("div"); bar.className="mh";
-      const bt=document.createElement("span"); bt.className="mt"; bt.textContent="Code Maps ("+(m.maps||[]).length+")";
-      const rf=document.createElement("span"); rf.className="mi"; rf.title="刷新"; rf.textContent="↻";
-      rf.onclick=()=>vscode.postMessage({type:"codemaps-list"});
-      const im=document.createElement("span"); im.className="mi"; im.title="导入共享地图(粘贴链接)"; im.textContent="⇘";
-      im.onclick=()=>vscode.postMessage({type:"codemap-import"});
-      bar.appendChild(bt); bar.appendChild(rf); bar.appendChild(im); cmList.appendChild(bar);
-      const gen=document.createElement("div"); gen.style.cssText="display:flex;gap:6px;margin:4px 0;";
-      const gi=document.createElement("input"); gi.placeholder="描述要生成的代码地图…"; gi.style.cssText="flex:1;background:var(--card);color:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;";
-      const gb=document.createElement("button"); gb.textContent="生成"; gb.style.cssText="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;";
-      const gs=document.createElement("div"); gs.id="cmStatus"; gs.style.cssText="font-size:11px;color:var(--dim);margin:2px 0;";
-      gb.onclick=()=>{ const p=gi.value.trim(); if(!p) return; gs.textContent="生成中…"; vscode.postMessage({type:"codemap-generate", prompt:p}); };
-      gi.addEventListener("keydown",(e)=>{ if(e.key==="Enter") gb.onclick(); });
-      gen.appendChild(gi); gen.appendChild(gb); cmList.appendChild(gen); cmList.appendChild(gs);
-      // 官方式 Suggested maps: 候选卡(标题/副题/起点), 点选即以其 prompt 发起生成
-      const sugs=m.suggestions||[];
-      if(sugs.length){
-        const sh=document.createElement("div"); sh.textContent="Suggested maps"; sh.style.cssText="font-size:11px;color:var(--dim);margin:6px 0 2px;"; cmList.appendChild(sh);
-        for(const sg of sugs){ const sc=document.createElement("div"); sc.className="mem"; sc.style.cursor="pointer"; sc.title="点击以此建议生成地图";
-          const st=document.createElement("div"); st.style.cssText="font-size:12px;display:flex;align-items:center;gap:4px;";
-          const stx=document.createElement("span"); stx.textContent="✧ "+sg.prompt; stx.style.flex="1"; st.appendChild(stx);
-          if(sg.id){ const sx=document.createElement("span"); sx.className="mi"; sx.textContent="×"; sx.title="忽略此建议";
-            sx.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-sug-dismiss", id:sg.id}); }; st.appendChild(sx); }
-          const ss=document.createElement("div"); ss.textContent=sg.subtitle+((sg.startingPoints||[]).length?" · "+sg.startingPoints.join(", "):""); ss.style.cssText="font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-          sc.appendChild(st); sc.appendChild(ss);
-          sc.onclick=()=>{ gi.value=sg.prompt; gs.textContent="生成中…"; vscode.postMessage({type:"codemap-generate", prompt:sg.prompt}); };
-          cmList.appendChild(sc);
-        }
-      }
-      // 官方式地图卡: ★ 置顶 / 归档分区 / ⇗ 分享(UpdateCodeMapMetadata + ShareCodeMap)
-      const all=m.maps||[];
-      const live=all.filter(x=>!x.archived), arch=all.filter(x=>x.archived);
-      live.sort((a,b)=>(b.starred?1:0)-(a.starred?1:0));
-      if(!all.length){ const d=document.createElement("div"); d.textContent="(暂无地图 —— 输入提示生成)"; d.style.opacity=".6"; cmList.appendChild(d); }
-      const mkCard=(mp)=>{ const it=document.createElement("div"); it.className="mem";
-        const h=document.createElement("div"); h.className="mh"; h.style.cursor="pointer";
-        const t=document.createElement("span"); t.className="mt"; t.textContent="\u{1F5FA} "+mp.title; t.title=mp.prompt;
-        if(mp.archived) t.style.opacity=".55";
-        const tg=document.createElement("span"); tg.className="mtags"; tg.textContent=(mp.traces||[]).length+" traces"+(mp.time?" \u00b7 "+mp.time.slice(0,10):"");
-        const star=document.createElement("span"); star.className="mi"; star.textContent=mp.starred?"\u2605":"\u2606"; star.title=mp.starred?"取消置顶":"置顶";
-        if(mp.starred) star.style.color="#e2b93d";
-        star.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-meta", id:mp.id, starred:!mp.starred}); };
-        const sh=document.createElement("span"); sh.className="mi"; sh.textContent="\u21d7"; sh.title="分享(复制链接)";
-        sh.onclick=(ev)=>{ ev.stopPropagation(); const gs=document.getElementById("cmStatus"); if(gs) gs.textContent="分享中…"; vscode.postMessage({type:"codemap-share", id:mp.id}); };
-        const ar=document.createElement("span"); ar.className="mi"; ar.textContent=mp.archived?"\u2934":"\u{1F5C3}"; ar.title=mp.archived?"恢复":"归档";
-        ar.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"codemap-meta", id:mp.id, archived:!mp.archived}); };
-        h.appendChild(t); h.appendChild(tg); h.appendChild(star); h.appendChild(sh); h.appendChild(ar); it.appendChild(h);
-        const body=document.createElement("div"); body.style.display="none";
-        for(const tr of (mp.traces||[])){
-          const th=document.createElement("div"); th.className="mc"; th.style.fontWeight="600"; th.textContent=tr.title; body.appendChild(th);
-          if(tr.desc){ const td=document.createElement("div"); td.className="mc"; td.textContent=tr.desc; body.appendChild(td); }
-          if(tr.diagram){ const dg=document.createElement("pre"); dg.textContent=tr.diagram; dg.style.cssText="font-size:10.5px;overflow-x:auto;border-left:2px solid var(--line);padding:2px 8px;margin:4px 0;"; body.appendChild(dg); }
-          for(const lc of (tr.locations||[])){
-            const row=document.createElement("div"); row.className="mc"; row.style.cursor="pointer";
-            row.textContent="\u2192 "+lc.title+" \u00b7 "+lc.path.split("/").pop()+":"+lc.line; row.title=lc.lineContent;
-            row.onclick=(ev)=>{ ev.stopPropagation(); vscode.postMessage({type:"open-file-line", path:lc.path, line:lc.line}); };
-            body.appendChild(row); } }
-        h.onclick=()=>{ body.style.display=body.style.display==="none"?"":"none"; };
-        it.appendChild(body); return it; };
-      for(const mp of live) cmList.appendChild(mkCard(mp));
-      if(arch.length){
-        const ah=document.createElement("div"); ah.textContent="\u25b8 已归档 ("+arch.length+")"; ah.style.cssText="font-size:11px;color:var(--dim);margin:8px 0 2px;cursor:pointer;";
-        const aw=document.createElement("div"); aw.style.display="none";
-        ah.onclick=()=>{ const open=aw.style.display==="none"; aw.style.display=open?"":"none"; ah.textContent=(open?"\u25be":"\u25b8")+" 已归档 ("+arch.length+")"; };
-        for(const mp of arch) aw.appendChild(mkCard(mp));
-        cmList.appendChild(ah); cmList.appendChild(aw);
-      }
-    }
-    else if(m.type==="codemap-status"){
-      const gs=document.getElementById("cmStatus"); if(gs) gs.textContent=m.text;
-      if(/生成完成/.test(m.text)) vscode.postMessage({type:"codemaps-list"});
-    }
     else if(m.type==="deepwiki"){
       // 官方式 DeepWiki 解释卡: 📖 符号头 + 流式 markdown 正文
       let el=logEl.querySelector('[data-dw="'+m.id+'"]');
       if(!el){ if(emptyEl) emptyEl.remove(); el=document.createElement("div"); el.dataset.dw=m.id; el.className="msg assistant"; logEl.appendChild(el); }
       el.innerHTML='<div style="color:var(--dim);font-size:11px;margin-bottom:4px;">\u{1F4D6} DeepWiki \u00b7 '+esc(m.symbol||"")+(m.inProgress?" \u2026":"")+'</div>'+md(m.text||"");
       logEl.scrollTop=logEl.scrollHeight;
-    }
-    else if(m.type==="agents-registry"){
-      // 官方式 ACP agent 注册表: featured/bundled 徽标 + 版本 + 作者, 点击开 repository
-      agList.innerHTML="";
-      const bar=document.createElement("div"); bar.className="mh";
-      const bt=document.createElement("span"); bt.className="mt"; bt.textContent="ACP Agents ("+(m.agents||[]).length+")";
-      const rf=document.createElement("span"); rf.className="mi"; rf.title="刷新注册表"; rf.textContent="↻";
-      rf.onclick=()=>vscode.postMessage({type:"agents-registry"});
-      bar.appendChild(bt); bar.appendChild(rf); agList.appendChild(bar);
-      const arr=m.agents||[];
-      if(!arr.length){ const d=document.createElement("div"); d.textContent="(注册表为空)"; d.style.opacity=".6"; agList.appendChild(d); }
-      for(const a of arr){ const it=document.createElement("div"); it.className="mem";
-        const h=document.createElement("div"); h.className="mh";
-        const t=document.createElement("span"); t.className="mt"; t.textContent=a.name; t.title=a.id+(a.authors?" · "+a.authors:"");
-        h.appendChild(t);
-        const tags=[a.promo, a.featured?"featured":"", a.bundled?"bundled":"", a.version?"v"+a.version:""].filter(Boolean);
-        if(tags.length){ const tg=document.createElement("span"); tg.className="mtags"; tg.textContent=tags.join(" · "); h.appendChild(tg); }
-        it.appendChild(h);
-        if(a.desc){ const c=document.createElement("div"); c.className="mc"; c.textContent=a.desc.slice(0,140); it.appendChild(c); }
-        if(a.repo){ it.style.cursor="pointer"; it.onclick=()=>vscode.postMessage({type:"store-open", url:a.repo}); }
-        agList.appendChild(it); }
-    }
-    else if(m.type==="store-installed"){
-      vscode.postMessage({type:"mcp-list"});
     }
     else if(m.type==="cmd-card"){
       // 官方式终端卡: ⌘ 命令 + cwd + 退出码徽标, 点击展开命令输出
@@ -3521,6 +3365,194 @@ function register(context, log, opts) {
       await vscode.commands.executeCommand(viewId + ".focus").then(undefined, () => {});
       provider._post({ type: "insert-input", text });
     }),
+    // 官方命令面同源: Log in / Log Out(复用面板登录编排与 CLI logout)
+    vscode.commands.registerCommand(viewId + ".login", async () => {
+      await vscode.commands.executeCommand(viewId + ".focus").then(undefined, () => {});
+      provider._handleLogin();
+    }),
+    vscode.commands.registerCommand(viewId + ".logout", async () => {
+      try {
+        const provision = require("./devin-provision");
+        const bin = provision.resolveEngine(context.extensionPath, null);
+        if (!bin) throw new Error("未找到 devin 二进制");
+        const { execFile } = require("child_process");
+        const r = await new Promise((res) =>
+          execFile(bin, ["auth", "logout"], { timeout: 20000 }, (err, so, se) =>
+            res({ ok: !err, message: String(so || se || (err && err.message) || "").trim() })));
+        if (!r.ok) throw new Error(r.message || "auth logout 退出码非 0");
+        vscode.window.setStatusBarMessage("已登出 Devin 账号", 4000);
+      } catch (e) { vscode.window.showWarningMessage("登出失败: " + e.message); }
+    }),
+    // 官方 Add Current File to Cascade: 当前文件 @mention 塗入 composer
+    vscode.commands.registerCommand(viewId + ".addFile", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed) return void vscode.window.showInformationMessage("没有活动编辑器");
+      const rel = vscode.workspace.asRelativePath(ed.document.uri);
+      await vscode.commands.executeCommand(viewId + ".focus").then(undefined, () => {});
+      provider._post({ type: "insert-input", text: "@" + rel + " " });
+    }),
+    // Windows Agent 接入官方工具层: 把 Dao-Windows-Agent 的 Windows/FreeCAD/KiCad 能力
+    // 注册进 mcp_config.json(官方原生工具扩展面), Cascade 三模式与官方工具同层调度。
+    vscode.commands.registerCommand(viewId + ".windowsAgent", async () => {
+      const wa = require("./windows-agent");
+      const st = wa.status();
+      const items = [
+        { label: "$(plug) 注册 · 本机检出 (stdio bridge.mcp)", act: "local" },
+        { label: "$(globe) 注册 · 远端穿透 (serverUrl /mcp + Bearer)", act: "remote" },
+      ];
+      if (st.registered) items.push({ label: "$(trash) 注销 dao-windows-agent", act: "off" });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: st.registered
+          ? "已注册(" + st.transport + (st.disabled ? "·已停用" : "") + ") — Windows 工具已在官方工具层"
+          : "未注册 — 选择接入通道",
+      });
+      if (!pick) return;
+      let r;
+      if (pick.act === "off") r = wa.unregister();
+      else if (pick.act === "local") {
+        const found = wa.findLocalCheckout();
+        const dir = await vscode.window.showInputBox({
+          prompt: "Dao-Windows-Agent 检出目录", value: found || "", ignoreFocusOut: true });
+        if (dir === undefined) return;
+        r = wa.registerLocal({ dir: dir || undefined });
+      } else {
+        const url = await vscode.window.showInputBox({
+          prompt: "穿透公网 URL(如 https://dao-relay.example.com)", ignoreFocusOut: true });
+        if (!url) return;
+        const token = await vscode.window.showInputBox({
+          prompt: "Bearer Token(可空)", password: true, ignoreFocusOut: true });
+        if (token === undefined) return;
+        r = wa.registerRemote({ url, token: token || undefined });
+      }
+      if (r && r.ok === false) return void vscode.window.showWarningMessage("Windows Agent: " + r.error);
+      // LS 重载 MCP 配置, 工具即刻并入官方层
+      try { const ls = require("./ls-bridge"); if (ls.ready()) await ls.call("RefreshMcpServers", {}); } catch (_) {}
+      vscode.window.setStatusBarMessage("Windows Agent 工具层已" + (pick.act === "off" ? "注销" : "注册并刷新"), 4000);
+    }),
+    // ⚡ PCB 快速面板: KiCad/嘉立创EDA 各模块直开(每选一次 = 一个独立实例) + dao-pcb 工具层注册。
+    // web 模块经站内代理路由进 IDE 独立页(与内置浏览器同技术); app 模块拉起独立本机编辑器进程。
+    vscode.commands.registerCommand(viewId + ".pcbAgent", async () => {
+      const pa = require("./pcb-agent");
+      const pc = require("./pcb-panel-core");
+      const st = pa.status();
+      const items = pc.modules().map((m) => ({
+        label: m.icon + " " + m.name,
+        description: m.kind === "web" ? "IDE 内网页实例" : "本机编辑器实例",
+        act: "open", mod: m,
+      }));
+      items.push({ label: "$(plug) 注册 dao-pcb 工具层 · 本机检出 (stdio pcb_mcp.py)", act: "local" });
+      items.push({ label: "$(globe) 注册 dao-pcb 工具层 · 远端穿透 (serverUrl /mcp + Bearer)", act: "remote" });
+      if (st.registered) items.push({ label: "$(trash) 注销 dao-pcb", act: "off" });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: st.registered
+          ? "dao-pcb 已注册(" + st.transport + (st.disabled ? "·已停用" : "") + ") — 选模块直开或管理工具层"
+          : "选 KiCad/嘉立创EDA 模块直开; 或注册 dao-pcb 工具层",
+      });
+      if (!pick) return;
+      if (pick.act === "open") {
+        const m = pick.mod;
+        if (m.kind === "app") {
+          const r = pc.openApp(m.exe);
+          if (!r.ok) vscode.window.showWarningMessage(r.error);
+          return;
+        }
+        try {
+          const localApi = require("./local-api");
+          if (!localApi.running()) await localApi.start(0);
+          const src = "http://127.0.0.1:" + localApi.port() + "/web?t=" + encodeURIComponent(localApi.token()) + "&u=" + encodeURIComponent(m.url);
+          const p = vscode.window.createWebviewPanel("dao.pcb.module", m.icon + " " + m.name,
+            vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+          p.webview.html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100vh}</style></head><body>' +
+            '<iframe src="' + src.replace(/"/g, "&quot;") + '" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe></body></html>';
+        } catch (e) { vscode.window.showWarningMessage("开模块失败: " + e.message); }
+        return;
+      }
+      let r;
+      if (pick.act === "off") r = pa.unregister();
+      else if (pick.act === "local") {
+        const found = pa.findLocalCheckout();
+        const dir = await vscode.window.showInputBox({
+          prompt: "Dao-PCB-Design-Agent 检出目录", value: found || "", ignoreFocusOut: true });
+        if (dir === undefined) return;
+        r = pa.registerLocal({ dir: dir || undefined });
+      } else {
+        const url = await vscode.window.showInputBox({
+          prompt: "穿透公网 URL(如 https://dao-relay.example.com)", ignoreFocusOut: true });
+        if (!url) return;
+        const token = await vscode.window.showInputBox({
+          prompt: "Bearer Token(可空)", password: true, ignoreFocusOut: true });
+        if (token === undefined) return;
+        r = pa.registerRemote({ url, token: token || undefined });
+      }
+      if (r && r.ok === false) return void vscode.window.showWarningMessage("PCB Agent: " + r.error);
+      try { const ls = require("./ls-bridge"); if (ls.ready()) await ls.call("RefreshMcpServers", {}); } catch (_) {}
+      vscode.window.setStatusBarMessage("dao-pcb 工具层已" + (pick.act === "off" ? "注销" : "注册并刷新"), 4000);
+    }),
+    // 🧊 FreeCAD 快速面板: 归一外壳各网页模块直开(每选一次 = 一个独立实例) + dao-freecad 工具层注册。
+    // web 模块为本机归一外壳网页(iframe 直嵌); app 模块拉起独立本机 FreeCAD 进程。
+    vscode.commands.registerCommand(viewId + ".fcAgent", async () => {
+      const fa = require("./fc-agent");
+      const fc = require("./fc-panel-core");
+      const st = fa.status();
+      const items = fc.modules().map((m) => ({
+        label: m.icon + " " + m.name,
+        description: m.kind === "web" ? "IDE 内网页实例" : "本机客户端实例",
+        act: "open", mod: m,
+      }));
+      items.push({ label: "$(plug) 注册 dao-freecad 工具层 · 本机检出 (stdio cad_agent.mcp_server)", act: "local" });
+      items.push({ label: "$(globe) 注册 dao-freecad 工具层 · 远端穿透 (serverUrl /mcp + Bearer)", act: "remote" });
+      if (st.registered) items.push({ label: "$(trash) 注销 dao-freecad", act: "off" });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: st.registered
+          ? "dao-freecad 已注册(" + st.transport + (st.disabled ? "·已停用" : "") + ") — 选模块直开或管理工具层"
+          : "选 FreeCAD 模块直开; 或注册 dao-freecad 工具层",
+      });
+      if (!pick) return;
+      if (pick.act === "open") {
+        const m = pick.mod;
+        if (m.kind === "app") {
+          const r = fc.openApp(m.exe);
+          if (!r.ok) vscode.window.showWarningMessage(r.error);
+          return;
+        }
+        try {
+          const p = vscode.window.createWebviewPanel("dao.fc.module", m.icon + " " + m.name,
+            vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+          p.webview.html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100vh}</style></head><body>' +
+            '<iframe src="' + String(m.url).replace(/"/g, "&quot;") + '" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" allow="clipboard-read; clipboard-write"></iframe></body></html>';
+        } catch (e) { vscode.window.showWarningMessage("开模块失败: " + e.message); }
+        return;
+      }
+      let r;
+      if (pick.act === "off") r = fa.unregister();
+      else if (pick.act === "local") {
+        const found = fa.findLocalCheckout();
+        const dir = await vscode.window.showInputBox({
+          prompt: "Dao-3D-Modeling-Agent 检出目录", value: found || "", ignoreFocusOut: true });
+        if (dir === undefined) return;
+        r = fa.registerLocal({ dir: dir || undefined });
+      } else {
+        const url = await vscode.window.showInputBox({
+          prompt: "穿透公网 URL(如 https://dao-relay.example.com)", ignoreFocusOut: true });
+        if (!url) return;
+        const token = await vscode.window.showInputBox({
+          prompt: "Bearer Token(可空)", password: true, ignoreFocusOut: true });
+        if (token === undefined) return;
+        r = fa.registerRemote({ url, token: token || undefined });
+      }
+      if (r && r.ok === false) return void vscode.window.showWarningMessage("FreeCAD Agent: " + r.error);
+      try { const ls = require("./ls-bridge"); if (ls.ready()) await ls.call("RefreshMcpServers", {}); } catch (_) {}
+      vscode.window.setStatusBarMessage("dao-freecad 工具层已" + (pick.act === "off" ? "注销" : "注册并刷新"), 4000);
+    }),
+    // 官方 Create New Rule / Workflow / Global Workflow(CreateCustomizationFile 同源)
+    vscode.commands.registerCommand(viewId + ".createRule", () => provider._handleCustomizationCreate("rule")),
+    vscode.commands.registerCommand(viewId + ".createWorkflow", () => provider._handleCustomizationCreate("workflow")),
+    vscode.commands.registerCommand(viewId + ".createGlobalWorkflow", () => provider._handleCustomizationCreate("gworkflow")),
+    // 官方 View Account / Open Changelog
+    vscode.commands.registerCommand(viewId + ".openProfile", () =>
+      vscode.env.openExternal(vscode.Uri.parse("https://app.devin.ai/settings/profile"))),
+    vscode.commands.registerCommand(viewId + ".openChangelog", () =>
+      vscode.env.openExternal(vscode.Uri.parse("https://docs.devin.ai/release-notes/overview"))),
     // 官方式提交信息生成: GenerateCommitMessage{repoRootUri} → 写入 SCM 输入框(官方 SCM ✨ 同款)
     vscode.commands.registerCommand(viewId + ".genCommit", async () => {
       try {

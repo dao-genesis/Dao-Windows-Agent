@@ -5,7 +5,11 @@
 
     node plugins/dao-ai-base/sync.js <本插件目录>
 
-同步时间: 2026-07-13T16:57:53.845Z
-同步基线: 上游 1f7e59c（R70 ACP null 客户端防护 + v2.20.2 apiKey 多候选探测覆盖自定义 --user-data-dir）
+同步时间: 2026-07-17T10:15:41.408Z
+同步基线: 上游 466b33e（R151 Windows 管理板块 + Proxy Pro 工具模式轴已入真源 main）
 
-本仓补丁: dao-cascade/panel.js 回植领域提示词塑形器钩子(setPromptShaper/_shapeText/mode-status/daoModePill/exports)——上游真源尚缺此钩子, 每次重新 vendor 后须重打(待回灌上游真源)。
+本仓补丁(上游真源尚缺, 每次重新 vendor 后须重打, 待回灌上游):
+- dao-cascade/panel.js: 领域提示词塑形器钩子(setPromptShaper/_shapeText/mode-status/daoModePill/exports)
+- dao-cascade/ls-bridge.js: apiKeyCandidates TTL 缓存 + invalidateKeyCache(state.vscdb 重活防阻塞)
+- dao-cascade/host-discover.js: win32 短路 / 先廉后贵 / 轮询退避(保留本仓版, 未取上游)
+- dao-cascade/host-state.js: hostFire 重入护栏 + publishFused 不动点(保留本仓版, 未取上游)

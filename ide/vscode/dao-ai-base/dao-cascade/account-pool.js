@@ -60,7 +60,21 @@ function switchTo(email) {
     out = (old ? old.replace(/\s*$/, "\n") : "") + 'windsurf_api_key = "' + a.apiKey + '"\n';
   }
   fs.writeFileSync(p, out, { mode: 0o600 });
+  // 立即失效 ls-bridge 的 60s key 缓存: 切号即刻生效, 不留旧号身份窗口期。
+  try { require("./ls-bridge").setApiKey(a.apiKey); } catch (_) {}
   return { email: a.email };
+}
+
+// 归还官方原登录态: 以首次切号前备份的 credentials.toml.bak 覆写回官方原始内容。
+function restoreOriginal() {
+  const p = credPath();
+  const bak = p + ".bak";
+  if (!fs.existsSync(bak)) throw new Error("无原始备份(credentials.toml.bak): 尚未经本插件切号, 官方登录态未被触碰");
+  const orig = fs.readFileSync(bak, "utf8");
+  fs.writeFileSync(p, orig, { mode: 0o600 });
+  const m = orig.match(/windsurf_api_key\s*=\s*"([^"]+)"/);
+  if (m) { try { require("./ls-bridge").setApiKey(m[1]); } catch (_) {} }
+  return { restored: true };
 }
 
 function remove(email) {
@@ -71,15 +85,18 @@ function remove(email) {
   return { removed: true };
 }
 
-// 面板视图数据(key 永不出后端: 只回显是否有 key + 尾 4 位指纹)
+// 面板视图数据(key 永不出后端: 只回显是否有 key + 尾 4 位指纹)。
+// 活动号以 credentials.toml(切换真源)为唯一判据; 仅当 toml 无 key 时才回退
+// 宿主活动 key —— 否则切换后旧号(state.vscdb 残留 key)会与新号同显「当前」。
 function listView(activeKey) {
   const cred = currentCredKey();
+  const effective = cred || activeKey;
   return loadPool().map((a) => ({
     email: a.email, name: a.name || "", plan: a.plan || "", addedAt: a.addedAt || "",
     hasKey: !!a.apiKey,
     keyTail: a.apiKey ? a.apiKey.slice(-4) : "",
-    active: !!a.apiKey && (a.apiKey === activeKey || a.apiKey === cred),
+    active: !!a.apiKey && a.apiKey === effective,
   }));
 }
 
-module.exports = { poolPath, credPath, loadPool, captureCurrent, switchTo, remove, listView, currentCredKey };
+module.exports = { poolPath, credPath, loadPool, captureCurrent, switchTo, restoreOriginal, remove, listView, currentCredKey };
