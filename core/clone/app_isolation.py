@@ -58,6 +58,8 @@ class IsolationStrategy:
     env_from_dir: Callable[[str], Dict[str, str]] = field(default=lambda d: {})
     # 该软件单实例锁能否被上述手段收窄到 per-clone。
     isolatable: bool = True
+    # 启动前需预建的子目录（真机取证：Notepad++ 的 -settingsDir 目录不存在则静默回退共享 %APPDATA%）。
+    dirs_from_dir: Callable[[str], List[str]] = field(default=lambda d: [])
     # 备注：隔离机理，供文档/诊断。
     note: str = ""
 
@@ -74,6 +76,8 @@ class CloneLaunchSpec:
     data_dir: str
     isolatable: bool
     note: str
+    # 落地方 Start-Process 前需预建的目录（含 data_dir 本身）。
+    pre_create: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -85,6 +89,7 @@ class CloneLaunchSpec:
             "data_dir": self.data_dir,
             "isolatable": self.isolatable,
             "note": self.note,
+            "pre_create": list(self.pre_create),
         }
 
 
@@ -107,6 +112,43 @@ def _ide_clone_env(dir_: str) -> Dict[str, str]:
 def _freecad_env(dir_: str) -> Dict[str, str]:
     # FreeCAD 从 FREECAD_USER_HOME 读取用户配置根；分身各自一份即不再互相覆盖偏好。
     return {"FREECAD_USER_HOME": f"{dir_}\\home"}
+
+
+def _npp_args(dir_: str) -> List[str]:
+    # Notepad++：-multiInst 绕过单实例转发；-settingsDir 把配置根收窄到 per-clone。
+    return ["-multiInst", f"-settingsDir={dir_}\\settings"]
+
+
+def _npp_dirs(dir_: str) -> List[str]:
+    # 真机取证：-settingsDir 目录不存在时 Notepad++ 静默回退共享 %APPDATA%（隔离失效）。
+    return [f"{dir_}\\settings"]
+
+
+def _vlc_args(dir_: str) -> List[str]:
+    # VLC：--no-one-instance 绕过单实例转发；--config 指定 per-clone 的 vlcrc。
+    return ["--no-one-instance", f"--config={dir_}\\vlcrc"]
+
+
+def _sumatra_args(dir_: str) -> List[str]:
+    # SumatraPDF：-appdata 把设置/缓存目录收窄到 per-clone；-new-window 绕过既有窗口复用。
+    return ["-appdata", f"{dir_}\\appdata", "-new-window"]
+
+
+def _firefox_args(dir_: str) -> List[str]:
+    # Firefox：-no-remote 绕过 remoting 单实例转发；-profile 独立画像目录（经典全隔离）。
+    return ["-no-remote", "-profile", f"{dir_}\\profile"]
+
+
+def _inkscape_env(dir_: str) -> Dict[str, str]:
+    # INKSCAPE_PROFILE_DIR 把偏好/扩展收窄到 per-clone。
+    return {"INKSCAPE_PROFILE_DIR": f"{dir_}\\profile"}
+
+
+def _inkscape_args(dir_: str) -> List[str]:
+    # 真机取证：Inkscape 1.x 是 GApplication 单实例（第二个启动被转发后退出）；
+    # --app-id-tag 把 D-Bus 应用 id 收窄到 per-clone，分身各自成实例。
+    tag = "dao_" + re.sub(r"[^A-Za-z0-9]", "_", dir_)[-48:].strip("_")
+    return [f"--app-id-tag={tag}"]
 
 
 ISOLATION_REGISTRY: Dict[str, IsolationStrategy] = {
@@ -159,6 +201,53 @@ ISOLATION_REGISTRY: Dict[str, IsolationStrategy] = {
         env_from_dir=_freecad_env,
         note="FreeCAD 默认允许多开，另隔离 FREECAD_USER_HOME 避免分身间偏好互相覆盖",
     ),
+    "notepadpp": IsolationStrategy(
+        app_id="notepadpp",
+        exe_candidates=[
+            r"C:\Program Files\Notepad++\notepad++.exe",
+            r"C:\Program Files (x86)\Notepad++\notepad++.exe",
+        ],
+        args_from_dir=_npp_args,
+        dirs_from_dir=_npp_dirs,
+        note="单实例转发经 -multiInst 绕过；-settingsDir 收窄配置根到 per-clone（目录须预建，否则静默回退共享 %APPDATA%）",
+    ),
+    "vlc": IsolationStrategy(
+        app_id="vlc",
+        exe_candidates=[
+            r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+            r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+        ],
+        args_from_dir=_vlc_args,
+        note="单实例转发经 --no-one-instance 绕过；--config 指定 per-clone vlcrc",
+    ),
+    "sumatrapdf": IsolationStrategy(
+        app_id="sumatrapdf",
+        exe_candidates=[
+            r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
+            r"%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe",
+        ],
+        args_from_dir=_sumatra_args,
+        note="-appdata 收窄设置目录到 per-clone；-new-window 绕过既有窗口复用",
+    ),
+    "firefox": IsolationStrategy(
+        app_id="firefox",
+        exe_candidates=[
+            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+        ],
+        args_from_dir=_firefox_args,
+        note="remoting 单实例经 -no-remote 绕过；-profile 独立画像目录（经典全隔离）",
+    ),
+    "inkscape": IsolationStrategy(
+        app_id="inkscape",
+        exe_candidates=[
+            r"C:\Program Files\Inkscape\bin\inkscape.exe",
+            r"C:\Program Files (x86)\Inkscape\bin\inkscape.exe",
+        ],
+        args_from_dir=_inkscape_args,
+        env_from_dir=_inkscape_env,
+        note="GApplication 单实例经 --app-id-tag 收窄到 per-clone；INKSCAPE_PROFILE_DIR 隔离偏好/扩展",
+    ),
 }
 
 # 常见别名归一到注册表键。
@@ -172,6 +261,10 @@ _ALIASES = {
     "google-chrome": "chrome",
     "msedge": "edge",
     "browser": "edge",
+    "notepad++": "notepadpp",
+    "npp": "notepadpp",
+    "notepad-plus-plus": "notepadpp",
+    "sumatra": "sumatrapdf",
 }
 
 
@@ -211,6 +304,7 @@ def build_clone_launch(
             data_dir=data_dir,
             isolatable=False,
             note="未登记隔离策略：裸启动；若该软件为 per-user 单实例则多分身仍会缠绕",
+            pre_create=[data_dir],
         )
     args = list(strat.args_from_dir(data_dir))
     if extra_args:
@@ -224,4 +318,5 @@ def build_clone_launch(
         data_dir=data_dir,
         isolatable=strat.isolatable,
         note=strat.note,
+        pre_create=[data_dir] + list(strat.dirs_from_dir(data_dir)),
     )
