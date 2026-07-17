@@ -24,6 +24,13 @@ description: 在 Windows VM 的 Devin Desktop IDE 内实机验证 Dao-Windows-Ag
 - 坑：默认 9920 可能被 Devin.exe 内 dao-freecad-shell 占用且 /api/health 也回 ok:true → 把 `daoWin.bridgeUrl` 设为 9930 再点「DAO: 连接/自启机控桥」（toast「DAO 桥已连」为准）。
 - 模式切换真源：`~/.dao/mode.json`（mode/tool_policy/overlay），切换后 shell 读它断言持久化。
 
+## 0.7.2+ 归一视图与自启验证
+- `dao.unified`（归一 · 插件本源）与 `dao.proxyPro`（Proxy Pro）视图折叠在活动栏「DAO · AI 交互」容器内；命令面板搜英文 "unified" 搜不到（标题是中文「DAO: 归一面板…」，palette 按标题匹配），搜 "dao" 后滚动选取。
+- 面板默认很窄：先拖宽 sidebar 分隔条再截图；🪟 Windows 管理板块在左侧图标轨第 2 个图标。
+- 验证 D3 指纹拒绝：可用临时 python http 服务在 9920 回 `{"ok":true}`（无 apps 数组），杀 9930 后跑「DAO: 桥健康检查」（若「连接/自启机控桥」命令缺失，健康检查走同一 ensureBridge 路径），应 toast「DAO 桥 OK @ …9930」且自启进程父为 Devin.exe。
+- 模式契约断言文件：`~/.dao/mode-fusion.json`（prompt 层）与 `~/.dao/mode.json`（tool 层）。
+- Reload Window 可能自动弹出 FreeCAD 桌面窗口（OpenGL 警告），关掉即可。
+
 ## Devin Secrets Needed
 - Devin Desktop 登录账号/密码（outlook 账号）
 

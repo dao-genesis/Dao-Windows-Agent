@@ -31,6 +31,17 @@ test("dao-ai-base 激活链接线 unified-panel 与 proxy-pro-panel", () => {
   assert.ok(px.includes('registerWebviewViewProvider("dao.proxyPro"'), "proxy-pro-panel 应注册 dao.proxyPro");
 });
 
+test("Windows 管理 = 归一面板子板块（单页统管, 官方 mstsc 收编经 __DAO_WIN_HOME__ 上交）", () => {
+  const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
+  assert.ok(ext.includes("globalThis.__DAO_WIN_HOME__"), "宿主应上交 Windows 总控原语");
+  assert.ok(!ext.includes('createWebviewPanel("daoWinHome"'), "不应另起独立主页 webview（单页统管）");
+  assert.ok(ext.includes('"dao.unified.open"'), "daoWin.home 应聚焦归一面板");
+  const uni = fs.readFileSync(path.join(ROOT, "dao-ai-base", "dao-cascade", "unified-panel.js"), "utf8");
+  for (const t of ["win-rdp-save", "win-rdp-del", "win-rdp-launch", "win-sub-toggle", "win-reveal-dir", "__DAO_WIN_HOME__", "renderWinRdp", "renderWinHomeCard"])
+    assert.ok(uni.includes(t), "归一面板缺 " + t);
+  assert.ok(!uni.includes("主页 · Windows 总控"), "主页应复位为归一总览，Windows 只留环境卡");
+});
+
 test("机控桥自启与健康指纹（embedded Python 兼容 + apps 数组校验）", () => {
   const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
   assert.ok(ext.includes("sys.path.insert(0,"), "自启桥应经 -c 注入 sys.path（embedded 发行版兼容）");

@@ -29,7 +29,9 @@ def test_extension_covers_bridge_api_surface():
         assert endpoint in src, f"extension.js 缺桥端点 {endpoint}"
     # 自启桥必须用打包捆入的 runtime（零配置冷启动本源）
     assert re.search(r'join\(context\.extensionPath,\s*"runtime"\)', src)
-    assert '"-m", "bridge.server"' in src
+    # embedded Python(._pth) 兼容：-c 注入 sys.path 起桥，而非 -m bridge.server
+    assert "sys.path.insert(0," in src and "from bridge.server import main" in src
+    assert '"-m", "bridge.server"' not in src
 
 
 def test_extension_multi_account_surface():
@@ -247,16 +249,24 @@ def test_unified_freecad_activation_is_lazy():
 
 
 def test_home_windows_master_control():
-    """归一主页 · Windows 总控：命令注册 + RDP 五页配置收编 + 账号/子板块管理面。"""
+    """Windows 总控原语：单页统管（归一面板 🪟 子板块）+ RDP 五页配置收编 + 子板块管理面。"""
     with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
         m = json.load(fh)
     cmds = {c["command"] for c in m["contributes"]["commands"]}
     assert "daoWin.home" in cmds
     with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
         src = fh.read()
-    # 宿主命令面
-    for cmd in ("homeInfo", "rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
-        assert f"'{cmd}'" in src or f'"{cmd}"' in src, f"缺主页命令 {cmd}"
+    # 原语经 __DAO_WIN_HOME__ 上交归一面板, 不另起独立主页 webview
+    assert "globalThis.__DAO_WIN_HOME__" in src
+    assert 'createWebviewPanel("daoWinHome"' not in src
+    assert '"dao.unified.open"' in src  # daoWin.home 聚焦归一面板
+    for op in ("rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
+        assert f"{op}(" in src, f"缺原语 {op}"
+    # 归一面板 🪟 子板块消费该原语面(win-rdp-*/win-sub-toggle/win-reveal-dir)
+    with open(os.path.join(IDE, "dao-ai-base", "dao-cascade", "unified-panel.js"), encoding="utf-8") as fh:
+        uni = fh.read()
+    for t in ("win-rdp-save", "win-rdp-del", "win-rdp-launch", "win-sub-toggle", "win-reveal-dir", "__DAO_WIN_HOME__"):
+        assert t in uni, f"归一面板缺 {t}"
     # 官方 mstsc .rdp 关键字段（常规/显示/本地资源/体验/高级 五页收编）
     for field in ("full address:s:", "desktopwidth:i:", "redirectclipboard:i:",
                   "connection type:i:", "authentication level:i:", "gatewayhostname:s:"):

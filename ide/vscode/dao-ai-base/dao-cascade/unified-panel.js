@@ -196,6 +196,11 @@ class UnifiedPanel {
       case "win-acct-destroy": return this._winAcctDestroy(String(msg.name || ""));
       case "win-acct-clone": return this._winAcctClone(String(msg.base || ""));
       case "win-open-desktop": return this._winOpenDesktop(String(msg.account || ""));
+      case "win-rdp-save": return this._winHomeOp("rdpSave", msg.profile || {});
+      case "win-rdp-del": return this._winHomeOp("rdpDelete", String(msg.name || ""));
+      case "win-rdp-launch": return this._winHomeOp("rdpLaunch", String(msg.name || ""));
+      case "win-sub-toggle": return this._winHomeOp("subToggle", String(msg.id || ""));
+      case "win-reveal-dir": return this._winHomeOp("revealDir", String(msg.which || ""), true);
       case "pcb-state": return this._pcbState();
       case "pcb-reg-local": return this._pcbRegLocal();
       case "pcb-reg-remote": return this._pcbRegRemote();
@@ -270,8 +275,25 @@ class UnifiedPanel {
 
   // ── 🪟 Windows 分身板块(数据核在 windows-panel-core.js, headless 可测) ──
   async _winState() {
-    try { this._post({ type: "win-state", data: await winCore.probe() }); }
+    try {
+      const data = await winCore.probe();
+      // 官方 mstsc 收编面(RDP 五页配置)与子板块清单: 原语由宿主经 __DAO_WIN_HOME__ 上交(单页统管)。
+      const h = globalThis.__DAO_WIN_HOME__;
+      if (h && typeof h.info === "function") { try { Object.assign(data, h.info()); } catch (_) {} }
+      this._post({ type: "win-state", data });
+    }
     catch (e) { this._post({ type: "win-state", error: e.message }); }
+  }
+
+  // RDP 收编/子板块原语统一入口: 无宿为上交时优雅降级(真源环境无 Windows 宿主则隐藏该面)。
+  async _winHomeOp(op, arg, silent) {
+    const h = globalThis.__DAO_WIN_HOME__;
+    if (!h || typeof h[op] !== "function") { vscode.window.showWarningMessage("Windows 总控原语未上交(需 dao-windows-agent 宿主)"); return; }
+    try {
+      const r = h[op](arg);
+      if (r && r.error) vscode.window.showWarningMessage(op + ": " + r.error);
+    } catch (e) { vscode.window.showWarningMessage(op + " 失败: " + e.message); }
+    if (!silent) return this._winState();
   }
 
   async _winRegLocal() {
@@ -1200,7 +1222,7 @@ h2{font-size:15px;margin:0 0 4px}
 const vscode=acquireVsCodeApi();
 let S=null, CONV=null;
 // 七大板块顺序/图标/标题与 dao-vsix /shell 1:1; 其后为插件版延伸板块。
-const BOARDS=[["overview","🏠","主页 · Windows 总控"],["windows","🪟","Windows 管理"],["pcb","⚡","PCB · KiCad/嘉立创EDA"],["freecad","🧊","FreeCAD · 3D 建模"],["switch","🔀","切号 · 账号池"],["bridge","🌐","内网穿透 · DAO Bridge"],["backups","💬","对话备份"],["inject","💉","反向注入"],["mcp","🧩","MCP 服务器"],["github","🐙","GitHub"],["search","🔎","搜索"],["browser","🌍","内置浏览器"],["settings","⚙","设置"]];
+const BOARDS=[["overview","🏠","主页 · 归一(含全部板块)"],["windows","🪟","Windows 管理"],["pcb","⚡","PCB · KiCad/嘉立创EDA"],["freecad","🧊","FreeCAD · 3D 建模"],["switch","🔀","切号 · 账号池"],["bridge","🌐","内网穿透 · DAO Bridge"],["backups","💬","对话备份"],["inject","💉","反向注入"],["mcp","🧩","MCP 服务器"],["github","🐙","GitHub"],["search","🔎","搜索"],["browser","🌍","内置浏览器"],["settings","⚙","设置"]];
 function E(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function cmd(c,d){vscode.postMessage(Object.assign({command:c},d||{}))}
 function sw(t){CONV=null;vscode.postMessage({type:'nav',board:t});cmd('loadTabData',{tab:t});}
@@ -1213,11 +1235,10 @@ function q(x){return (x===0||x)?(x+'%'):'—';}
 function renderOverview(){
   const a=S.account||{}, mb=S.mcp&&S.mcp.servers, cb=S.cascadeBackup, eg=S.engines;
   const run=mb?mb.filter(s=>String(s.status||'').toUpperCase().indexOf('RUN')>=0).length:0;
-  let h='<div class="row"><h2 style="flex:1">主页 · Windows 总控</h2>'+
-    '<button class="btn" id="winOpen">开本窗口桌面</button>'+
-    '<button class="btn sec" id="winRf">刷新</button></div>';
-  h+='<div class="muted" style="margin-bottom:10px">主页即 Windows 统一管理: 账号分身/桌面会话/模式/工具层一目了然(Dao-Windows-Agent 真源直连); 其余板块各司其职。</div>';
-  h+=renderWinControl();
+  let h='<div class="row"><h2 style="flex:1">归一主页 · 插件本源</h2>'+
+    '<button class="btn sec" id="ovRf">刷新</button></div>';
+  h+='<div class="muted" style="margin-bottom:10px">全部板块总览(插件自持真源); Windows/PCB/FreeCAD 各子板块各司其职, 左栏一键直达。</div>';
+  h+=renderWinHomeCard();
   h+=renderPcbHomeCard();
   h+=renderFcHomeCard();
   h+='<div class="st">三模式引擎</div><div class="card">';
@@ -1554,13 +1575,70 @@ function renderPcb(){
   h+='<div class="muted">探活于 '+E(d.probedAt||'')+' · 工具层只添描述不教用法 —— 太上下知有之, AI 自主择用。</div>';
   return h;
 }
-let WIN=null;
+let WIN=null, WINEDIT=null;
+// 主页 Windows 环境卡(同步快照 WIN: 桥/账号/RDP 概览; 全量管理在 🪟 Windows 板块)。
+function renderWinHomeCard(){
+  let h='<div class="st">🪟 Windows 环境</div><div class="card">';
+  if(WIN===null)h+='<div class="cr muted">探活中…</div>';
+  else if(WIN.error)h+='<div class="cr">⚠ '+E(WIN.error)+'</div>';
+  else{
+    const b=WIN.bridge||{};
+    h+=cr('机控桥',b.ok?'⚡在线 · '+E(b.url||''):'○ 不可达');
+    h+=cr('账号分身',WIN.accounts?WIN.accounts.length+' 个':'—');
+    h+=cr('RDP 连接',(WIN.rdp||[]).length+' 个配置(官方 mstsc 收编)');
+  }
+  h+='<div class="cr"><span class="l"></span><span class="v"><span class="back" data-tabgo="windows">进入 Windows 板块 →</span></span></div></div>';
+  return h;
+}
 function renderWindows(){
-  let h='<div class="row"><h2 style="flex:1">Windows 管理</h2>'+
+  let h='<div class="row"><h2 style="flex:1">🪟 Windows 管理</h2>'+
     '<button class="btn" id="winOpen">开本窗口桌面</button>'+
     '<button class="btn sec" id="winRf">刷新</button></div>';
-  h+='<div class="muted" style="margin-bottom:10px">Windows 核心内容/数据/资源统一管理: 账号分身·桌面会话·模式·工具层·隔离矩阵(Dao-Windows-Agent 真源直连，与主页同源)。</div>';
+  h+='<div class="muted" style="margin-bottom:10px">汉堡子板块之一: 官方远程桌面连接(mstsc 五页配置)原样收编 + 账号分身·桌面会话·模式·工具层·隔离矩阵(Dao-Windows-Agent 真源直连)。</div>';
+  h+=renderWinRdp();
   h+=renderWinControl();
+  h+=renderWinSubplugins();
+  return h;
+}
+// 远程桌面连接(官方 mstsc 五页配置收编): 列表 + 新建/编辑表单(常规/显示/本地资源/体验/高级) → .json+.rdp 落盘, 连接即起 mstsc。
+function renderWinRdp(){
+  if(WIN===null||WIN.error)return '';
+  let h='<div class="st">远程桌面连接(官方 mstsc 五页配置收编)</div>';
+  h+='<div class="card"><div class="cr"><span class="l">连接 '+((WIN.rdp||[]).length)+' 个</span><span class="v">'+
+    '<button class="btn" id="winRdpNew">＋新建</button> <button class="btn sec" id="winRdpDir">打开目录</button></span></div></div>';
+  for(const p of (WIN.rdp||[])){
+    h+='<div class="acc"><div class="hd"><span>🖥 '+E(p.name)+'</span><span>'+
+      '<button class="btn" data-winrdpgo="'+E(p.name)+'">连接</button> '+
+      '<button class="btn sec" data-winrdped="'+E(p.name)+'">编辑</button> '+
+      '<button class="btn sec" data-winrdpdel="'+E(p.name)+'">删除</button></span></div>'+
+      '<div class="conv" style="cursor:default"><span class="muted">'+E(p.host||'')+(p.port?':'+E(p.port):'')+(p.username?' · '+E(p.username):'')+'</span></div></div>';
+  }
+  if(WINEDIT!==null)h+=renderWinRdpForm();
+  return h;
+}
+function renderWinRdpForm(){
+  let p={};(WIN.rdp||[]).forEach(x=>{if(x.name===WINEDIT)p=x;});
+  const iv=(k,d)=>E(p[k]!==undefined?p[k]:(d===undefined?'':d));
+  const ck=(k,d)=>(p[k]!==undefined?p[k]:d)?' checked':'';
+  const sel=(k,v,d)=>String(p[k]===undefined?d:p[k])===String(v)?' selected':'';
+  let h='<div class="card"><div class="cr"><span class="l"><b>'+(WINEDIT?'编辑':'新建')+'</b></span><span class="v muted">官方五页配置收编 → .json+.rdp</span></div>';
+  h+='<div class="cr"><span class="l">常规</span><span class="v"><input id="wf_name" placeholder="连接名" value="'+iv('name')+'"'+(WINEDIT?' disabled':'')+'> <input id="wf_host" placeholder="主机/IP" value="'+iv('host')+'"> <input id="wf_port" size="5" placeholder="3389" value="'+iv('port')+'"> <input id="wf_user" placeholder="用户名" value="'+iv('username')+'"></span></div>';
+  h+='<div class="cr"><span class="l">显示</span><span class="v"><input id="wf_w" size="5" placeholder="1920" value="'+iv('width')+'"> × <input id="wf_h" size="5" placeholder="1080" value="'+iv('height')+'"> <label><input type="checkbox" id="wf_full"'+ck('fullscreen',true)+'>全屏</label> <label><input type="checkbox" id="wf_multi"'+ck('multimon',false)+'>多显示器</label></span></div>';
+  h+='<div class="cr"><span class="l">本地资源</span><span class="v"><label><input type="checkbox" id="wf_clip"'+ck('clipboard',true)+'>剪贴板</label> <label><input type="checkbox" id="wf_prn"'+ck('printers',false)+'>打印机</label> <label><input type="checkbox" id="wf_drv"'+ck('drives',false)+'>驱动器</label> <select id="wf_audio"><option value="0"'+sel('audiomode',0,0)+'>本机播放</option><option value="1"'+sel('audiomode',1,0)+'>远程播放</option><option value="2"'+sel('audiomode',2,0)+'>不播放</option></select></span></div>';
+  h+='<div class="cr"><span class="l">体验</span><span class="v"><select id="wf_conn"><option value="7"'+sel('conntype',7,7)+'>自动检测</option><option value="1"'+sel('conntype',1,7)+'>调制解调器</option><option value="6"'+sel('conntype',6,7)+'>LAN</option></select> <label><input type="checkbox" id="wf_reconn"'+ck('autoreconnect',true)+'>断线自动重连</label></span></div>';
+  h+='<div class="cr"><span class="l">高级</span><span class="v">认证 <select id="wf_auth"><option value="2"'+sel('authlevel',2,2)+'>警告</option><option value="1"'+sel('authlevel',1,2)+'>不连接</option><option value="0"'+sel('authlevel',0,2)+'>直接连</option></select> <input id="wf_gw" placeholder="RD 网关(可空)" value="'+iv('gateway')+'"></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><button class="btn" id="winRdpSave">保存(.json+.rdp)</button> <button class="btn sec" id="winRdpCancel">取消</button></span></div></div>';
+  return h;
+}
+// 子板块·可安装可移除(类 VS Code 插件): catalog+已装描述符, 启用/停用即 .json↔.json.off。
+function renderWinSubplugins(){
+  if(WIN===null||WIN.error)return '';
+  let h='<div class="st">子板块 · 可安装可移除(类 VS Code 插件) <span class="back" id="winSubDir">打开目录</span></div>';
+  for(const s of (WIN.subplugins||[])){
+    h+='<div class="acc"><div class="hd"><span>'+E(s.name)+' <span class="muted">@'+E(s.mention)+'</span></span><span>'+
+      (s.installed?'<button class="btn sec" data-winsub="'+E(s.id)+'">'+(s.enabled?'停用':'启用')+'</button>':'<span class="muted">未安装(装同名子插件或落描述符即收编)</span>')+'</span></div>'+
+      '<div class="conv" style="cursor:default"><span class="muted">'+E(s.desc||'')+(s.installed?(' · '+(s.enabled?'已启用':'已停用')+(s.verbs?' · '+s.verbs+' 动词':'')):'')+'</span></div></div>';
+  }
   return h;
 }
 function renderWinControl(){
@@ -1836,6 +1914,16 @@ function render(){
   document.querySelectorAll('[data-winacctdel]').forEach(el=>el.onclick=()=>vscode.postMessage({type:'win-acct-destroy',name:el.dataset.winacctdel}));
   document.querySelectorAll('[data-winclone]').forEach(el=>el.onclick=()=>vscode.postMessage({type:'win-acct-clone',base:el.dataset.winclone}));
   const wqc=document.getElementById('winQcGo'); if(wqc)wqc.onclick=()=>{const s=document.getElementById('winQcAcct');vscode.postMessage({type:'win-open-desktop',account:(s&&s.value)||''});};
+  const orf=document.getElementById('ovRf'); if(orf)orf.onclick=()=>{WIN=null;render();vscode.postMessage({type:'win-state'});cmd('refresh');};
+  const wrn=document.getElementById('winRdpNew'); if(wrn)wrn.onclick=()=>{WINEDIT='';render();};
+  const wrd=document.getElementById('winRdpDir'); if(wrd)wrd.onclick=()=>vscode.postMessage({type:'win-reveal-dir',which:'rdp'});
+  const wsd=document.getElementById('winSubDir'); if(wsd)wsd.onclick=()=>vscode.postMessage({type:'win-reveal-dir',which:'sub'});
+  document.querySelectorAll('[data-winrdpgo]').forEach(el=>el.onclick=()=>vscode.postMessage({type:'win-rdp-launch',name:el.dataset.winrdpgo}));
+  document.querySelectorAll('[data-winrdped]').forEach(el=>el.onclick=()=>{WINEDIT=el.dataset.winrdped;render();});
+  document.querySelectorAll('[data-winrdpdel]').forEach(el=>el.onclick=()=>{WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-del',name:el.dataset.winrdpdel});});
+  document.querySelectorAll('[data-winsub]').forEach(el=>el.onclick=()=>{WIN=null;render();vscode.postMessage({type:'win-sub-toggle',id:el.dataset.winsub});});
+  const wrs=document.getElementById('winRdpSave'); if(wrs)wrs.onclick=()=>{const g=id=>document.getElementById(id);const prof={name:g('wf_name').value,host:g('wf_host').value,port:g('wf_port').value,username:g('wf_user').value,width:g('wf_w').value,height:g('wf_h').value,fullscreen:g('wf_full').checked,multimon:g('wf_multi').checked,clipboard:g('wf_clip').checked,printers:g('wf_prn').checked,drives:g('wf_drv').checked,audiomode:g('wf_audio').value,conntype:g('wf_conn').value,autoreconnect:g('wf_reconn').checked,authlevel:g('wf_auth').value,gateway:g('wf_gw').value};WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-save',profile:prof});};
+  const wrc=document.getElementById('winRdpCancel'); if(wrc)wrc.onclick=()=>{WINEDIT=null;render();};
   if((S.board==='overview'||S.board==='windows')&&WIN===null)vscode.postMessage({type:'win-state'});
   document.querySelectorAll('[data-tabgo]').forEach(el=>el.onclick=()=>sw(el.dataset.tabgo));
   const prf=document.getElementById('pcbRf'); if(prf)prf.onclick=()=>{PCB=null;render();vscode.postMessage({type:'pcb-state'});};
