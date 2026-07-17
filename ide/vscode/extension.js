@@ -12,6 +12,7 @@ const cp = require("child_process");
 const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
+const { gridDims } = require("./grid-layout");
 
 let output;
 let statusItem;
@@ -300,18 +301,27 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
 .tab .dot{width:7px;height:7px;border-radius:50%;background:#999;flex-shrink:0}
 .tab .x{opacity:.5;cursor:pointer;padding:0 1px}
 .tab .x:hover{opacity:1;color:#ff6666}
+#bar button.on{background:#2a4a63;outline:1px solid #3c8dbc}
 #status{flex:1;text-align:right;opacity:.7}
 #desktop{flex:1;overflow:hidden;position:relative}
 .inst{position:absolute;top:0;left:0;right:0;bottom:0;display:none}
 .inst.on{display:block}
 .inst>div{position:absolute!important;top:0;left:0}
+.inst .caption{display:none}
 #overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;font-size:14px;opacity:.6}
+/* 平铺网格：多路分身同屏并置，各占一格、画面皆活、点谁谁得输入焦点。 */
+#desktop.grid{display:grid;gap:2px;padding:2px;background:#0e0e12}
+#desktop.grid .inst{position:relative;top:auto;left:auto;right:auto;bottom:auto;display:block;overflow:hidden;background:#000;border:1px solid #2a2a32;border-radius:4px}
+#desktop.grid .inst.on{border-color:#3c8dbc;box-shadow:0 0 0 1px #3c8dbc}
+#desktop.grid .inst>div{position:absolute!important;top:0;left:0}
+#desktop.grid .inst .caption{display:block;position:absolute;top:0;left:0;z-index:2;padding:1px 6px;font-size:10px;background:rgba(20,20,26,.72);border-bottom-right-radius:4px;pointer-events:none}
 </style></head><body>
 <div id="bar">
   <b>\u2630 DAO \u684c\u9762</b>
   <select id="acct" title="\u8d26\u53f7\uff08\u591a RDP \u4e00\u8def\u4e00\u684c\u9762\uff09" onchange="onAcctChange()"></select>
   <div id="tabs"></div>
   <button onclick="addInstance()" title="\u540c\u8d26\u53f7\u518d\u5f00\u4e00\u8def\u72ec\u7acb\u684c\u9762\u4f1a\u8bdd\uff08\u591a RDP \u5206\u8eab\uff0c\u5e76\u884c\u4e92\u4e0d\u5e72\u6270\uff09">\uff0b\u5206\u8eab</button>
+  <button id="layoutBtn" onclick="toggleLayout()" title="\u5e73\u94fa/\u6807\u7b7e\uff1a\u5e73\u94fa\u7f51\u683c\u628a\u591a\u8def\u5206\u8eab\u540c\u5c4f\u5e76\u7f6e\uff0c\u70b9\u54ea\u683c\u54ea\u683c\u5f97\u8f93\u5165\u7126\u70b9">\u25a6 \u5e73\u94fa</button>
   <button onclick="doConnect()">\u8fde\u63a5</button>
   <button onclick="doDisconnect()">\u65ad\u5f00</button>
   <button onclick="doFullscreen()">\u2922</button>
@@ -331,7 +341,13 @@ const container = document.getElementById('desktop');
 const statusEl = document.getElementById('status');
 const acctEl = document.getElementById('acct');
 const tabsEl = document.getElementById('tabs');
+const layoutBtn = document.getElementById('layoutBtn');
 const MAX_RETRIES = 5;
+
+// 网格行列（与 ide/vscode/grid-layout.js 同一份实现，经 .toString() 内联，实机与单测不漂移）。
+${gridDims.toString()}
+// 布局：'tabs' 一次只见一路; 'grid' 多路分身同屏并置。
+let layout = 'tabs';
 
 // \u591a\u5b9e\u4f8b\u5206\u8eab\uff1a\u4e00\u4e2a IDE \u7a97\u53e3\u5185\u5e76\u884c\u591a\u8def\u540c\u8d26\u53f7\u72ec\u7acb\u684c\u9762\u4f1a\u8bdd\uff08\u7c7b\u591a RDP\uff09\u3002
 // \u6bcf\u8def\u5206\u8eab = \u72ec\u7acb Guacamole client + \u72ec\u7acb\u753b\u5e03\uff1b\u952e\u76d8/\u526a\u8d34\u677f\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\u3002
@@ -360,7 +376,8 @@ function hostFetch(pathq, method){
 function saveLayout(){
   try {
     vscodeApi.setState({ slots: instances.map(function(x){ return x.slot; }),
-                         activeSlot: (active() || {}).slot || null });
+                         activeSlot: (active() || {}).slot || null,
+                         layout: layout });
   } catch(e) {}
 }
 let lastLocalClip = null;
@@ -413,6 +430,36 @@ function onAcctChange(){
 
 function active(){ for (var i=0;i<instances.length;i++) if (instances[i].id===activeId) return instances[i]; return null; }
 function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
+
+// —— 平铺网格布局 ——
+// 依本分身所占容器/格子尺寸把 RDP 画面等比缩放贴合（不放大，最大 1:1）。
+function fit(it){
+  if (!it || !it.display || !it.dw || !it.dh) return;
+  var host = (layout === 'grid') ? it.el : container;
+  var cw = host.clientWidth, ch = host.clientHeight;
+  if (!cw || !ch) return;
+  var scale = Math.min(cw / it.dw, ch / it.dh, 1);
+  try { it.display.scale(scale); } catch(e) {}
+}
+function fitAll(){ instances.forEach(fit); }
+// 网格布局落到 #desktop：设行列 + 各格保持画面活；点某格即切为活动分身（得输入焦点）。
+function applyLayout(){
+  if (layout === 'grid') {
+    container.classList.add('grid');
+    var d = gridDims(instances.length);
+    container.style.gridTemplateColumns = 'repeat(' + d.cols + ', 1fr)';
+    container.style.gridTemplateRows = 'repeat(' + d.rows + ', 1fr)';
+    instances.forEach(function(it){ it.el.className = 'inst' + (it.id===activeId ? ' on' : ''); });
+  } else {
+    container.classList.remove('grid');
+    container.style.gridTemplateColumns = '';
+    container.style.gridTemplateRows = '';
+    instances.forEach(function(it){ it.el.className = 'inst' + (it.id===activeId ? ' on' : ''); });
+  }
+  if (layoutBtn) layoutBtn.classList.toggle('on', layout === 'grid');
+  requestAnimationFrame(fitAll);
+}
+function toggleLayout(){ layout = (layout === 'grid') ? 'tabs' : 'grid'; applyLayout(); saveLayout(); }
 function stateColor(s){ return ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'][s] || '#999'; }
 function showActiveStatus(){
   var it = active(); if (!it) { setStatus('\u672a\u8fde\u63a5'); return; }
@@ -449,8 +496,11 @@ function newInstance(slot){
   container.appendChild(el);
   var it = { id: id, slot: s, label: '\u5206\u8eab' + s, el: el, client: null, display: null,
              connecting: false, userDisconnected: false, retries: 0, retryTimer: null, state: 0 };
+  // \u5e73\u94fa\u65f6\u70b9\u54ea\u683c\u54ea\u683c\u5f97\u8f93\u5165\u7126\u70b9\uff08\u952e\u76d8/\u526a\u8d34\u677f\u53ea\u8def\u7531\u5230\u6d3b\u52a8\u5206\u8eab\uff09\u3002
+  el.addEventListener('mousedown', function(){ if (it.id !== activeId) switchInstance(it.id); }, true);
   instances.push(it);
   switchInstance(id);
+  applyLayout();
   saveLayout();
   return it;
 }
@@ -472,7 +522,7 @@ function closeInstance(id){
   } catch(e) {}
   if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
   instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
-  renderTabs(); showActiveStatus(); saveLayout();
+  renderTabs(); showActiveStatus(); applyLayout(); saveLayout();
 }
 
 async function connectInstance(it) {
@@ -506,6 +556,8 @@ async function connectInstance(it) {
   var ov = document.getElementById('overlay'); if (ov) ov.remove();
   it.el.innerHTML = '';
   it.el.appendChild(display.getElement());
+  // \u5e73\u94fa\u65f6\u5de6\u4e0a\u89d2\u6807\u6ce8\u5206\u8eab\u540d\uff08tabs \u65f6 CSS \u9690\u85cf\uff09\u3002
+  var cap = document.createElement('div'); cap.className = 'caption'; cap.textContent = it.label; it.el.appendChild(cap);
   // \u9f20\u6807（\u6309\u663e\u793a\u7f29\u653e\u6362\u7b97\u56de\u771f\u5b9e\u5750\u6807）——\u53ea\u4f5c\u7528\u4e8e\u672c\u5206\u8eab\u81ea\u5df1\u7684\u753b\u5e03
   const mouse = new Guacamole.Mouse(display.getElement());
   mouse.onEach(['mousedown','mousemove','mouseup'], function(e) {
@@ -516,11 +568,8 @@ async function connectInstance(it) {
     if (s !== 1) st = new Guacamole.Mouse.State(st.x / s, st.y / s, st.left, st.middle, st.right, st.up, st.down);
     it.client.sendMouseState(st, true);
   });
-  // \u81ea\u9002\u5e94\u7f29\u653e
-  display.onresize = function(dw, dh) {
-    const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
-    display.scale(scale);
-  };
+  // \u81ea\u9002\u5e94\u7f29\u653e\uff08\u6309\u672c\u5206\u8eab\u6240\u5360\u5bb9\u5668/\u683c\u5b50\u5c3a\u5bf8\uff1btabs \u65f6\u683c\u5373\u6574\u4e2a #desktop\uff0cgrid \u65f6\u683c\u5373\u5355\u5143\u683c\uff09
+  display.onresize = function(dw, dh) { it.dw = dw; it.dh = dh; fit(it); };
   // \u526a\u8d34\u677f\uff1a\u8fdc\u7aef\u2192\u672c\u5730\uff08\u4ec5\u6d3b\u52a8\u5206\u8eab\u56de\u5199\uff0c\u907f\u514d\u591a\u8def\u4e92\u8e29\uff09
   client.onclipboard = function(stream, mimetype) {
     // 注意：本段位于模板字面量内，\\/ 会被吞成 /，禁用含斜杠的正则字面量（真机踩坑：SyntaxError 令整段脚本报废）。
@@ -596,12 +645,14 @@ window.addEventListener('message', function(ev) {
   }
 });
 window.addEventListener('focus', function() { var it = active(); if (it && it.client) vscodeApi.postMessage({type:'readClipboard'}); });
+window.addEventListener('resize', function() { fitAll(); });
 
 function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 
 // \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u63a5\uff1b\u82e5\u6709\u6301\u4e45\u5316\u5206\u8eab\u5e03\u5c40\uff08\u91cd\u8f7d\u524d\uff09\u5219\u6309\u539f slot \u9010\u4e00\u590d\u8fde\uff08\u7a97\u53e3\u2194\u4f1a\u8bdd\u786e\u5b9a\u6027\u7ed1\u5b9a\uff09
 setTimeout(function boot(){
   var st = null; try { st = vscodeApi.getState(); } catch(e) {}
+  if (st && (st.layout === 'grid' || st.layout === 'tabs')) { layout = st.layout; applyLayout(); }
   if (st && st.slots && st.slots.length) {
     st.slots.forEach(function(s){ var it = newInstance(s); connectInstance(it); });
     if (st.activeSlot) { var a = instances.find(function(x){ return x.slot===st.activeSlot; }); if (a) switchInstance(a.id); }
@@ -1320,4 +1371,5 @@ function deactivate() {
   desktopPanels.clear();
 }
 
-module.exports = { activate, deactivate };
+// desktopHtml 一并导出仅供 headless 单测（校验 webview 模板脚本语法完好，防模板字面量吞字报废整段脚本）。
+module.exports = { activate, deactivate, desktopHtml };

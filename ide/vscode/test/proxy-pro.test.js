@@ -34,10 +34,20 @@ console.log("✓ 预设渠道齐备 (" + pp.PRESETS.length + " 家)");
   assert.ok(!JSON.stringify(v).includes("sk-TESTKEY1234abcd"), "视图绝不含完整 Key");
   console.log("✓ 视图脱敏：仅 hasKey+尾4，无全 Key");
 
-  // 4) 落盘权限 600（Key 明文只存本地私有文件）。
-  const mode = fs.statSync(pp.cfgPath()).mode & 0o777;
-  assert.strictEqual(mode, 0o600, "配置文件应 600, 实际=" + mode.toString(8));
-  console.log("✓ 配置落盘 mode 600");
+  // 4) 落盘仅限本人可读：POSIX 断言 mode 600；Windows 无 POSIX mode 语义（0o600 落盘后 stat 仍 666），
+  //    等效断言 NTFS ACL 已去继承且不含 Everyone/BUILTIN\Users 等宽泛主体。
+  if (process.platform === "win32") {
+    const cp = require("child_process");
+    const out = cp.execFileSync("icacls", [pp.cfgPath()], { encoding: "utf8", windowsHide: true });
+    assert.ok(!/Everyone|BUILTIN\\Users|\(OI\)\(CI\)/i.test(out), "ACL 不得含宽泛主体/继承: " + out.trim());
+    const user = process.env.USERNAME || "";
+    assert.ok(user && out.indexOf(user) >= 0, "ACL 应仅授当前用户: " + out.trim());
+    console.log("✓ 配置落盘 NTFS ACL 仅限本人 (win32)");
+  } else {
+    const mode = fs.statSync(pp.cfgPath()).mode & 0o777;
+    assert.strictEqual(mode, 0o600, "配置文件应 600, 实际=" + mode.toString(8));
+    console.log("✓ 配置落盘 mode 600");
+  }
 
   // 5) 模型路由：官方 UID → 渠道:模型；removeChannel 连带清理路由。
   pp.setRoute("official-model-uid-x", "我的DeepSeek", "deepseek-chat");
