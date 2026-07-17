@@ -5,8 +5,9 @@
 
     node plugins/dao-ai-base/sync.js <本插件目录>
 
-同步时间: 2026-07-17T10:15:41.408Z
-同步基线: 上游 466b33e（R151 Windows 管理板块 + Proxy Pro 工具模式轴已入真源 main）
+同步时间: 2026-07-17T16:40:00Z（mode-fusion.js + proxy-pro-panel.js 部分重同步）
+同步基线: 上游 466b33e（R151）; mode-fusion.js/proxy-pro-panel.js 已随上游 R154 4×4 模式轴重同步
+（提示词层 官方/道德经/阴符经/二经合 × 工具层 默认/Windows/FreeCAD/KiCad, 详见上游 PR #89）
 
 本仓补丁(上游真源尚缺, 每次重新 vendor 后须重打, 待回灌上游):
 - dao-cascade/panel.js: 领域提示词塑形器钩子(setPromptShaper/_shapeText/mode-status/daoModePill/exports)
