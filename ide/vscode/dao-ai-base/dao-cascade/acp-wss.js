@@ -9,24 +9,58 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+// 凭据链: credentials.toml(devin auth login 落盘) → ls-bridge.apiKey()
+// (会话令牌登录不落 credentials.toml,与 stdio 轨 authenticate 回退同源)。
 function readCredentials() {
-  const p = path.join(
+  const p = process.env.DAO_DEVIN_CRED_FILE || path.join(
     process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
     "devin", "credentials.toml");
-  if (!fs.existsSync(p)) return null;
-  const t = fs.readFileSync(p, "utf8");
-  const pick = (k) => { const m = t.match(new RegExp(k + '\\s*=\\s*"([^"]+)"')); return m ? m[1] : null; };
-  return { apiKey: pick("windsurf_api_key"), apiUrl: pick("devin_api_url") || "https://api.devin.ai" };
+  let apiKey = null, apiUrl = null;
+  if (fs.existsSync(p)) {
+    const t = fs.readFileSync(p, "utf8");
+    const pick = (k) => { const m = t.match(new RegExp(k + '\\s*=\\s*"([^"]+)"')); return m ? m[1] : null; };
+    apiKey = pick("windsurf_api_key");
+    apiUrl = pick("devin_api_url");
+  }
+  if (!apiKey) {
+    try { apiKey = require("./ls-bridge").apiKey() || null; } catch (_) {}
+  }
+  if (!apiKey) return null;
+  return { apiKey, apiUrl: apiUrl || "https://api.devin.ai" };
+}
+
+// 官方同源(windsurf 扩展 _buildAuthenticatedUrl): CLI 登录落盘的 key 形如
+// "devin-session-token$<raw>", /acp/live?token= 只认去前缀的 raw 值(带前缀即 403)。
+const DEVIN_SESSION_TOKEN_PREFIX = "devin-session-token$";
+function acpToken(apiKey) {
+  return apiKey.startsWith(DEVIN_SESSION_TOKEN_PREFIX)
+    ? apiKey.slice(DEVIN_SESSION_TOKEN_PREFIX.length) : apiKey;
 }
 
 class AcpWssClient {
   constructor(opts) {
     this._log = (opts && opts.log) || (() => {});
-    this._onUpdate = (opts && opts.onUpdate) || (() => {});
+    this._subs = [];
+    if (opts && opts.onUpdate) this._subs.push(opts.onUpdate);
+    this._onUpdate = (u) => { for (const fn of this._subs) { try { fn(u); } catch (_) {} } };
     this._ws = null;
     this._id = 0;
     this._pending = new Map();
     this.sessionId = null;
+  }
+
+  // 公开订阅面: 外部可挂多个 session/update 监听器(替代覆写私有 _onUpdate)。
+  // 返回一次性 unsubscribe 函数(幂等), 调用方无需伸手进私有 _subs 摘除自己的 tap。
+  onUpdate(fn) {
+    if (typeof fn !== "function") return () => {};
+    this._subs.push(fn);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const i = this._subs.indexOf(fn);
+      if (i >= 0) this._subs.splice(i, 1);
+    };
   }
 
   async connect() {
@@ -36,7 +70,7 @@ class AcpWssClient {
     const cred = readCredentials();
     if (!cred || !cred.apiKey) throw new Error("未找到 Devin 凭据,请先登录(credentials.toml)");
     const url = cred.apiUrl.replace(/^http/, "ws").replace(/\/$/, "") +
-      "/acp/live?token=" + encodeURIComponent(cred.apiKey);
+      "/acp/live?token=" + encodeURIComponent(acpToken(cred.apiKey));
     this._log("[cloud] connecting " + url.replace(/token=[^&]+/, "token=***"));
     await new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
@@ -127,4 +161,4 @@ class AcpWssClient {
   stop() { if (this._ws) { try { this._ws.close(); } catch (_) {} this._ws = null; } this.sessionId = null; }
 }
 
-module.exports = { AcpWssClient, readCredentials };
+module.exports = { AcpWssClient, readCredentials, acpToken };

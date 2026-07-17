@@ -17,6 +17,13 @@ fs.writeFileSync(credFile, 'windsurf_api_key = "key-one"\n');
 process.env.DAO_DEVIN_CRED_FILE = credFile;
 process.env.DAO_WINDSURF_HOST_FILE = path.join(tmp, "windsurf-host.json");
 
+// 密闭化: state.vscdb 候选按 homedir 派生默认安装路径 —— 指向空 tmp,
+// 避免测试机真实 IDE 登录态(%APPDATA%/Devin 等)漏入候选集污染断言。
+const realHomedir = os.homedir;
+os.homedir = () => tmp;
+const realAppData = process.env.APPDATA;
+process.env.APPDATA = path.join(tmp, "AppData", "Roaming");
+
 // 计数指定文件的同步读(其余透传)。
 let credReads = 0;
 const realRead = fs.readFileSync;
@@ -74,4 +81,7 @@ function cleanup() {
   Object.defineProperty(process, "platform", realPlatform);
   cp.execSync = realExecSync;
   fs.readFileSync = realRead;
+  os.homedir = realHomedir;
+  if (realAppData === undefined) delete process.env.APPDATA;
+  else process.env.APPDATA = realAppData;
 }
