@@ -32,13 +32,19 @@ def _probe_json(**over):
 
 
 def _router(tmp_path, **over):
+    from core.session_activator import SessionActivator
+    from core.rdp_target import RdpTargetRegistry
     payload = _probe_json(**over)
     env = EnvironmentManager(runner=lambda s: (0, payload, ""))
     accounts = AccountManager(
         runner=lambda s: (0, "OK", ""),
         registry_path=os.path.join(str(tmp_path), "accounts.json"),
     )
-    return DesktopRouter(env=env, accounts=accounts)
+    activator = SessionActivator(runner=lambda argv: (0, "", ""))
+    targets = RdpTargetRegistry(runner=lambda argv: (0, "", ""),
+                                rdp_search_dirs=[str(tmp_path)])
+    return DesktopRouter(env=env, accounts=accounts,
+                         activator=activator, targets=targets)
 
 
 # —— 一窗一路账号名幂等 ——
