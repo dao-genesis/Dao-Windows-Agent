@@ -20,7 +20,8 @@
 
 ## 二、不要重造（复用既有成果）
 - KiCad/嘉立创驱动在 **Dao-PCB-Design-Agent**；FreeCAD 在 **Dao-3D-Modeling-Agent**；
-  agent 循环/帛书/工具发现在 **ha-copilot**；机控桥/类虚拟机骨架/调研在 **devin-remote/cloud/vm-replica**。
+  agent 循环/帛书/工具发现在 **ha-copilot**；机控桥/类虚拟机骨架/调研成果已**迁入本仓 [`vm-replica/`](vm-replica/)**
+  （原 devin-remote/cloud/vm-replica·正本清源后归位：devin-remote 只留归一插件本体，Windows Agent 延伸全在本仓）。
 - 收编时把现有驱动函数包成 profile 的 verb handler，别从零写。
 
 ## 三、级别② 隔离的技术真相（做前必读，防走弯路）
