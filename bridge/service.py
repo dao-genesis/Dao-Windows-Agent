@@ -28,6 +28,7 @@ from core.clone import (
     isolation_matrix,
     resolve_isolation,
 )
+from core.desktop_router import DesktopRouter
 from core.dispatch import MentionRouter
 from core.environment import EnvironmentManager, available_tiers
 from core.handoff import HandoffFlow
@@ -101,6 +102,8 @@ class BridgeService:
         self.macros = macros or MacroStore()
         # 任意环境适配门面：探测本机能力 → 裁定可用档位 → 选桌面路由 → 出配备计划。
         self.env = env or EnvironmentManager()
+        # 桌面级会话经纪：把 env + accounts + 隧道 编排成「一窗一路完整桌面」（L2 固化，知情同意门禁）。
+        self.desktop = DesktopRouter(env=self.env, accounts=self.accounts)
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -259,6 +262,25 @@ class BridgeService:
     def env_provision(self, apply: bool = False) -> dict:
         return self.env.provision(apply=bool(apply))
 
+    # --- 桌面级会话经纪（一窗一路：探测→选路→授权后配备+建号→渲染描述符·可回滚） ---
+    def desktop_plan(self, session_id: str, want: str = "desktop") -> dict:
+        return self.desktop.plan(session_id, want=want)
+
+    def desktop_ensure(self, session_id: str, approve_provision: bool = False,
+                       approve_account: bool = False,
+                       password: Optional[str] = None) -> dict:
+        return self.desktop.ensure(
+            session_id, approve_provision=bool(approve_provision),
+            approve_account=bool(approve_account), password=password)
+
+    def desktop_status(self, session_id: str) -> dict:
+        return self.desktop.status(session_id)
+
+    def desktop_release(self, session_id: str, approve: bool = False,
+                        delete_profile: bool = True) -> dict:
+        return self.desktop.release(
+            session_id, approve=bool(approve), delete_profile=bool(delete_profile))
+
     def _auto_tiers(self, tiers: Optional[list]) -> Optional[list]:
         """tiers 未显式给定时，用本机探测出的**当前即可用**档位喂隔离层，
         实现「任意环境自动适配」——而非退回最悲观的零配置三档缺省。"""
@@ -391,6 +413,23 @@ class BridgeService:
                 return 200, self.env_probe()
             if method == "POST" and path == "/api/env.provision":
                 return 200, self.env_provision(bool(payload.get("apply", False)))
+            if method == "POST" and path == "/api/desktop.plan":
+                sid = _require(payload, "session_id")
+                return 200, self.desktop_plan(sid, str(payload.get("want") or "desktop"))
+            if method == "POST" and path == "/api/desktop.ensure":
+                sid = _require(payload, "session_id")
+                return 200, self.desktop_ensure(
+                    sid, bool(payload.get("approve_provision", False)),
+                    bool(payload.get("approve_account", False)),
+                    payload.get("password"))
+            if method == "POST" and path == "/api/desktop.status":
+                sid = _require(payload, "session_id")
+                return 200, self.desktop_status(sid)
+            if method == "POST" and path == "/api/desktop.release":
+                sid = _require(payload, "session_id")
+                return 200, self.desktop_release(
+                    sid, bool(payload.get("approve", False)),
+                    bool(payload.get("delete_profile", True)))
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":
