@@ -32,7 +32,7 @@ from core.adapter.subprocess_api import decode_output
 Runner = Callable[[str], "tuple[int, str, str]"]
 
 _DEFAULT_HOST = "127.0.0.1"
-_DEFAULT_PORT = "13389"
+_DEFAULT_PORT = "3389"
 _DEFAULT_PASSWORD = "Dao@2026!"
 # 账号名约束：字母数字与 . _ -，1..20，禁止前导保留字，防注入。
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$")
@@ -84,11 +84,12 @@ class AccountManager:
             json.dump(reg, f, ensure_ascii=False, indent=2)
         os.replace(tmp, self.registry_path)
 
-    def _register(self, name: str, password: str) -> dict:
+    def _register(self, name: str, password: str,
+                   hostname: str = "", port: str = "") -> dict:
         reg = self._load()
         reg[name] = {
-            "hostname": self.rdp_host,
-            "port": self.rdp_port,
+            "hostname": hostname or self.rdp_host,
+            "port": port or self.rdp_port,
             "username": name,
             "password": password,
         }
@@ -102,7 +103,7 @@ class AccountManager:
             self._save(reg)
 
     # ---- 账号生命周期 ----
-    def create(self, name: str, password: Optional[str] = None, admin: bool = False) -> dict:
+    def create(self, name: str, password: Optional[str] = None, admin: bool = False, **kwargs) -> dict:
         """创建（或幂等更新）本地账号并加入 Remote Desktop Users，登记进注册表。"""
         if not valid_name(name):
             return {"ok": False, "error": f"非法账号名: {name!r}（限字母数字与 . _ -，≤20）"}
@@ -115,7 +116,9 @@ class AccountManager:
         rc, out, err = self.runner(script)
         if rc != 0:
             return {"ok": False, "error": (err or out or f"rc={rc}").strip(), "name": name}
-        target = self._register(name, password)
+        target = self._register(name, password,
+                                hostname=kwargs.get("hostname", ""),
+                                port=kwargs.get("port", ""))
         return {"ok": True, "name": name, "groups": [groups] + (["Administrators"] if admin else []),
                 "target": {k: v for k, v in target.items() if k != "password"}}
 

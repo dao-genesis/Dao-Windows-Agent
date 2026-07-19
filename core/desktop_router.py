@@ -21,11 +21,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from core.accounts import AccountManager, valid_name
 from core.environment import EnvironmentManager, EnvProbe, desktop_strategy
+from core.rdp_target import RdpTargetRegistry
+from core.session_activator import SessionActivator
 
 
 def account_name_for(session_id: str) -> str:
@@ -46,10 +48,12 @@ _ACCOUNT_ROUTES = {"A-rdp-multisession"}
 
 @dataclass
 class DesktopRouter:
-    """探测→选路→（授权后）配备+建号→产出渲染描述符 的统一编排门面。"""
+    """探测→选路→（授权后）配备+建号+激活会话→产出渲染描述符 的统一编排门面。"""
 
     env: EnvironmentManager
     accounts: AccountManager
+    activator: SessionActivator = field(default_factory=SessionActivator)
+    targets: RdpTargetRegistry = field(default_factory=RdpTargetRegistry)
 
     # ---- 只读：计划 ----
     def plan(self, session_id: str, want: str = "desktop") -> dict:
@@ -116,9 +120,14 @@ class DesktopRouter:
         session_id: str,
         approve_provision: bool = False,
         approve_account: bool = False,
+        approve_activate: bool = False,
         password: Optional[str] = None,
     ) -> dict:
-        """把一窗一路推进到「就绪」——每步受 approve 门禁；未授权即诚实返回 pending。"""
+        """把一窗一路推进到「就绪」——每步受 approve 门禁；未授权即诚实返回 pending。
+
+        新增 approve_activate 门禁：凭据入库(cmdkey) + 回环拉起(mstsc) 使会话 Active。
+        未授权时停在「账号已建、未激活」，仍可手动 rdp_session_activate。
+        """
         if not session_id:
             return {"ok": False, "error": "session_id 必填"}
         p = self.env.probe()
@@ -127,7 +136,6 @@ class DesktopRouter:
         name = account_name_for(session_id)
 
         if route not in _ACCOUNT_ROUTES:
-            # 非账号路线：无真机写操作，直接就绪（桌面由 B/C/Z 承载）。
             return {
                 "ok": True, "session_id": session_id, "route": route,
                 "ready": bool(strategy.get("ready")), "account_name": None,
@@ -145,20 +153,27 @@ class DesktopRouter:
                                      "provision", prov_plan)
             prov_result = self.env.provision(apply=True)
             steps_done.append({"provision": prov_result.get("results", [])})
-            # 重探，确认配备是否真的抬升
             p = self.env.probe()
 
-        # 2) 建号（一窗一路专属账号）——受 approve_account 门禁
+        # 2) 建号（一窗一路专属账号，带回环目标）——受 approve_account 门禁
         existing = {a["name"] for a in self.accounts.list().get("accounts", [])}
         if name not in existing:
             if not approve_account:
                 return self._blocked(session_id, route, name, "create_account", prov_plan)
-            created = self.accounts.create(name, password=password)
+            # 分配专属回环地址
+            loopback = self.targets.allocate_loopback(name)
+            created = self.accounts.create(name, password=password,
+                                           hostname=loopback, port="3389")
             if not created.get("ok"):
                 return {"ok": False, "session_id": session_id, "route": route,
                         "account_name": name, "error": created.get("error"),
                         "stage": "create_account", "steps_done": steps_done}
-            steps_done.append({"create_account": name})
+            steps_done.append({"create_account": name, "loopback": loopback})
+
+        # 3) 激活会话（凭据入库 + mstsc 回环拉起）——受 approve_activate 门禁
+        if approve_activate:
+            act_result = self._activate_session(name, password)
+            steps_done.append({"activate": act_result})
 
         render = self.render_descriptor(session_id, include_secret=False)
         return {
@@ -166,8 +181,36 @@ class DesktopRouter:
             "ready": True, "account_name": name,
             "steps_done": steps_done,
             "render": render,
-            "reason": "一窗一路就绪：账号已备，隧道可经 render 建 RDP→guacd→WS→面板链路。",
+            "activated": approve_activate,
+            "reason": ("一窗一路就绪：账号已备"
+                       + ("并已激活为 Active 会话" if approve_activate else "")
+                       + "，隧道可经 render 建 RDP→guacd→WS→面板链路。"),
         }
+
+    def _activate_session(self, name: str, password: Optional[str] = None) -> dict:
+        """凭据入库 + 回环拉起，使账号从「已建」变为「Active」。"""
+        # 从注册表取已分配的回环目标
+        for a in self.accounts.list().get("accounts", []):
+            if a["name"] == name:
+                target_ip = a.get("target", {}).get("hostname", "")
+                break
+        else:
+            return {"ok": False, "error": f"账号 {name} 未在注册表中"}
+        if not target_ip or not target_ip.startswith("127."):
+            return {"ok": False, "error": f"账号 {name} 无有效回环目标: {target_ip}"}
+        # 取密码（仅用于本机 cmdkey，不外泄）
+        pw = password
+        if not pw:
+            creds = self.accounts._load().get(name, {})
+            pw = creds.get("password", "")
+        if not pw:
+            return {"ok": False, "error": "激活需密码（凭据入库用），但未提供且注册表中无密码"}
+        stored = self.activator.store_credential(target_ip, name, pw)
+        if not stored.get("ok"):
+            return {"ok": False, "stage": "store_credential", "detail": stored}
+        launched = self.activator.activate(target_ip)
+        return {"ok": bool(launched.get("ok")), "target": target_ip,
+                "username": name, "detail": launched}
 
     def _blocked(self, session_id: str, route: str, name: str,
                  stage: str, prov_plan: dict) -> dict:
@@ -223,15 +266,29 @@ class DesktopRouter:
             "render": self.render_descriptor(session_id) if bound else None,
         }
 
+    # ---- 只读：目标发现 ----
+    def discover_targets(self) -> dict:
+        """只读发现真机上已有的 account→loopback 映射（.rdp 文件 + cmdkey）。"""
+        return self.targets.discover()
+
     # ---- 回滚 ----
     def release(self, session_id: str, approve: bool = False,
                 delete_profile: bool = True) -> dict:
-        """释放一窗一路：注销会话 + 删「本层派生」账号（受 approve 门禁·可逆）。"""
+        """释放一窗一路：注销会话 + 清凭据 + 删「本层派生」账号（受 approve 门禁·可逆）。"""
         name = account_name_for(session_id)
         if not approve:
             return {"ok": False, "blocked": True, "session_id": session_id,
                     "account_name": name,
                     "reason": "释放将删除本窗口专属账号及其 profile，需 approve=true 明确同意。"}
+        # 先注销会话
+        self.activator.logoff_user(name)
+        # 清该账号的凭据（如果有回环目标）
+        for a in self.accounts.list().get("accounts", []):
+            if a["name"] == name:
+                ip = a.get("target", {}).get("hostname", "")
+                if ip and ip.startswith("127."):
+                    self.activator.clear_credential(ip)
+                break
         result = self.accounts.destroy(name, delete_profile=delete_profile)
         return {"ok": bool(result.get("ok")), "session_id": session_id,
                 "account_name": name, "detail": result}

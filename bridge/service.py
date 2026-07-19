@@ -271,13 +271,19 @@ class BridgeService:
 
     def desktop_ensure(self, session_id: str, approve_provision: bool = False,
                        approve_account: bool = False,
+                       approve_activate: bool = False,
                        password: Optional[str] = None) -> dict:
         return self.desktop.ensure(
             session_id, approve_provision=bool(approve_provision),
-            approve_account=bool(approve_account), password=password)
+            approve_account=bool(approve_account),
+            approve_activate=bool(approve_activate), password=password)
 
     def desktop_status(self, session_id: str) -> dict:
         return self.desktop.status(session_id)
+
+    def desktop_discover(self) -> dict:
+        """只读发现真机已有的 account→loopback 映射。"""
+        return self.desktop.discover_targets()
 
     def desktop_release(self, session_id: str, approve: bool = False,
                         delete_profile: bool = True) -> dict:
@@ -459,10 +465,13 @@ class BridgeService:
                 return 200, self.desktop_ensure(
                     sid, bool(payload.get("approve_provision", False)),
                     bool(payload.get("approve_account", False)),
+                    bool(payload.get("approve_activate", False)),
                     payload.get("password"))
             if method == "POST" and path == "/api/desktop.status":
                 sid = _require(payload, "session_id")
                 return 200, self.desktop_status(sid)
+            if method == "GET" and path == "/api/desktop.discover":
+                return 200, self.desktop_discover()
             if method == "POST" and path == "/api/desktop.release":
                 sid = _require(payload, "session_id")
                 return 200, self.desktop_release(

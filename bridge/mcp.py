@@ -127,14 +127,19 @@ class RemoteBridge:
                          {"session_id": session_id, "want": want})
 
     def desktop_ensure(self, session_id: str, approve_provision: bool = False,
-                       approve_account: bool = False, password=None):
+                       approve_account: bool = False,
+                       approve_activate: bool = False, password=None):
         return self._req("POST", "/api/desktop.ensure",
                          {"session_id": session_id,
                           "approve_provision": approve_provision,
-                          "approve_account": approve_account, "password": password})
+                          "approve_account": approve_account,
+                          "approve_activate": approve_activate, "password": password})
 
     def desktop_status(self, session_id: str):
         return self._req("POST", "/api/desktop.status", {"session_id": session_id})
+
+    def desktop_discover(self):
+        return self._req("GET", "/api/desktop.discover")
 
     def desktop_release(self, session_id: str, approve: bool = False,
                         delete_profile: bool = True):
@@ -476,19 +481,28 @@ _TOOLS: dict[str, dict] = {
         "handler": lambda s, a: s.desktop_plan(a["session_id"], str(a.get("want") or "desktop")),
     },
     "desktop_ensure": {
-        "description": "桌面级会话经纪：把一窗一路推进到「就绪」。每步受知情同意门禁："
-                       "approve_provision 方可对本机开 RDP/放开单会话/装 RDPWrap；approve_account 方可建专属账号。"
-                       "未授权即诚实返回 blocked+pending，绝不擅自改机器；就绪后返回不含密码的 guacd 渲染描述符。",
+        "description": "桌面级会话经纪：把一窗一路推进到「就绪」(含可选激活)。每步受知情同意门禁："
+                       "approve_provision→开RDP/放开单会话/装RDPWrap；approve_account→建专属账号(分配回环IP)；"
+                       "approve_activate→凭据入库+mstsc回环拉起使会话Active。"
+                       "未授权即诚实返回blocked+pending，绝不擅自改机器；就绪后返回不含密码的guacd渲染描述符。",
         "properties": {
             "session_id": {"type": "string"},
             "approve_provision": {"type": "boolean", "description": "同意对本机执行 RDP/多会话配备（可回滚）"},
-            "approve_account": {"type": "boolean", "description": "同意创建本窗口专属本地账号（可 release 回滚）"},
-            "password": {"type": "string", "description": "可选，缺省用默认口令（仅存本机）"},
+            "approve_account": {"type": "boolean", "description": "同意创建本窗口专属本地账号+分配回环地址（可 release 回滚）"},
+            "approve_activate": {"type": "boolean", "description": "同意凭据入库+mstsc 回环拉起使会话 Active（可 logoff 回收）"},
+            "password": {"type": "string", "description": "可选，缺省用默认口令（仅存本机凭据管理器）"},
         },
         "required": ["session_id"],
         "handler": lambda s, a: s.desktop_ensure(
             a["session_id"], bool(a.get("approve_provision", False)),
-            bool(a.get("approve_account", False)), a.get("password")),
+            bool(a.get("approve_account", False)),
+            bool(a.get("approve_activate", False)), a.get("password")),
+    },
+    "desktop_discover": {
+        "description": "只读发现真机已有的 account→loopback 映射（.rdp 文件+Credential Manager），含已用/下一可用回环地址。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.desktop_discover(),
     },
     "desktop_status": {
         "description": "桌面级会话经纪：查一窗一路当前状态（是否已绑定账号/会话态/不含密码的渲染描述符）。",
@@ -674,7 +688,8 @@ _TOOL_GROUPS: dict[str, dict] = {
     },
     "desktop": {
         "description": "桌面级会话经纪（一窗一路：探测→选路→知情同意后配备+建号→guacd 渲染描述符·可回滚）+ 会话激活（点亮/枚举/回收真机 Windows 会话）。",
-        "tools": ("desktop_plan", "desktop_ensure", "desktop_status", "desktop_release",
+        "tools": ("desktop_plan", "desktop_ensure", "desktop_discover",
+                  "desktop_status", "desktop_release",
                   "rdp_session_list", "rdp_session_activate", "rdp_session_logoff"),
     },
     "clone": {

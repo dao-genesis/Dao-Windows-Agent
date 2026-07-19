@@ -54,7 +54,7 @@ def test_create_registers_and_persists(tmp_path):
     reg = json.loads((tmp_path / "accounts.json").read_text(encoding="utf-8"))
     assert reg["vm01"]["username"] == "vm01"
     assert reg["vm01"]["password"] == "Pw@123456"
-    assert reg["vm01"]["port"] == "13389"
+    assert reg["vm01"]["port"] == "3389"
     # 执行了 New-LocalUser + 加入 RDP 组
     joined = "\n".join(runner.scripts)
     assert "New-LocalUser" in joined and "Remote Desktop Users" in joined
