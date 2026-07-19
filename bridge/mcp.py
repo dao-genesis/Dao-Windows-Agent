@@ -122,6 +122,26 @@ class RemoteBridge:
     def account_sessions(self):
         return self._req("GET", "/api/account.sessions")
 
+    def desktop_plan(self, session_id: str, want: str = "desktop"):
+        return self._req("POST", "/api/desktop.plan",
+                         {"session_id": session_id, "want": want})
+
+    def desktop_ensure(self, session_id: str, approve_provision: bool = False,
+                       approve_account: bool = False, password=None):
+        return self._req("POST", "/api/desktop.ensure",
+                         {"session_id": session_id,
+                          "approve_provision": approve_provision,
+                          "approve_account": approve_account, "password": password})
+
+    def desktop_status(self, session_id: str):
+        return self._req("POST", "/api/desktop.status", {"session_id": session_id})
+
+    def desktop_release(self, session_id: str, approve: bool = False,
+                        delete_profile: bool = True):
+        return self._req("POST", "/api/desktop.release",
+                         {"session_id": session_id, "approve": approve,
+                          "delete_profile": delete_profile})
+
     def clone_plan(self, app_id: str, clone_id: str, tiers=None,
                    prefer_strongest: bool = False, auto_detect: bool = False):
         return self._req("POST", "/api/clone.plan",
@@ -430,6 +450,49 @@ _TOOLS: dict[str, dict] = {
         "required": [],
         "handler": lambda s, a: s.account_sessions(),
     },
+    "desktop_plan": {
+        "description": "桌面级会话经纪（一窗一路）：为一个 IDE 窗口 session_id 出「探测→选路→配备计划→待授权项」落地计划（dry-run，不改真机）。"
+                       "多会话路线（A）时绑定专属账号并列出需用户同意的写操作（开 RDP/建号）。",
+        "properties": {
+            "session_id": {"type": "string", "description": "IDE 窗口句柄（一窗一路）"},
+            "want": {"type": "string", "description": "期望能力，缺省 desktop"},
+        },
+        "required": ["session_id"],
+        "handler": lambda s, a: s.desktop_plan(a["session_id"], str(a.get("want") or "desktop")),
+    },
+    "desktop_ensure": {
+        "description": "桌面级会话经纪：把一窗一路推进到「就绪」。每步受知情同意门禁："
+                       "approve_provision 方可对本机开 RDP/放开单会话/装 RDPWrap；approve_account 方可建专属账号。"
+                       "未授权即诚实返回 blocked+pending，绝不擅自改机器；就绪后返回不含密码的 guacd 渲染描述符。",
+        "properties": {
+            "session_id": {"type": "string"},
+            "approve_provision": {"type": "boolean", "description": "同意对本机执行 RDP/多会话配备（可回滚）"},
+            "approve_account": {"type": "boolean", "description": "同意创建本窗口专属本地账号（可 release 回滚）"},
+            "password": {"type": "string", "description": "可选，缺省用默认口令（仅存本机）"},
+        },
+        "required": ["session_id"],
+        "handler": lambda s, a: s.desktop_ensure(
+            a["session_id"], bool(a.get("approve_provision", False)),
+            bool(a.get("approve_account", False)), a.get("password")),
+    },
+    "desktop_status": {
+        "description": "桌面级会话经纪：查一窗一路当前状态（是否已绑定账号/会话态/不含密码的渲染描述符）。",
+        "properties": {"session_id": {"type": "string"}},
+        "required": ["session_id"],
+        "handler": lambda s, a: s.desktop_status(a["session_id"]),
+    },
+    "desktop_release": {
+        "description": "桌面级会话经纪：释放一窗一路——注销会话 + 删「本层派生」账号（受 approve 门禁·可逆）。",
+        "properties": {
+            "session_id": {"type": "string"},
+            "approve": {"type": "boolean", "description": "同意删除本窗口专属账号及 profile"},
+            "delete_profile": {"type": "boolean", "description": "是否删 profile 目录，默认 true"},
+        },
+        "required": ["session_id"],
+        "handler": lambda s, a: s.desktop_release(
+            a["session_id"], bool(a.get("approve", False)),
+            bool(a.get("delete_profile", True))),
+    },
     "clone_plan": {
         "description": "通用隔离层：为“分身 clone_id 隔离运行 app_id”选出隔离档位"
                        "（account/session/desktop/appdata）并如实报告能否真隔离。",
@@ -561,6 +624,10 @@ _TOOL_GROUPS: dict[str, dict] = {
     "account": {
         "description": "多账号类虚拟机（Windows 本地账号 + RDP 会话）。",
         "tools": ("account_create", "account_list", "account_destroy", "account_sessions"),
+    },
+    "desktop": {
+        "description": "桌面级会话经纪（一窗一路：探测→选路→知情同意后配备+建号→guacd 渲染描述符·可回滚）。",
+        "tools": ("desktop_plan", "desktop_ensure", "desktop_status", "desktop_release"),
     },
     "clone": {
         "description": "分身隔离与生命周期治理（隔离裁决 + 心跳 + 超时回收）。",
