@@ -73,19 +73,22 @@ class RdpTargetRegistry:
     rdp_search_dirs: "list[str]" = field(default_factory=list)
 
     def discover(self) -> dict:
-        """只读发现真机上已有的 account→loopback 映射。合并 .rdp 文件 + cmdkey。"""
+        """只读发现真机上已有的 account→loopback 映射。合并 .rdp 文件 + cmdkey。
+
+        以**回环 IP** 为主键合并（一 IP 一目标），避免同名账号占多路回环时丢目标——
+        真机 DESKTOP-MASTER 上 Administrator 同时持有 127.0.0.1 与 127.0.0.20。
+        """
         rdp_targets = self._parse_rdp_files()
         cred_targets = self._parse_cmdkey()
-        # 合并：rdp 文件为主，cmdkey 补充 has_credential
+        # 合并：按回环 IP 主键，.rdp 文件为主（含 rdp_file 路径），cmdkey 补充 has_credential
         merged: dict[str, RdpTarget] = {}
         for t in rdp_targets:
-            merged[t.username.lower()] = t
+            merged[t.loopback_ip] = t
         for ip, user in cred_targets.items():
-            key = user.lower()
-            if key in merged:
-                merged[key].has_credential = True
+            if ip in merged:
+                merged[ip].has_credential = True
             else:
-                merged[key] = RdpTarget(
+                merged[ip] = RdpTarget(
                     username=user, loopback_ip=ip,
                     has_credential=True)
         targets = list(merged.values())

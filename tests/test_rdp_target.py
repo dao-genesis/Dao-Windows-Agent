@@ -123,6 +123,34 @@ def test_allocate_loopback_for_new_account(tmp_path):
     assert ip == "127.0.0.2"  # .2 is first free (not .3 or .8)
 
 
+# —— 同名账号占多路回环：以 IP 为主键，不丢目标（真机 DESKTOP-MASTER 实证）——
+_CMDKEY_DUP_USER = """\
+Currently stored credentials:
+
+    Target: Domain:target=TERMSRV/127.0.0.1
+    User: Administrator
+
+    Target: LegacyGeneric:target=TERMSRV/127.0.0.20
+    User: Administrator
+
+    Target: Domain:target=TERMSRV/127.0.0.8
+    User: ai
+"""
+
+
+def test_discover_keeps_multiple_loopbacks_for_same_user():
+    reg = RdpTargetRegistry(
+        runner=lambda argv: (0, _CMDKEY_DUP_USER, ""),
+        rdp_search_dirs=[])
+    r = reg.discover()
+    # Administrator 占 .1 与 .20，两个都必须保留
+    assert "127.0.0.1" in r["used_loopback_ips"]
+    assert "127.0.0.20" in r["used_loopback_ips"]
+    assert "127.0.0.8" in r["used_loopback_ips"]
+    # .1,.8,.20 用了 → 下一空闲从 .2 起是 .2
+    assert r["next_available_index"] == 2
+
+
 # —— find_target ——
 def test_find_target_by_name(tmp_path):
     rdp = tmp_path / "RDP_ai.rdp"
