@@ -28,6 +28,28 @@ function daemonConfig() {
     } catch (e) { return {}; }
 }
 
+/* 账号注册表（桥 core/accounts.py 建号时写入·同一真相源）：按账号解析专属回环目标。
+ * 这是「一窗一路」多路渲染的关键——每个 vm(账号) 连它自己的 127.0.0.x，而非全局单一目标。 */
+function accountsRegistry() {
+    const p = process.env.DAO_ACCOUNTS_JSON ||
+        path.join(__dirname, '..', '..', 'desktop', 'accounts.json');
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch (e) { return {}; }
+}
+
+function targetForVm(vm) {
+    const reg = accountsRegistry();
+    const entry = reg[vm];
+    if (entry && entry.hostname) {
+        return {
+            hostname: entry.hostname,
+            port: Number(entry.port) || 3389,
+            username: entry.username || vm,
+            password: entry.password || '',
+        };
+    }
+    return null;
+}
+
 /* ── 静态资源: 官方 mstsc.js 前端 + 本网关 ws 传输层 ─────────────────── */
 function serveStatic(req, res) {
     let rel = decodeURIComponent((req.url.split('?')[0] || '/'));
@@ -90,13 +112,17 @@ function attachWs(socket, onMessage, onClose) {
 /* ── RDP 会话代理: 一条 WS <-> 一路官方 RDP 连接(同源共控复制品会话) ── */
 function bridgeRdp(socket, vm) {
     const cfg = daemonConfig();
-    const target = cfg.rdp_target || '127.0.0.2';
+    // 优先按账号从共享注册表解析专属回环目标（一窗一路多路）；回退到守护单目标默认。
+    const acct = targetForVm(vm);
+    const target = acct ? acct.hostname : (cfg.rdp_target || '127.0.0.2');
+    const port = acct ? acct.port : 3389;
+    const userName = acct ? acct.username : vm;
     const domain = process.env.COMPUTERNAME || os.hostname();
-    const password = cfg.default_password || '';
+    const password = (acct && acct.password) || cfg.default_password || '';
     const send = (o) => { try { socket.write(wsEncode(JSON.stringify(o))); } catch (e) {} };
 
     let client = rdp.createClient({
-        domain: domain, userName: vm, password: password,
+        domain: domain, userName: userName, password: password,
         enablePerf: true, autoLogin: true,
         screen: { width: 1280, height: 800 }, locale: 'en', logLevel: 'ERROR'
     }).on('connect', () => send({ e: 'rdp-connect' }))
@@ -106,7 +132,7 @@ function bridgeRdp(socket, vm) {
             data: Buffer.from(b.data).toString('base64') } }))
         .on('close', () => { send({ e: 'rdp-close' }); try { socket.end(); } catch (e) {} })
         .on('error', (err) => send({ e: 'rdp-error', m: String((err && err.message) || err) }))
-        .connect(target, 3389);
+        .connect(target, port);
 
     attachWs(socket, (raw) => {
         let m; try { m = JSON.parse(raw); } catch (e) { return; }
