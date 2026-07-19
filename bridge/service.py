@@ -29,6 +29,7 @@ from core.clone import (
     resolve_isolation,
 )
 from core.desktop_router import DesktopRouter
+from core.session_activator import SessionActivator, loopback_for
 from core.dispatch import MentionRouter
 from core.environment import EnvironmentManager, available_tiers
 from core.handoff import HandoffFlow
@@ -104,6 +105,8 @@ class BridgeService:
         self.env = env or EnvironmentManager()
         # 桌面级会话经纪：把 env + accounts + 隧道 编排成「一窗一路完整桌面」（L2 固化，知情同意门禁）。
         self.desktop = DesktopRouter(env=self.env, accounts=self.accounts)
+        # 会话激活层：把「一路账号」点亮成一路 Active 桌面（cmdkey 入库 → mstsc 回环拉起 → qwinsta → logoff）。
+        self.session_activator = SessionActivator()
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -281,6 +284,41 @@ class BridgeService:
         return self.desktop.release(
             session_id, approve=bool(approve), delete_profile=bool(delete_profile))
 
+    # --- 会话激活（把一路账号点亮成一路 Active 桌面·可逆） ---
+    def rdp_session_list(self) -> dict:
+        """真机当前所有会话（qwinsta：含 sessionname/id/state/active）。"""
+        return self.session_activator.list_sessions()
+
+    def rdp_session_activate(self, username: str, password: str, index: int,
+                             approve: bool = False) -> dict:
+        """凭据入库 + 回环拉起一路独立会话（写操作·受 approve 门禁）。
+
+        index → 专属回环地址(127.0.0.2 起)。未授权即诚实返回 blocked，不动机器。
+        """
+        target = loopback_for(int(index))
+        if not approve:
+            return {"ok": False, "blocked": True, "username": username,
+                    "target": target,
+                    "reason": "激活将写入凭据管理器并拉起 RDP 会话，需 approve=true 明确同意。"}
+        stored = self.session_activator.store_credential(target, username, password)
+        if not stored.get("ok"):
+            return {"ok": False, "stage": "store_credential", "detail": stored}
+        launched = self.session_activator.activate(target)
+        return {"ok": bool(launched.get("ok")), "username": username, "target": target,
+                "stage": "activate", "detail": launched}
+
+    def rdp_session_logoff(self, username: str = "", session_id: str = "",
+                           approve: bool = False) -> dict:
+        """注销会话（按账号名或会话ID·可逆清理·受 approve 门禁）。"""
+        if not approve:
+            return {"ok": False, "blocked": True,
+                    "reason": "注销会话需 approve=true 明确同意。"}
+        if session_id:
+            return self.session_activator.logoff(str(session_id))
+        if username:
+            return self.session_activator.logoff_user(username)
+        return {"ok": False, "error": "需提供 username 或 session_id"}
+
     def _auto_tiers(self, tiers: Optional[list]) -> Optional[list]:
         """tiers 未显式给定时，用本机探测出的**当前即可用**档位喂隔离层，
         实现「任意环境自动适配」——而非退回最悲观的零配置三档缺省。"""
@@ -430,6 +468,16 @@ class BridgeService:
                 return 200, self.desktop_release(
                     sid, bool(payload.get("approve", False)),
                     bool(payload.get("delete_profile", True)))
+            if method == "GET" and path == "/api/rdp.list":
+                return 200, self.rdp_session_list()
+            if method == "POST" and path == "/api/rdp.activate":
+                return 200, self.rdp_session_activate(
+                    _require(payload, "username"), _require(payload, "password"),
+                    int(payload.get("index", 0)), bool(payload.get("approve", False)))
+            if method == "POST" and path == "/api/rdp.logoff":
+                return 200, self.rdp_session_logoff(
+                    str(payload.get("username") or ""), str(payload.get("session_id") or ""),
+                    bool(payload.get("approve", False)))
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":

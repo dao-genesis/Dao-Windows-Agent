@@ -142,6 +142,21 @@ class RemoteBridge:
                          {"session_id": session_id, "approve": approve,
                           "delete_profile": delete_profile})
 
+    def rdp_session_list(self):
+        return self._req("GET", "/api/rdp.list")
+
+    def rdp_session_activate(self, username: str, password: str, index: int = 0,
+                             approve: bool = False):
+        return self._req("POST", "/api/rdp.activate",
+                         {"username": username, "password": password,
+                          "index": index, "approve": approve})
+
+    def rdp_session_logoff(self, username: str = "", session_id: str = "",
+                           approve: bool = False):
+        return self._req("POST", "/api/rdp.logoff",
+                         {"username": username, "session_id": session_id,
+                          "approve": approve})
+
     def clone_plan(self, app_id: str, clone_id: str, tiers=None,
                    prefer_strongest: bool = False, auto_detect: bool = False):
         return self._req("POST", "/api/clone.plan",
@@ -493,6 +508,38 @@ _TOOLS: dict[str, dict] = {
             a["session_id"], bool(a.get("approve", False)),
             bool(a.get("delete_profile", True))),
     },
+    "rdp_session_list": {
+        "description": "会话激活层：列真机当前所有 Windows 会话（qwinsta：sessionname/username/id/state/active）。只读。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.rdp_session_list(),
+    },
+    "rdp_session_activate": {
+        "description": "会话激活层：把一路账号点亮成一路 Active 桌面——凭据入库(cmdkey)+回环拉起(mstsc 127.0.0.N)。"
+                       "写操作受 approve 门禁；未授权即诚实返回 blocked。主控制台与既有会话不受影响，可 rdp_session_logoff 回收。",
+        "properties": {
+            "username": {"type": "string", "description": "目标本地账号名"},
+            "password": {"type": "string", "description": "该账号口令（仅入本机凭据管理器，不外泄）"},
+            "index": {"type": "integer", "description": "一路序号(0起) → 专属回环 127.0.0.(2+index)"},
+            "approve": {"type": "boolean", "description": "同意写入凭据并拉起 RDP 会话"},
+        },
+        "required": ["username", "password"],
+        "handler": lambda s, a: s.rdp_session_activate(
+            a["username"], a["password"], int(a.get("index", 0)),
+            bool(a.get("approve", False))),
+    },
+    "rdp_session_logoff": {
+        "description": "会话激活层：注销 Windows 会话（按账号名或会话ID·可逆清理·受 approve 门禁）。",
+        "properties": {
+            "username": {"type": "string", "description": "按账号名注销（二选一）"},
+            "session_id": {"type": "string", "description": "按会话ID注销（二选一）"},
+            "approve": {"type": "boolean", "description": "同意注销"},
+        },
+        "required": [],
+        "handler": lambda s, a: s.rdp_session_logoff(
+            str(a.get("username") or ""), str(a.get("session_id") or ""),
+            bool(a.get("approve", False))),
+    },
     "clone_plan": {
         "description": "通用隔离层：为“分身 clone_id 隔离运行 app_id”选出隔离档位"
                        "（account/session/desktop/appdata）并如实报告能否真隔离。",
@@ -626,8 +673,9 @@ _TOOL_GROUPS: dict[str, dict] = {
         "tools": ("account_create", "account_list", "account_destroy", "account_sessions"),
     },
     "desktop": {
-        "description": "桌面级会话经纪（一窗一路：探测→选路→知情同意后配备+建号→guacd 渲染描述符·可回滚）。",
-        "tools": ("desktop_plan", "desktop_ensure", "desktop_status", "desktop_release"),
+        "description": "桌面级会话经纪（一窗一路：探测→选路→知情同意后配备+建号→guacd 渲染描述符·可回滚）+ 会话激活（点亮/枚举/回收真机 Windows 会话）。",
+        "tools": ("desktop_plan", "desktop_ensure", "desktop_status", "desktop_release",
+                  "rdp_session_list", "rdp_session_activate", "rdp_session_logoff"),
     },
     "clone": {
         "description": "分身隔离与生命周期治理（隔离裁决 + 心跳 + 超时回收）。",
