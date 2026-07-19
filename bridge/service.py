@@ -29,6 +29,7 @@ from core.clone import (
     resolve_isolation,
 )
 from core.dispatch import MentionRouter
+from core.environment import EnvironmentManager, available_tiers
 from core.handoff import HandoffFlow
 from core.macros import MacroStore
 from core.profiles.builtin import build_default_registry
@@ -75,6 +76,7 @@ class BridgeService:
         modes: Optional[ModeManager] = None,
         clones: Optional[CloneLifecycle] = None,
         macros: Optional[MacroStore] = None,
+        env: Optional[EnvironmentManager] = None,
     ) -> None:
         # 默认底座即绑定 vendored agentctl（语义优先·规避截图+点击）并自动发现子插件
         # （用户装了哪个领域子插件就自动多出哪一路 @ 工作层）；CI/无后端时静默退回。
@@ -97,6 +99,8 @@ class BridgeService:
         # 分身生命周期治理（心跳+超时回收，对称于租约 TTL）与宏沉淀层（成功序列固化）。
         self.clones = clones or CloneLifecycle()
         self.macros = macros or MacroStore()
+        # 任意环境适配门面：探测本机能力 → 裁定可用档位 → 选桌面路由 → 出配备计划。
+        self.env = env or EnvironmentManager()
 
     # --- 动作（被 REST / MCP 共用） ---
     def health(self) -> dict:
@@ -245,16 +249,38 @@ class BridgeService:
     def account_sessions(self) -> dict:
         return self.accounts.sessions()
 
+    # --- 任意环境适配层（探测本机能力 → 裁定可用档位 → 桌面路由 → 配备计划） ---
+    def env_report(self) -> dict:
+        return self.env.report()
+
+    def env_probe(self) -> dict:
+        return self.env.probe().to_dict()
+
+    def env_provision(self, apply: bool = False) -> dict:
+        return self.env.provision(apply=bool(apply))
+
+    def _auto_tiers(self, tiers: Optional[list]) -> Optional[list]:
+        """tiers 未显式给定时，用本机探测出的**当前即可用**档位喂隔离层，
+        实现「任意环境自动适配」——而非退回最悲观的零配置三档缺省。"""
+        if tiers:
+            return _parse_tiers(tiers)
+        detected = available_tiers(self.env.probe())
+        return sorted(detected)
+
     # --- 通用隔离层（单账号多分身：三机制归一选档，见 core/clone/isolation_layer） ---
     def clone_plan(self, app_id: str, clone_id: str,
-                   tiers: Optional[list] = None, prefer_strongest: bool = False) -> dict:
+                   tiers: Optional[list] = None, prefer_strongest: bool = False,
+                   auto_detect: bool = False) -> dict:
+        chosen = self._auto_tiers(tiers) if auto_detect else _parse_tiers(tiers)
         return resolve_isolation(
-            app_id, clone_id, _parse_tiers(tiers), bool(prefer_strongest)).to_dict()
+            app_id, clone_id, chosen, bool(prefer_strongest)).to_dict()
 
     def clone_matrix(self, app_ids: list,
-                     tiers: Optional[list] = None, prefer_strongest: bool = False) -> dict:
+                     tiers: Optional[list] = None, prefer_strongest: bool = False,
+                     auto_detect: bool = False) -> dict:
+        chosen = self._auto_tiers(tiers) if auto_detect else _parse_tiers(tiers)
         return {"matrix": isolation_matrix(
-            app_ids, _parse_tiers(tiers), bool(prefer_strongest))}
+            app_ids, chosen, bool(prefer_strongest))}
 
     # --- 分身生命周期治理（clone_health 心跳 / clone_gc 超时回收，对称租约 TTL） ---
     def clone_register(self, clone_id: str, app_id: str, tier: str = "",
@@ -359,6 +385,12 @@ class BridgeService:
                 return 200, self.project_status(pid)
             if method == "GET" and path == "/api/project.list":
                 return 200, self.project_list()
+            if method == "GET" and path == "/api/env.report":
+                return 200, self.env_report()
+            if method == "GET" and path == "/api/env.probe":
+                return 200, self.env_probe()
+            if method == "POST" and path == "/api/env.provision":
+                return 200, self.env_provision(bool(payload.get("apply", False)))
             if method == "GET" and path == "/api/account.list":
                 return 200, self.account_list()
             if method == "GET" and path == "/api/account.sessions":
@@ -376,12 +408,14 @@ class BridgeService:
                 clone_id = _require(payload, "clone_id")
                 return 200, self.clone_plan(
                     app_id, clone_id, payload.get("tiers"),
-                    bool(payload.get("prefer_strongest", False)))
+                    bool(payload.get("prefer_strongest", False)),
+                    bool(payload.get("auto_detect", False)))
             if method == "POST" and path == "/api/clone.matrix":
                 app_ids = _require(payload, "app_ids")
                 return 200, self.clone_matrix(
                     list(app_ids), payload.get("tiers"),
-                    bool(payload.get("prefer_strongest", False)))
+                    bool(payload.get("prefer_strongest", False)),
+                    bool(payload.get("auto_detect", False)))
             if method == "POST" and path == "/api/clone.register":
                 clone_id = _require(payload, "clone_id")
                 app_id = _require(payload, "app_id")

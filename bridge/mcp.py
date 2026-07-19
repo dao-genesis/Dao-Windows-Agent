@@ -99,6 +99,15 @@ class RemoteBridge:
     def project_list(self):
         return self._req("GET", "/api/project.list")
 
+    def env_report(self):
+        return self._req("GET", "/api/env.report")
+
+    def env_probe(self):
+        return self._req("GET", "/api/env.probe")
+
+    def env_provision(self, apply: bool = False):
+        return self._req("POST", "/api/env.provision", {"apply": apply})
+
     def account_create(self, name: str, password=None, admin: bool = False):
         return self._req("POST", "/api/account.create",
                          {"name": name, "password": password, "admin": admin})
@@ -113,15 +122,19 @@ class RemoteBridge:
     def account_sessions(self):
         return self._req("GET", "/api/account.sessions")
 
-    def clone_plan(self, app_id: str, clone_id: str, tiers=None, prefer_strongest: bool = False):
+    def clone_plan(self, app_id: str, clone_id: str, tiers=None,
+                   prefer_strongest: bool = False, auto_detect: bool = False):
         return self._req("POST", "/api/clone.plan",
                          {"app_id": app_id, "clone_id": clone_id,
-                          "tiers": tiers, "prefer_strongest": prefer_strongest})
+                          "tiers": tiers, "prefer_strongest": prefer_strongest,
+                          "auto_detect": auto_detect})
 
-    def clone_matrix(self, app_ids, tiers=None, prefer_strongest: bool = False):
+    def clone_matrix(self, app_ids, tiers=None, prefer_strongest: bool = False,
+                     auto_detect: bool = False):
         return self._req("POST", "/api/clone.matrix",
                          {"app_ids": app_ids, "tiers": tiers,
-                          "prefer_strongest": prefer_strongest})
+                          "prefer_strongest": prefer_strongest,
+                          "auto_detect": auto_detect})
 
     def clone_register(self, clone_id: str, app_id: str, tier: str = "", ttl=None):
         return self._req("POST", "/api/clone.register",
@@ -362,6 +375,29 @@ _TOOLS: dict[str, dict] = {
         "required": [],
         "handler": lambda s, a: s.project_list(),
     },
+    "env_report": {
+        "description": "任意环境适配全景：探测本机 Windows 版本家族/内部版本/管理员态/RDP/多会话/RDPWrap，"
+                       "裁定当前可用与可配备的隔离档位，推荐桌面路由主线（A 多会话/B 虚拟显示器/C 无头/Z 冷启动），"
+                       "并出幂等配备计划。任意设备任意状态都给一条落地路径。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.env_report(),
+    },
+    "env_probe": {
+        "description": "只做能力探测：返回本机 Windows 版本家族/内部版本/管理员/域/RDP 开关/单会话限制/RDPWrap 等原始快照。",
+        "properties": {},
+        "required": [],
+        "handler": lambda s, a: s.env_probe(),
+    },
+    "env_provision": {
+        "description": "把多会话隔离抬升到可用：apply=false（缺省）只出幂等·可逆的配备计划（开 RDP/放开单会话/装 RDPWrap），"
+                       "apply=true 才逐步执行并如实回报；无管理员/版本不支持时如实降级，绝不假装成功。",
+        "properties": {
+            "apply": {"type": "boolean", "description": "true 才真正执行配备步骤，缺省 false 只出计划"},
+        },
+        "required": [],
+        "handler": lambda s, a: s.env_provision(bool(a.get("apply", False))),
+    },
     "account_create": {
         "description": "创建/幂等更新一个 Windows 本地账号并加入 Remote Desktop Users（多账号类虚拟机·扩展本源）。"
                        "配合 RDPWrap 单机多会话，每账号一路独立桌面，与主账号并行互不干扰。",
@@ -403,11 +439,13 @@ _TOOLS: dict[str, dict] = {
             "tiers": {"type": "array", "items": {"type": "string"},
                       "description": "环境可用档位；缺省零配置三档 none/appdata/desktop"},
             "prefer_strongest": {"type": "boolean", "description": "真时选最强档而非最省档"},
+            "auto_detect": {"type": "boolean",
+                            "description": "真且未显式给 tiers 时，用本机 env 探测出的当前可用档位自动适配"},
         },
         "required": ["app_id", "clone_id"],
         "handler": lambda s, a: s.clone_plan(
             a["app_id"], a["clone_id"], a.get("tiers"),
-            bool(a.get("prefer_strongest", False))),
+            bool(a.get("prefer_strongest", False)), bool(a.get("auto_detect", False))),
     },
     "clone_matrix": {
         "description": "通用隔离层：一次算出多软件在当前可用档位下的隔离方案矩阵。",
@@ -415,10 +453,13 @@ _TOOLS: dict[str, dict] = {
             "app_ids": {"type": "array", "items": {"type": "string"}},
             "tiers": {"type": "array", "items": {"type": "string"}},
             "prefer_strongest": {"type": "boolean"},
+            "auto_detect": {"type": "boolean",
+                            "description": "真且未显式给 tiers 时，用本机 env 探测出的当前可用档位自动适配"},
         },
         "required": ["app_ids"],
         "handler": lambda s, a: s.clone_matrix(
-            a["app_ids"], a.get("tiers"), bool(a.get("prefer_strongest", False))),
+            a["app_ids"], a.get("tiers"), bool(a.get("prefer_strongest", False)),
+            bool(a.get("auto_detect", False))),
     },
     "clone_register": {
         "description": "分身治理：登记一个已启动的分身并记首次心跳（建了就有人管·对称租约 TTL）。",
@@ -512,6 +553,10 @@ _TOOL_GROUPS: dict[str, dict] = {
     "project": {
         "description": "跨领域工程交接流水。",
         "tools": ("project_create", "project_advance", "project_status", "project_list"),
+    },
+    "env": {
+        "description": "任意环境适配（能力探测 + 档位裁定 + 桌面路由选路 + 幂等配备）。",
+        "tools": ("env_report", "env_probe", "env_provision"),
     },
     "account": {
         "description": "多账号类虚拟机（Windows 本地账号 + RDP 会话）。",
