@@ -1,0 +1,14 @@
+{
+  "name": "dao-rdpweb",
+  "version": "0.1.0",
+  "private": true,
+  "description": "官方 RDP 协议反向路由进归一单网页(Windows 原生·零 Docker/guacd)",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "node-rdpjs-2": "^0.3.5",
+    "ws": "^8.18.0"
+  }
+}
