@@ -54,8 +54,16 @@ def load_config():
     os.makedirs(CONFIG_DIR, exist_ok=True)
     cfg = {}
     if os.path.exists(CONFIG_PATH):
-        try: cfg = json.load(open(CONFIG_PATH, encoding='utf-8'))
-        except Exception: cfg = {}
+        # utf-8-sig tolerates a UTF-8 BOM: config.json is often written by PowerShell
+        # (Set-Content -Encoding UTF8 adds a BOM), which a plain utf-8 json.load rejects.
+        # Silently regenerating on that error would mint a fresh token / swap python_exe
+        # to sys.executable (pythonw), desyncing every launcher -> log loudly instead.
+        try:
+            with open(CONFIG_PATH, encoding='utf-8-sig') as _f:
+                cfg = json.load(_f)
+        except Exception as e:
+            log.warning('config %s unreadable (%s); regenerating defaults', CONFIG_PATH, e)
+            cfg = {}
     cfg.setdefault('host_port', int(os.environ.get('VM_HOST_PORT', '9000')))
     cfg.setdefault('base_port', 9001)
     cfg.setdefault('token', os.environ.get('VM_HOST_TOKEN', '') or secrets.token_hex(16))
@@ -164,10 +172,21 @@ def _idle_watchdog():
             except Exception as e: log.warning('auto-hibernate failed: %s', e)
 
 def inner_launch_cmd():
-    """Prefer the frozen inner-agent EXE (Python-free); else python + script."""
+    """Prefer the frozen inner-agent EXE (Python-free); else pythonw + script.
+    pythonw.exe runs windowless, so the inner agent leaves no stray console window
+    on the VM session desktop. Also wrap in `start "" /b` so the scheduled task's
+    wrapper .bat returns immediately instead of blocking on the long-lived server --
+    otherwise its cmd window would linger on the VM desktop for the agent's lifetime.
+    The child inherits the env vars set earlier in the bat and survives its exit.
+    (The agent is made stdout/stderr-None safe so it runs cleanly windowless.)"""
     if os.path.exists(INNER_EXE):
-        return f'"{INNER_EXE}"'
-    return f'"{PYTHON_EXE}" "{INNER_SCRIPT}"'
+        return f'start "" /b "{INNER_EXE}"'
+    exe = PYTHON_EXE
+    if exe.lower().endswith('python.exe'):
+        pyw = exe[:-len('python.exe')] + 'pythonw.exe'
+        if os.path.exists(pyw):
+            exe = pyw
+    return f'start "" /b "{exe}" "{INNER_SCRIPT}"'
 
 vms = {}  # {name: {port, status, created_at, password, session_user}}
 

@@ -16,6 +16,19 @@ import http.server, json, subprocess, os, sys, base64, ctypes, ctypes.wintypes
 import struct, threading, time, traceback, zlib, socketserver
 import socket, urllib.request, urllib.parse, re, shlex as _shlex
 
+# Launched windowless via pythonw.exe (no stray console window on the VM desktop),
+# sys.stdout/stderr are None -- a stray print()/flush() would raise and crash the
+# agent (this was the scheduled-task 0x1 failure). Redirect None streams to a
+# per-session log so the agent runs cleanly windowless.
+if sys.stdout is None or sys.stderr is None:
+    try:
+        _logf = open(os.path.join(os.environ.get('TEMP') or os.getcwd(),
+                                  'dao_inner_agent.log'), 'a', buffering=1, encoding='utf-8')
+    except Exception:
+        _logf = open(os.devnull, 'w')
+    if sys.stdout is None: sys.stdout = _logf
+    if sys.stderr is None: sys.stderr = _logf
+
 PORT  = int(os.environ.get('VM_AGENT_PORT', '9001'))
 TOKEN = os.environ.get('VM_AGENT_TOKEN', '')          # '' => no auth (loopback only)
 BIND  = os.environ.get('VM_AGENT_BIND', '127.0.0.1')
@@ -83,6 +96,13 @@ kernel32.OpenProcess.argtypes = [_wt.DWORD, _wt.BOOL, _wt.DWORD]
 kernel32.QueryFullProcessImageNameW.argtypes = [_VP, _wt.DWORD, _wt.LPWSTR,
                                                 ctypes.POINTER(_wt.DWORD)]
 kernel32.CloseHandle.argtypes = [_VP]
+# Clipboard (64-bit-safe: HANDLE/PVOID must not truncate to 32-bit)
+kernel32.GlobalAlloc.restype = _VP;  kernel32.GlobalAlloc.argtypes = [_wt.UINT, ctypes.c_size_t]
+kernel32.GlobalLock.restype = _VP;   kernel32.GlobalLock.argtypes = [_VP]
+kernel32.GlobalUnlock.argtypes = [_VP]
+user32.OpenClipboard.argtypes = [_VP]
+user32.GetClipboardData.restype = _VP; user32.GetClipboardData.argtypes = [_wt.UINT]
+user32.SetClipboardData.restype = _VP; user32.SetClipboardData.argtypes = [_wt.UINT, _VP]
 user32.GetForegroundWindow.restype = _VP
 user32.SetForegroundWindow.argtypes = [_VP]
 user32.SetActiveWindow.restype = _VP; user32.SetActiveWindow.argtypes = [_VP]
@@ -489,6 +509,59 @@ def _win_title(hwnd):
     user32.GetWindowTextW(hwnd, buf, n + 1)
     return buf.value
 
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+
+def clipboard_get():
+    """Read Unicode text from the session clipboard via Win32 (no PowerShell
+    Get-Clipboard round-trip). Returns {'ok', 'text'}."""
+    for _ in range(10):
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        return {'ok': False, 'error': 'OpenClipboard failed'}
+    try:
+        h = user32.GetClipboardData(_CF_UNICODETEXT)
+        if not h:
+            return {'ok': True, 'text': ''}
+        ptr = kernel32.GlobalLock(h)
+        if not ptr:
+            return {'ok': True, 'text': ''}
+        try:
+            return {'ok': True, 'text': ctypes.wstring_at(ptr)}
+        finally:
+            kernel32.GlobalUnlock(h)
+    finally:
+        user32.CloseClipboard()
+
+def clipboard_set(text):
+    """Write Unicode text to the session clipboard via Win32. Returns {'ok','len'}."""
+    text = text if text is not None else ''
+    for _ in range(10):
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        return {'ok': False, 'error': 'OpenClipboard failed'}
+    try:
+        user32.EmptyClipboard()
+        buf = ctypes.create_unicode_buffer(text)          # includes trailing NUL
+        n = ctypes.sizeof(buf)
+        h = kernel32.GlobalAlloc(_GMEM_MOVEABLE, n)
+        if not h:
+            return {'ok': False, 'error': 'GlobalAlloc failed'}
+        dst = kernel32.GlobalLock(h)
+        if not dst:
+            return {'ok': False, 'error': 'GlobalLock failed'}
+        ctypes.memmove(dst, buf, n)
+        kernel32.GlobalUnlock(h)
+        if not user32.SetClipboardData(_CF_UNICODETEXT, h):
+            return {'ok': False, 'error': 'SetClipboardData failed'}  # ownership not taken -> h leaks to OS on close
+        return {'ok': True, 'len': len(text)}
+    finally:
+        user32.CloseClipboard()
+
 def foreground_info():
     hwnd = user32.GetForegroundWindow()
     return {'hwnd': int(hwnd or 0), 'title': _win_title(hwnd) if hwnd else ''}
@@ -598,7 +671,23 @@ def ensure_desktop(max_iter=5, settle_polls=8, poll_gap=0.5):
             if clean_streak >= 2:
                 break
             time.sleep(poll_gap)
-    return {'closed': closed, 'foreground': foreground_info()}
+    # Fallback: some Win11 builds keep the search/Start flyout foreground no matter
+    # how many times we tap Win (the toggle just swaps Start<->Search, never closing).
+    # Terminating the flyout host processes reliably clears the stuck overlay that
+    # would otherwise steal our keystrokes; they auto-respawn on demand, so this is
+    # harmless (shell name-matched, language/edition-neutral).
+    killed = []
+    if _proc_of_hwnd(user32.GetForegroundWindow()).lower() in _SHELL_FLYOUT_HOSTS:
+        for host in _SHELL_FLYOUT_HOSTS:
+            try:
+                r = subprocess.run(['taskkill', '/IM', host, '/F'],
+                                   capture_output=True, timeout=5)
+                if r.returncode == 0:
+                    killed.append(host)
+            except Exception:
+                pass
+        time.sleep(0.6)
+    return {'closed': closed, 'killed': killed, 'foreground': foreground_info()}
 
 def find_window(title=None, hwnd=None, process=None):
     """Resolve a target top-level window. Priority: explicit hwnd > process/title
@@ -824,6 +913,10 @@ class AgentHandler(http.server.BaseHTTPRequestHandler):
             return browser_screenshot()
         elif action == 'browser_targets':
             return browser_targets()
+        elif action == 'clipboard_get':
+            return clipboard_get()
+        elif action == 'clipboard_set':
+            return clipboard_set(body.get('text', ''))
         elif action == 'health':
             return {'status': 'ok', 'role': 'inner_agent',
                     'user': os.environ.get('USERNAME', '?'), 'port': PORT}
@@ -1705,8 +1798,11 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     srv = ThreadedHTTPServer((BIND, PORT), AgentHandler)
-    print(f'[vm_inner_agent v2] {os.environ.get("USERNAME","?")} listening on {BIND}:{PORT}')
-    sys.stdout.flush()
+    try:
+        print(f'[vm_inner_agent v2] {os.environ.get("USERNAME","?")} listening on {BIND}:{PORT}')
+        sys.stdout.flush()
+    except Exception:
+        pass  # windowless (pythonw) with no redirectable stream -- never fatal
     srv.serve_forever()
 
 if __name__ == '__main__':
