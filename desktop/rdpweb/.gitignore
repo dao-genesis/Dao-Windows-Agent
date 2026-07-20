@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+# mstsc.js 客户端资产(GPLv3)运行期获取,不入库
+client/rle.js
+client/keyboard.js
+client/mstsc.js
+client/canvas.js
