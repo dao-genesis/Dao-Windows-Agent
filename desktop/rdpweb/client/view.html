@@ -1,0 +1,37 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<title>DAO 内嵌远程桌面 · 官方RDP</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:system-ui,sans-serif;background:#000;color:#ddd;overflow:hidden}
+#hd{height:24px;display:flex;justify-content:space-between;align-items:center;padding:0 8px;background:#1b1b22;border-bottom:1px solid #2c2c36;font-size:12px}
+#hd b{color:#6cc0ff}
+#vp{position:absolute;top:24px;left:0;right:0;bottom:0;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center}
+#vp canvas{max-width:100%;max-height:100%;background:#000;cursor:crosshair}
+</style></head><body>
+<div id="hd"><b id="label">☯ DAO 内嵌远程桌面</b><span class="st" id="st">连接中…</span></div>
+<div id="vp"><canvas id="cv" width="1280" height="800"></canvas></div>
+<script src="./mstsc.js"></script>
+<script src="./keyboard.js"></script>
+<script src="./rle.js"></script>
+<script src="./canvas.js"></script>
+<script src="./client_ws.js"></script>
+<script>
+function qp(k, d){ var m = new RegExp('[?&]'+k+'=([^&]*)').exec(window.location.search); return m ? decodeURIComponent(m[1]) : d; }
+var IP = qp('ip', '127.0.0.1'), PORT = parseInt(qp('port', '3389'), 10) || 3389;
+var TARGET = qp('target', ''), LABEL = qp('label', IP + ':' + PORT);
+document.getElementById('label').textContent = '☯ 内嵌远程桌面 · ' + LABEL + '(官方RDP·canvas·非 mstsc)';
+var moduleReady = (typeof Module !== 'undefined' && Module.calledRun);
+function moduleOk(){ return moduleReady || (typeof Module !== 'undefined' && Module.calledRun); }
+function build(){
+  if (window.__built || !moduleOk()) return;
+  window.__built = 1;
+  var canvas = document.getElementById('cv');
+  var c = Mstsc.client.create(canvas);
+  c.paneEl = document.getElementById('vp'); c.statusEl = document.getElementById('st');
+  c.connect(TARGET ? { target: TARGET } : { ip: IP, port: PORT }, function(err){});
+}
+if (typeof Module !== 'undefined') { Module['onRuntimeInitialized'] = function(){ moduleReady = true; build(); }; }
+document.addEventListener('DOMContentLoaded', build);
+window.addEventListener('load', function(){ setTimeout(function(){ moduleReady = true; build(); }, 800); });
+setTimeout(function(){ moduleReady = true; build(); }, 2500);
+</script></body></html>
