@@ -26,7 +26,7 @@
     "commands": [
       {
         "command": "daoWin.home",
-        "title": "DAO: 归一主页（开 dao.unified 面板 · 含 🪟 Windows 管理子板块）"
+        "title": "DAO: 归一主页（原 dao-one/9920 全能板 · 含 🪟 Windows 板块）"
       },
       {
         "command": "daoWin.openDesktop",
@@ -97,10 +97,6 @@
       {
         "command": "daoWin.proxy.preview",
         "title": "DAO · 提示词引擎: 道化预览（官方 SP → 经文+overlay）"
-      },
-      {
-        "command": "dao.unified.open",
-        "title": "DAO: 归一面板（插件本源 · 含 🪟 Windows 管理板块）"
       }
     ],
     "configuration": {
@@ -157,16 +153,6 @@
         {
           "id": "daoWin.cascade",
           "name": "Cascade · 三模式",
-          "type": "webview"
-        },
-        {
-          "id": "dao.unified",
-          "name": "归一 · 插件本源",
-          "type": "webview"
-        },
-        {
-          "id": "dao.proxyPro",
-          "name": "Proxy Pro",
           "type": "webview"
         }
       ]
