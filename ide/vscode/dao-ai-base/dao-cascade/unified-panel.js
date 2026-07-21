@@ -1616,17 +1616,69 @@ function renderWinRdp(){
   if(WINEDIT!==null)h+=renderWinRdpForm();
   return h;
 }
+// 官方「远程桌面连接」(mstsc)对话框原样复刻: 五页页签(常规/显示/本地资源/体验/高级),
+// 控件与措辞同官方一致, 每个控件 1:1 对应标准 .rdp 键; 不生产新交互, 保存/连接即官方体系。
+// 五页全部控件常驻 DOM(仅 CSS 切页), 切页不丢已填内容。
+const WF_RES=[[640,480],[800,600],[1024,768],[1280,720],[1366,768],[1600,900],[1920,1080],[2560,1440]];
 function renderWinRdpForm(){
   let p={};(WIN.rdp||[]).forEach(x=>{if(x.name===WINEDIT)p=x;});
   const iv=(k,d)=>E(p[k]!==undefined?p[k]:(d===undefined?'':d));
   const ck=(k,d)=>(p[k]!==undefined?p[k]:d)?' checked':'';
   const sel=(k,v,d)=>String(p[k]===undefined?d:p[k])===String(v)?' selected':'';
-  let h='<div class="card"><div class="cr"><span class="l"><b>'+(WINEDIT?'编辑':'新建')+'</b></span><span class="v muted">官方五页配置收编 → .json+.rdp</span></div>';
-  h+='<div class="cr"><span class="l">常规</span><span class="v"><input id="wf_name" placeholder="连接名" value="'+iv('name')+'"'+(WINEDIT?' disabled':'')+'> <input id="wf_host" placeholder="主机/IP" value="'+iv('host')+'"> <input id="wf_port" size="5" placeholder="3389" value="'+iv('port')+'"> <input id="wf_user" placeholder="用户名" value="'+iv('username')+'"></span></div>';
-  h+='<div class="cr"><span class="l">显示</span><span class="v"><input id="wf_w" size="5" placeholder="1920" value="'+iv('width')+'"> × <input id="wf_h" size="5" placeholder="1080" value="'+iv('height')+'"> <label><input type="checkbox" id="wf_full"'+ck('fullscreen',true)+'>全屏</label> <label><input type="checkbox" id="wf_multi"'+ck('multimon',false)+'>多显示器</label></span></div>';
-  h+='<div class="cr"><span class="l">本地资源</span><span class="v"><label><input type="checkbox" id="wf_clip"'+ck('clipboard',true)+'>剪贴板</label> <label><input type="checkbox" id="wf_prn"'+ck('printers',false)+'>打印机</label> <label><input type="checkbox" id="wf_drv"'+ck('drives',false)+'>驱动器</label> <select id="wf_audio"><option value="0"'+sel('audiomode',0,0)+'>本机播放</option><option value="1"'+sel('audiomode',1,0)+'>远程播放</option><option value="2"'+sel('audiomode',2,0)+'>不播放</option></select></span></div>';
-  h+='<div class="cr"><span class="l">体验</span><span class="v"><select id="wf_conn"><option value="7"'+sel('conntype',7,7)+'>自动检测</option><option value="1"'+sel('conntype',1,7)+'>调制解调器</option><option value="6"'+sel('conntype',6,7)+'>LAN</option></select> <label><input type="checkbox" id="wf_reconn"'+ck('autoreconnect',true)+'>断线自动重连</label></span></div>';
-  h+='<div class="cr"><span class="l">高级</span><span class="v">认证 <select id="wf_auth"><option value="2"'+sel('authlevel',2,2)+'>警告</option><option value="1"'+sel('authlevel',1,2)+'>不连接</option><option value="0"'+sel('authlevel',0,2)+'>直接连</option></select> <input id="wf_gw" placeholder="RD 网关(可空)" value="'+iv('gateway')+'"></span></div>';
+  const gcur=p.gwmethod!==undefined?p.gwmethod:(p.gateway?'manual':'auto');
+  const gsel=v=>gcur===v?' selected':'';
+  let ri=WF_RES.length;
+  if(p.fullscreen===false){ri=WF_RES.findIndex(r=>String(r[0])===String(p.width)&&String(r[1])===String(p.height));if(ri<0)ri=6;}
+  const resLabel=ri>=WF_RES.length?'全屏':(WF_RES[ri][0]+' × '+WF_RES[ri][1]+' 像素');
+  let h='<div class="card"><div class="cr"><span class="l"><b>'+(WINEDIT?'编辑':'新建')+' · 远程桌面连接</b></span><span class="v muted">官方对话框原样收编 → 标准 .rdp · 连接即 mstsc</span></div>';
+  h+='<div class="cr"><span class="v" style="display:flex;gap:4px;flex-wrap:wrap">'+[['general','常规'],['display','显示'],['local','本地资源'],['exp','体验'],['adv','高级']].map((t,i)=>'<button class="btn'+(i?' sec':'')+'" data-wtab="'+t[0]+'">'+t[1]+'</button>').join('')+'</span></div>';
+  // 常规 · 登录设置/连接设置
+  h+='<div id="wtab_general" class="wtab">';
+  h+='<div class="st">登录设置</div>';
+  h+='<div class="cr"><span class="l">计算机(C)</span><span class="v"><input id="wf_host" placeholder="示例: computer.fabrikam.com" value="'+iv('host')+'"> : <input id="wf_port" size="5" placeholder="3389" value="'+iv('port')+'"></span></div>';
+  h+='<div class="cr"><span class="l">用户名</span><span class="v"><input id="wf_user" value="'+iv('username')+'"></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v muted">当你连接时将向你询问凭据。</span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_savecred"'+ck('savecred',false)+'>允许我保存凭据(R)</label></span></div>';
+  h+='<div class="st">连接设置</div>';
+  h+='<div class="cr"><span class="l">连接名</span><span class="v"><input id="wf_name" placeholder="保存的连接名(.rdp 文件名)" value="'+iv('name')+'"'+(WINEDIT?' disabled':'')+'></span></div>';
+  h+='</div>';
+  // 显示 · 显示配置/颜色
+  h+='<div id="wtab_display" class="wtab" style="display:none">';
+  h+='<div class="st">显示配置</div>';
+  h+='<div class="cr"><span class="l">选择远程桌面的大小</span><span class="v">小 <input type="range" id="wf_res" min="0" max="'+WF_RES.length+'" step="1" value="'+ri+'" style="vertical-align:middle"> 大 · <span id="wf_reslabel">'+resLabel+'</span></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_multi"'+ck('multimon',false)+'>将我的所有监视器用于远程会话(U)</label></span></div>';
+  h+='<div class="st">颜色</div>';
+  h+='<div class="cr"><span class="l">选择远程会话的颜色深度(C)</span><span class="v"><select id="wf_bpp"><option value="15"'+sel('bpp',15,32)+'>增强色(15 位)</option><option value="16"'+sel('bpp',16,32)+'>增强色(16 位)</option><option value="24"'+sel('bpp',24,32)+'>真彩色(24 位)</option><option value="32"'+sel('bpp',32,32)+'>最高质量(32 位)</option></select></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_connbar"'+ck('connbar',true)+'>全屏显示时显示连接栏(D)</label></span></div>';
+  h+='</div>';
+  // 本地资源 · 远程音频/键盘/本地设备和资源
+  h+='<div id="wtab_local" class="wtab" style="display:none">';
+  h+='<div class="st">远程音频</div>';
+  h+='<div class="cr"><span class="l">远程音频播放</span><span class="v"><select id="wf_audio"><option value="0"'+sel('audiomode',0,0)+'>在此计算机上播放</option><option value="2"'+sel('audiomode',2,0)+'>不播放</option><option value="1"'+sel('audiomode',1,0)+'>在远程计算机上播放</option></select></span></div>';
+  h+='<div class="cr"><span class="l">远程音频录制</span><span class="v"><select id="wf_audiocap"><option value="0"'+sel('audiocapture',0,0)+'>不要录制</option><option value="1"'+sel('audiocapture',1,0)+'>从此计算机录制</option></select></span></div>';
+  h+='<div class="st">键盘</div>';
+  h+='<div class="cr"><span class="l">应用 Windows 组合键(K)</span><span class="v"><select id="wf_kbd"><option value="2"'+sel('keyboardhook',2,2)+'>仅在使用全屏时</option><option value="0"'+sel('keyboardhook',0,2)+'>在此计算机上</option><option value="1"'+sel('keyboardhook',1,2)+'>在远程计算机上</option></select></span></div>';
+  h+='<div class="st">本地设备和资源</div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_prn"'+ck('printers',true)+'>打印机(T)</label> <label><input type="checkbox" id="wf_clip"'+ck('clipboard',true)+'>剪贴板(L)</label></span></div>';
+  h+='<div class="cr"><span class="l">详细信息(M)</span><span class="v"><label><input type="checkbox" id="wf_smart"'+ck('smartcards',true)+'>智能卡</label> <label><input type="checkbox" id="wf_ports"'+ck('ports',false)+'>端口</label> <label><input type="checkbox" id="wf_drv"'+ck('drives',false)+'>驱动器</label> <label><input type="checkbox" id="wf_pnp"'+ck('pnp',false)+'>其他支持的即插即用设备</label></span></div>';
+  h+='</div>';
+  // 体验 · 性能
+  h+='<div id="wtab_exp" class="wtab" style="display:none">';
+  h+='<div class="st">性能</div>';
+  h+='<div class="cr"><span class="l">选择连接速度来优化性能(P)</span><span class="v"><select id="wf_conn"><option value="7"'+sel('conntype',7,7)+'>自动检测连接质量(A)</option><option value="1"'+sel('conntype',1,7)+'>调制解调器(56 kbps)</option><option value="2"'+sel('conntype',2,7)+'>低速宽带(256 kbps - 2 Mbps)</option><option value="3"'+sel('conntype',3,7)+'>卫星(2 Mbps - 16 Mbps, 高延迟)</option><option value="4"'+sel('conntype',4,7)+'>高速宽带(2 Mbps - 10 Mbps)</option><option value="5"'+sel('conntype',5,7)+'>WAN(10 Mbps 或更高, 高延迟)</option><option value="6"'+sel('conntype',6,7)+'>LAN(10 Mbps 或更高)</option></select></span></div>';
+  h+='<div class="cr"><span class="l">允许以下项</span><span class="v"><label><input type="checkbox" id="wf_wall"'+ck('wallpaper',true)+'>桌面背景(B)</label> <label><input type="checkbox" id="wf_font"'+ck('fontsmoothing',false)+'>字体平滑(F)</label> <label><input type="checkbox" id="wf_comp"'+ck('composition',false)+'>桌面布局(C)</label> <label><input type="checkbox" id="wf_drag"'+ck('fullwindowdrag',false)+'>拖拉时显示窗口内容(S)</label></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_anim"'+ck('menuanims',false)+'>菜单和窗口动画(M)</label> <label><input type="checkbox" id="wf_theme"'+ck('themes',true)+'>视觉样式(V)</label> <label><input type="checkbox" id="wf_cache"'+ck('bitmapcache',true)+'>持久性位图缓存(P)</label></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_reconn"'+ck('autoreconnect',true)+'>如果连接中断则重新连接(R)</label></span></div>';
+  h+='</div>';
+  // 高级 · 服务器身份验证/从任何位置连接
+  h+='<div id="wtab_adv" class="wtab" style="display:none">';
+  h+='<div class="st">服务器身份验证</div>';
+  h+='<div class="cr"><span class="l">如果服务器身份验证失败(F)</span><span class="v"><select id="wf_auth"><option value="2"'+sel('authlevel',2,2)+'>警告我</option><option value="1"'+sel('authlevel',1,2)+'>不连接</option><option value="0"'+sel('authlevel',0,2)+'>连接而不发出警告</option></select></span></div>';
+  h+='<div class="st">从任何位置连接 · RD 网关服务器设置</div>';
+  h+='<div class="cr"><span class="l">连接方法</span><span class="v"><select id="wf_gwm"><option value="auto"'+gsel('auto')+'>自动检测 RD 网关服务器设置(A)</option><option value="manual"'+gsel('manual')+'>使用这些 RD 网关服务器设置(S)</option><option value="none"'+gsel('none')+'>不使用 RD 网关服务器(O)</option></select></span></div>';
+  h+='<div class="cr"><span class="l">服务器名(V)</span><span class="v"><input id="wf_gw" value="'+iv('gateway')+'"></span></div>';
+  h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_gwbypass"'+ck('gwbypass',true)+'>对本地地址绕过 RD 网关服务器(B)</label> <label><input type="checkbox" id="wf_gwcred"'+ck('gwcreds',true)+'>对 RD 网关使用我的 RD 凭据(N)</label></span></div>';
+  h+='</div>';
   h+='<div class="cr"><span class="l"></span><span class="v"><button class="btn" id="winRdpSave">保存(.json+.rdp)</button> <button class="btn sec" id="winRdpCancel">取消</button></span></div></div>';
   return h;
 }
@@ -1922,7 +1974,22 @@ function render(){
   document.querySelectorAll('[data-winrdped]').forEach(el=>el.onclick=()=>{WINEDIT=el.dataset.winrdped;render();});
   document.querySelectorAll('[data-winrdpdel]').forEach(el=>el.onclick=()=>{WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-del',name:el.dataset.winrdpdel});});
   document.querySelectorAll('[data-winsub]').forEach(el=>el.onclick=()=>{WIN=null;render();vscode.postMessage({type:'win-sub-toggle',id:el.dataset.winsub});});
-  const wrs=document.getElementById('winRdpSave'); if(wrs)wrs.onclick=()=>{const g=id=>document.getElementById(id);const prof={name:g('wf_name').value,host:g('wf_host').value,port:g('wf_port').value,username:g('wf_user').value,width:g('wf_w').value,height:g('wf_h').value,fullscreen:g('wf_full').checked,multimon:g('wf_multi').checked,clipboard:g('wf_clip').checked,printers:g('wf_prn').checked,drives:g('wf_drv').checked,audiomode:g('wf_audio').value,conntype:g('wf_conn').value,autoreconnect:g('wf_reconn').checked,authlevel:g('wf_auth').value,gateway:g('wf_gw').value};WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-save',profile:prof});};
+  // 官方对话框页签切换: 纯 CSS 切页(控件常驻 DOM, 切页不丢已填内容)。
+  document.querySelectorAll('[data-wtab]').forEach(el=>el.onclick=()=>{
+    document.querySelectorAll('.wtab').forEach(d=>d.style.display='none');
+    const pane=document.getElementById('wtab_'+el.dataset.wtab); if(pane)pane.style.display='';
+    document.querySelectorAll('[data-wtab]').forEach(b=>b.className='btn sec'); el.className='btn';
+  });
+  const wres=document.getElementById('wf_res'); if(wres)wres.oninput=()=>{const i=parseInt(wres.value,10);const lb=document.getElementById('wf_reslabel');if(lb)lb.textContent=i>=WF_RES.length?'全屏':(WF_RES[i][0]+' × '+WF_RES[i][1]+' 像素');};
+  const wrs=document.getElementById('winRdpSave'); if(wrs)wrs.onclick=()=>{const g=id=>document.getElementById(id);
+    const ri=parseInt(g('wf_res').value,10);const full=ri>=WF_RES.length;const res=full?[1920,1080]:WF_RES[ri];
+    const prof={name:g('wf_name').value,host:g('wf_host').value,port:g('wf_port').value,username:g('wf_user').value,savecred:g('wf_savecred').checked,
+      fullscreen:full,width:res[0],height:res[1],multimon:g('wf_multi').checked,bpp:g('wf_bpp').value,connbar:g('wf_connbar').checked,
+      audiomode:g('wf_audio').value,audiocapture:g('wf_audiocap').value,keyboardhook:g('wf_kbd').value,
+      printers:g('wf_prn').checked,clipboard:g('wf_clip').checked,smartcards:g('wf_smart').checked,ports:g('wf_ports').checked,drives:g('wf_drv').checked,pnp:g('wf_pnp').checked,
+      conntype:g('wf_conn').value,wallpaper:g('wf_wall').checked,fontsmoothing:g('wf_font').checked,composition:g('wf_comp').checked,fullwindowdrag:g('wf_drag').checked,menuanims:g('wf_anim').checked,themes:g('wf_theme').checked,bitmapcache:g('wf_cache').checked,autoreconnect:g('wf_reconn').checked,
+      authlevel:g('wf_auth').value,gwmethod:g('wf_gwm').value,gateway:g('wf_gw').value,gwbypass:g('wf_gwbypass').checked,gwcreds:g('wf_gwcred').checked};
+    WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-save',profile:prof});};
   const wrc=document.getElementById('winRdpCancel'); if(wrc)wrc.onclick=()=>{WINEDIT=null;render();};
   if((S.board==='overview'||S.board==='windows')&&WIN===null)vscode.postMessage({type:'win-state'});
   document.querySelectorAll('[data-tabgo]').forEach(el=>el.onclick=()=>sw(el.dataset.tabgo));

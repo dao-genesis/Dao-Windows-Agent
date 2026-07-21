@@ -957,31 +957,57 @@ function rdpSafeName(name) {
   return s || null;
 }
 
-// 官方远程桌面连接（mstsc）五页配置 → 标准 .rdp 文件（常规/显示/本地资源/体验/高级）
+// 官方远程桌面连接（mstsc）五页配置 → 标准 .rdp 文件（常规/显示/本地资源/体验/高级）。
+// 对话框每个控件 1:1 对应一个标准 .rdp 键；缺省值与官方 mstsc 出厂默认一致（不生产新语义）。
 function rdpFileContent(p) {
   const b = (v, d) => (v === undefined || v === null ? d : (v ? 1 : 0));
+  const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
+  const gw = p.gwmethod || (p.gateway ? "manual" : "auto");
+  const conntype = num(p.conntype, 7);
   const lines = [
+    // 常规（登录设置）
     "full address:s:" + (p.host || "") + (p.port && String(p.port) !== "3389" ? ":" + p.port : ""),
     "username:s:" + (p.username || ""),
+    "prompt for credentials:i:" + (p.savecred ? 0 : b(p.promptcred, 0)),
+    // 显示（显示配置/颜色/连接栏）
     "screen mode id:i:" + (p.fullscreen === false ? 1 : 2),
-    "desktopwidth:i:" + (parseInt(p.width, 10) || 1920),
-    "desktopheight:i:" + (parseInt(p.height, 10) || 1080),
-    "session bpp:i:" + (parseInt(p.bpp, 10) || 32),
+    "desktopwidth:i:" + num(p.width, 1920),
+    "desktopheight:i:" + num(p.height, 1080),
+    "session bpp:i:" + num(p.bpp, 32),
     "use multimon:i:" + b(p.multimon, 0),
-    "audiomode:i:" + (parseInt(p.audiomode, 10) || 0),
+    "displayconnectionbar:i:" + b(p.connbar, 1),
+    "smart sizing:i:1",
+    // 本地资源（远程音频/键盘/本地设备和资源）
+    "audiomode:i:" + num(p.audiomode, 0),
+    "audiocapturemode:i:" + num(p.audiocapture, 0),
+    "keyboardhook:i:" + num(p.keyboardhook, 2),
     "redirectclipboard:i:" + b(p.clipboard, 1),
     "redirectprinters:i:" + b(p.printers, 0),
+    "redirectsmartcards:i:" + b(p.smartcards, 1),
+    "redirectcomports:i:" + b(p.ports, 0),
     "drivestoredirect:s:" + (p.drives ? "*" : ""),
-    "connection type:i:" + (parseInt(p.conntype, 10) || 7),
-    "networkautodetect:i:" + b(p.autodetect, 1),
+    "devicestoredirect:s:" + (p.pnp ? "*" : ""),
+    // 体验（性能/允许以下项/重新连接）
+    "connection type:i:" + conntype,
+    "networkautodetect:i:" + (conntype === 7 ? 1 : b(p.autodetect, 0)),
+    "bandwidthautodetect:i:" + (conntype === 7 ? 1 : 0),
+    "disable wallpaper:i:" + (b(p.wallpaper, 1) ? 0 : 1),
+    "allow font smoothing:i:" + b(p.fontsmoothing, 0),
+    "allow desktop composition:i:" + b(p.composition, 0),
+    "disable full window drag:i:" + (b(p.fullwindowdrag, 0) ? 0 : 1),
+    "disable menu anims:i:" + (b(p.menuanims, 0) ? 0 : 1),
+    "disable themes:i:" + (b(p.themes, 1) ? 0 : 1),
+    "bitmapcachepersistenable:i:" + b(p.bitmapcache, 1),
     "compression:i:1",
     "autoreconnection enabled:i:" + b(p.autoreconnect, 1),
-    "authentication level:i:" + (parseInt(p.authlevel, 10) || 2),
-    "prompt for credentials:i:" + b(p.promptcred, 0),
-    "gatewayhostname:s:" + (p.gateway || ""),
-    "gatewayusagemethod:i:" + (p.gateway ? 1 : 4),
+    // 高级（服务器身份验证/从任何位置连接 · RD 网关）
+    "authentication level:i:" + num(p.authlevel, 2),
+    "gatewayhostname:s:" + (gw === "manual" ? (p.gateway || "") : ""),
+    "gatewayusagemethod:i:" + (gw === "manual" ? (b(p.gwbypass, 1) ? 2 : 1) : gw === "none" ? 0 : 4),
+    "gatewayprofileusagemethod:i:" + (gw === "auto" ? 0 : 1),
+    "gatewaycredentialssource:i:4",
+    "promptcredentialonce:i:" + b(p.gwcreds, 1),
     "remoteapplicationmode:i:0",
-    "smart sizing:i:1",
   ];
   return lines.join("\r\n") + "\r\n";
 }
@@ -1257,4 +1283,4 @@ function deactivate() {
 }
 
 // desktopHtml 一并导出仅供 headless 单测（校验 webview 模板脚本语法完好，防模板字面量吞字报废整段脚本）。
-module.exports = { activate, deactivate, desktopHtml };
+module.exports = { activate, deactivate, desktopHtml, rdpFileContent };
