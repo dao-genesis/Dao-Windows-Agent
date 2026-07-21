@@ -259,7 +259,10 @@ def test_home_windows_master_control():
     # 原语经 __DAO_WIN_HOME__ 上交归一面板, 不另起独立主页 webview
     assert "globalThis.__DAO_WIN_HOME__" in src
     assert 'createWebviewPanel("daoWinHome"' not in src
-    assert '"dao.unified.open"' in src  # daoWin.home 聚焦归一面板
+    # 正本清源: 归一宿主唯一 = 原 dao-one/9920 全能板(daoWin.home 打开 dao.openCloudPanel),
+    # 不再回退自建 dao.unified 面板
+    assert '"dao.openCloudPanel"' in src
+    assert 'executeCommand("dao.unified.open")' not in src
     for op in ("rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
         assert f"{op}(" in src, f"缺原语 {op}"
     # 归一面板 🪟 子板块消费该原语面(win-rdp-*/win-sub-toggle/win-reveal-dir)

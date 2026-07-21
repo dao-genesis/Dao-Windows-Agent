@@ -1099,10 +1099,12 @@ function installWinHomeHook() {
   };
 }
 
-// 归一主页 = dao.unified 面板本身(单页统管); 命令仅聚焦面板, 不再另起独立 webview。
+// 归一主页 = 原 dao-one/9920 全能板本体(🪟 Windows 为其中一个 tab · 经 dao-one-windows 衍生注入)。
+// 不再回退到任何自建面板——宿主缺失即明示提示装衍生版, 绝不静默顶替本源。
 function openHome() {
-  return vscode.commands.executeCommand("dao.unified.open").then(null, () =>
-    vscode.window.showWarningMessage("DAO: 归一面板不可达(dao.unified.open)"));
+  return vscode.commands.executeCommand("dao.openCloudPanel").then(null, () =>
+    vscode.window.showWarningMessage(
+      "DAO: 未找到归一宿主(dao-one)。请安装 dao-one(+🪟 Windows) 衍生版: ide/vscode/dao-one-windows/"));
 }
 
 // 二合一统领(参照 devin-remote/dao-one): 子引擎 vendored 在 vendor/<名>/extension.js,
@@ -1203,7 +1205,8 @@ async function activate(context) {
   installWinHomeHook();
   try {
     const daoAiBase = require("./dao-ai-base");
-    daoAiBase.activateDaoAiBase(context, { ns: "daoWin", log: (m) => log("[dao-ai-base] " + m) });
+    // unified:false — 不再自建 dao.unified/dao.proxyPro 侧栏(归一宿主唯一 = 原 dao-one 全能板)。
+    daoAiBase.activateDaoAiBase(context, { ns: "daoWin", unified: false, log: (m) => log("[dao-ai-base] " + m) });
     installUnifiedShaperDispatcher(daoAiBase, log);
   } catch (e) { log("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
   // 提示词隔离替换引擎(dao-proxy-pro · Proxy Pro 同源薄片): 读 ~/.dao/mode.json 契约道化 SP。
