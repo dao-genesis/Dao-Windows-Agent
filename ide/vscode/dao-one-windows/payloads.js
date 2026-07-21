@@ -12,6 +12,7 @@
 const FRONTEND_JS = [
 "/* ── dao-one-windows · 🪟 Windows 板块(官方 mstsc 五页收编 · 全能板同级 tab) ── */",
 "var WRD={list:null,edit:null};",
+"var WEMB={url:null,label:null};",
 "var WRD_RES=[[640,480],[800,600],[1024,768],[1280,720],[1366,768],[1600,900],[1920,1080],[2560,1440]];",
 "function wrCur(){if(WRD.edit===''||WRD.edit===null)return {};var p={};(WRD.list||[]).forEach(function(x){if(x.name===WRD.edit)p=x;});return p;}",
 "function wrForm(){var p=wrCur();",
@@ -73,9 +74,11 @@ const FRONTEND_JS = [
 "  if(WRD.list===null){v.innerHTML='<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载远程桌面连接…</p></div>';cmd('winRdpList');return;}",
 "  var h='<div class=\"st\">🪟 Windows · 远程桌面连接(官方 mstsc 五页配置收编)</div>';",
 "  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">连接 '+WRD.list.length+' 个</span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrNew()\">＋新建</button> <button class=\"btn ghost\" onclick=\"cmd(&#39;winRdpOpenDir&#39;)\">打开目录</button> <button class=\"btn ghost\" onclick=\"wrReload()\">⟳</button></span></div></div>';",
+"  if(WEMB.url){h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">🖥 内嵌远程桌面 · '+esc(WEMB.label||'')+'</span><span class=\"v\" style=\"color:var(--muted)\">route A · canvas 渲染 · 非 mstsc <button class=\"btn ghost\" onclick=\"wrEmbClose()\">关闭内嵌</button></span></div><iframe src=\"'+esc(WEMB.url)+'\" style=\"width:100%;height:640px;border:0;border-radius:8px;background:#000;display:block\" allow=\"clipboard-read;clipboard-write\"></iframe></div>';}",
 "  for(var i=0;i<WRD.list.length;i++){var p=WRD.list[i];",
 "    h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">🖥 '+esc(p.name||'')+'</span><span class=\"v\">'+",
-"      '<button class=\"btn primary\" onclick=\"wrGo('+i+')\">连接</button> '+",
+"      '<button class=\"btn primary\" onclick=\"wrGoEmbed('+i+')\">内嵌连接</button> '+",
+"      '<button class=\"btn ghost\" onclick=\"wrGo('+i+')\">官方 mstsc</button> '+",
 "      '<button class=\"btn ghost\" onclick=\"wrEdit('+i+')\">编辑</button> '+",
 "      '<button class=\"btn danger\" onclick=\"wrDel('+i+')\">删除</button></span></div>'+",
 "      '<div class=\"cr\"><span class=\"l\" style=\"color:var(--muted)\">'+esc(p.host||'')+(p.port?':'+esc(String(p.port)):'')+(p.username?' · '+esc(p.username):'')+'</span></div></div>';}",
@@ -86,6 +89,8 @@ const FRONTEND_JS = [
 "function wrEdit(i){var p=WRD.list[i];if(p)WRD.edit=p.name;rWindows();}",
 "function wrDel(i){var p=WRD.list[i];if(!p)return;WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpDel',{name:p.name});}",
 "function wrGo(i){var p=WRD.list[i];if(p)cmd('winRdpConnect',{name:p.name});}",
+"function wrGoEmbed(i){var p=WRD.list[i];if(!p)return;WEMB={url:null,label:(p.name||p.host||'')};rWindows();cmd('winRdpEmbed',{profile:p});}",
+"function wrEmbClose(){WEMB={url:null,label:null};rWindows();}",
 "function wrCancel(){WRD.edit=null;rWindows();}",
 "function wrTab(t){document.querySelectorAll('.wtab').forEach(function(d){d.style.display='none';});var pane=document.getElementById('wtab_'+t);if(pane)pane.style.display='';document.querySelectorAll('[data-wtab]').forEach(function(b){b.className='btn ghost';});var el=document.querySelector('[data-wtab=\"'+t+'\"]');if(el)el.className='btn';}",
 "function wrRes(el){var i=parseInt(el.value,10);var lb=document.getElementById('wf_reslabel');if(lb)lb.textContent=i>=WRD_RES.length?'全屏':(WRD_RES[i][0]+' × '+WRD_RES[i][1]+' 像素');}",
@@ -99,7 +104,7 @@ const FRONTEND_JS = [
 "    conntype:g('wf_conn').value,wallpaper:g('wf_wall').checked,fontsmoothing:g('wf_font').checked,composition:g('wf_comp').checked,fullwindowdrag:g('wf_drag').checked,menuanims:g('wf_anim').checked,themes:g('wf_theme').checked,bitmapcache:g('wf_cache').checked,autoreconnect:g('wf_reconn').checked,",
 "    authlevel:g('wf_auth').value,gwmethod:g('wf_gwm').value,gateway:g('wf_gw').value.trim(),gwbypass:g('wf_gwbypass').checked,gwcreds:g('wf_gwcred').checked};",
 "  WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpSave',{profile:prof});}",
-"window.addEventListener('message',function(ev){var d=ev.data||{};if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}});",
+"window.addEventListener('message',function(ev){var d=ev.data||{};if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}else if(d.type==='winRdpEmbed'){if(d.error){toast(d.error,false);WEMB={url:null,label:null};}else{WEMB={url:d.url,label:d.label||WEMB.label};}if(S.tab==='windows')rWindows();}});",
 ].join("\n");
 
 // 宿主侧: RDP 档案落盘(~/.dao/rdp) + 标准 .rdp 生成 + 官方 mstsc.exe 启动(仅 Windows)。
@@ -203,6 +208,55 @@ function daoWinRdpConnect(name) {
         return { ok: true };
     } catch (e) { return { error: String(e && e.message || e) }; }
 }
+// ── route A · 内嵌远程桌面(官方 RDP 协议 → 归一板块内 canvas · 非 mstsc) ──
+// desktop/rdpweb 网关(node-rdpjs + ws)持凭据(C:/ProgramData/dao_vm/rdp_cred.json·不下发浏览器),
+// 浏览器仅收 bitmap/回传鼠键。此原语确保网关在 127.0.0.1:9250 起来并给出内嵌 view.html 地址。
+const DAO_RDPWEB_PORT = 9250;
+function daoWinRdpwebDir() {
+    const cands = [];
+    if (process.env.DAO_RDPWEB_DIR) cands.push(process.env.DAO_RDPWEB_DIR);
+    cands.push(path.join(os.homedir(), '.dao', 'rdpweb'));
+    cands.push('C:/dao_vm/rdpweb');
+    for (const d of cands) { try { if (d && fs.existsSync(path.join(d, 'gateway.js'))) return d; } catch (e) { /* 守柔 */ } }
+    return null;
+}
+function daoRdpwebUp(port) {
+    return new Promise((resolve) => {
+        const net = require('net');
+        let done = false;
+        const s = net.connect(port, '127.0.0.1');
+        const fin = (v) => { if (!done) { done = true; try { s.destroy(); } catch (e) { /* 守柔 */ } resolve(v); } };
+        s.on('connect', () => fin(true));
+        s.on('error', () => fin(false));
+        setTimeout(() => fin(false), 800);
+    });
+}
+async function daoWinRdpEmbed(profile) {
+    if (process.platform !== 'win32') return { error: '内嵌远程桌面仅 Windows 本机可用' };
+    const p = profile || {};
+    const ip = (p.host && String(p.host).trim()) || '127.0.0.1';
+    const rport = (p.port && String(p.port).trim()) || '3389';
+    const label = (p.name || p.host || (ip + ':' + rport));
+    const credPath = 'C:/ProgramData/dao_vm/rdp_cred.json';
+    if (!fs.existsSync(credPath)) return { error: '缺凭据 ' + credPath + '(网关持有·不下发浏览器):{"username","password","domain"}' };
+    let up = await daoRdpwebUp(DAO_RDPWEB_PORT);
+    if (!up) {
+        const dir = daoWinRdpwebDir();
+        if (!dir) return { error: '未找到 desktop/rdpweb 网关(设 DAO_RDPWEB_DIR 或置于 ~/.dao/rdpweb;需先 npm install + fetch-client-assets.ps1)' };
+        try {
+            const cp = require('child_process');
+            const child = cp.spawn(process.execPath, ['gateway.js'], {
+                cwd: dir, detached: true, stdio: 'ignore', windowsHide: true,
+                env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' })
+            });
+            child.unref();
+        } catch (e) { return { error: '网关启动失败: ' + String(e && e.message || e) }; }
+        for (let i = 0; i < 24 && !up; i++) { await new Promise((r) => setTimeout(r, 250)); up = await daoRdpwebUp(DAO_RDPWEB_PORT); }
+        if (!up) return { error: '网关未在 127.0.0.1:' + DAO_RDPWEB_PORT + ' 起来(检查 node/依赖/客户端资产)' };
+    }
+    const q = 'view.html?ip=' + encodeURIComponent(ip) + '&port=' + encodeURIComponent(rport) + '&label=' + encodeURIComponent(label);
+    return { ok: true, url: 'http://127.0.0.1:' + DAO_RDPWEB_PORT + '/' + q, ip: ip, port: rport, label: label };
+}
 `;
 
 const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块(RDP 档案管理 · 官方 mstsc 收编) ──
@@ -232,8 +286,13 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
                 reply({ type: 'actionResult', command: 'winRdpOpenDir', ok: true });
                 break;
             }
+            case 'winRdpEmbed': {
+                const r = await daoWinRdpEmbed(msg.profile || {});
+                reply(Object.assign({ type: 'winRdpEmbed' }, r || {}));
+                break;
+            }
 `;
 
-const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir'";
+const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winRdpEmbed'";
 
 module.exports = { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD };

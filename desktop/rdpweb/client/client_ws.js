@@ -33,7 +33,12 @@
       var proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
       var ws = new WebSocket(proto + window.location.host + '/ws');
       this.ws = ws;
-      ws.onopen = function () { self.emit({ t: 'infos', target: target, screen: { width: self.canvas.width, height: self.canvas.height }, locale: (navigator.language || 'en') }); };
+      ws.onopen = function () {
+        var info = { t: 'infos', screen: { width: self.canvas.width, height: self.canvas.height }, locale: (navigator.language || 'en') };
+        if (target && typeof target === 'object') { info.target = target.target; info.ip = target.ip; info.port = target.port; }
+        else { info.target = target; }
+        self.emit(info);
+      };
       ws.onmessage = function (ev) { var m = JSON.parse(ev.data);
         if (m.t === 'connect') { self.activeSession = true; setStatus(self, '● 官方RDP已连', '#7fdc7f'); }
         else if (m.t === 'bitmap') { m.data = base64ToU8(m.data); self.render.update(m); }

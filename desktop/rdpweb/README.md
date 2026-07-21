@@ -34,7 +34,13 @@ powershell -File .\fetch-client-assets.ps1   # 取 mstsc.js 客户端资产(GPLv
 #   C:\ProgramData\dao_vm\rdp_cred.json = {"username":"<acct>","password":"<pwd>","domain":""}
 node gateway.js                   # 监听 127.0.0.1:9250
 ```
-然后在归一网页(/shell)内新开子页 `http://127.0.0.1:9250`。
+网关就绪后,归一 🪟 Windows 板块的每条连接都有「内嵌连接」按钮(route A):点击即由
+宿主原语 `daoWinRdpEmbed` 确保网关在 `127.0.0.1:9250` 起来(未起则以 `ELECTRON_RUN_AS_NODE`
+拉起 `gateway.js`),并把 `view.html?ip=&port=` 作为 `<iframe>` 直接嵌进板块内 —— 桌面本体
+就在归一板块里渲染,**不新开浏览器子页、不调 mstsc**。宿主按候选序解析网关目录:
+`DAO_RDPWEB_DIR` → `~/.dao/rdpweb` → `C:\dao_vm\rdpweb`。
+- `client/grid.html`:两路主账号分身并排(手动/演示)。
+- `client/view.html`:单目标内嵌视图(板块 iframe 用,读 `?ip=&port=&label=`)。
 
 ## 前置(用户真机·官方 RDP)
 - 终端服务开启、3389 监听;同账号多会话需 `fSingleSessionPerUser=0`(RDPWrap 或组策略)。
