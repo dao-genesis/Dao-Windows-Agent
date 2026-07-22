@@ -10,9 +10,16 @@
 // 官方「远程桌面连接」五页(常规/显示/本地资源/体验/高级) 1:1 收编, 控件与措辞同官方,
 // 每个控件对应标准 .rdp 键; 保存 → .json+.rdp, 连接 → mstsc.exe(仅 Windows)。
 const FRONTEND_JS = [
-"/* ── dao-one-windows · 🪟 Windows 板块(官方 mstsc 五页收编 · 全能板同级 tab) ── */",
+"/* ── dao-one-windows · 🪟 Windows 归一板块(全能板同级 tab) ──",
+"   本源(正本清源之再正本清源): Windows 收敛为两模块 + N 路独立桌面板块 —",
+"   ① 统一配置管理台(官方 mstsc 五页全功能收编 · 连接档案);",
+"   ② 账号池(仿切号板 · 多 Windows 账号生命周期, 对齐 core/accounts.py 语义);",
+"   开桌面 = 动态新建一个与主页/账号平级的【独立顶层桌面板块】(canvas 走 rdpjs 网关渲染),",
+"   桌面本体不再内嵌 Windows 子标签内部。*/",
 "var WRD={list:null,edit:null};",
-"var WEMB={url:null,label:null};",
+"var WACC={list:null,creating:false};",
+"var WDESK={seq:0};",
+"var WMOD='config';",
 "var WRD_RES=[[640,480],[800,600],[1024,768],[1280,720],[1366,768],[1600,900],[1920,1080],[2560,1440]];",
 "function wrCur(){if(WRD.edit===''||WRD.edit===null)return {};var p={};(WRD.list||[]).forEach(function(x){if(x.name===WRD.edit)p=x;});return p;}",
 "function wrForm(){var p=wrCur();",
@@ -70,14 +77,23 @@ const FRONTEND_JS = [
 "  h+='</div>';",
 "  h+='<div class=\"cr\"><span class=\"l\"></span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrSave()\">保存(.json+.rdp)</button> <button class=\"btn ghost\" onclick=\"wrCancel()\">取消</button></span></div></div>';",
 "  return h;}",
+"/* ── 板块外壳: 两模块切换(① 统一配置管理台 / ② 账号池) ── */",
 "function rWindows(){var v=document.getElementById('v-windows');if(!v)return;",
-"  if(WRD.list===null){v.innerHTML='<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载远程桌面连接…</p></div>';cmd('winRdpList');return;}",
-"  var h='<div class=\"st\">🪟 Windows · 远程桌面连接(官方 mstsc 五页配置收编)</div>';",
-"  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">连接 '+WRD.list.length+' 个</span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrNew()\">＋新建</button> <button class=\"btn ghost\" onclick=\"cmd(&#39;winRdpOpenDir&#39;)\">打开目录</button> <button class=\"btn ghost\" onclick=\"wrReload()\">⟳</button></span></div></div>';",
-"  if(WEMB.url){h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">🖥 内嵌远程桌面 · '+esc(WEMB.label||'')+'</span><span class=\"v\" style=\"color:var(--muted)\">route A · canvas 渲染 · 非 mstsc <button class=\"btn ghost\" onclick=\"wrEmbClose()\">关闭内嵌</button></span></div><iframe src=\"'+esc(WEMB.url)+'\" style=\"width:100%;height:640px;border:0;border-radius:8px;background:#000;display:block\" allow=\"clipboard-read;clipboard-write\"></iframe></div>';}",
+"  var h='<div class=\"st\">🪟 Windows · 远程桌面归一管理(不依赖浏览器/官方软件 · 桌面路由进独立板块)</div>';",
+"  h+='<div class=\"card\"><div class=\"cr\"><span class=\"v\" style=\"display:flex;gap:6px;flex-wrap:wrap\">'+",
+"    '<button class=\"btn'+(WMOD==='config'?'':' ghost')+'\" onclick=\"wmSwitch(&#39;config&#39;)\">① 统一配置管理台</button>'+",
+"    '<button class=\"btn'+(WMOD==='pool'?'':' ghost')+'\" onclick=\"wmSwitch(&#39;pool&#39;)\">② 账号池 · 多账号管理</button>'+",
+"    '</span></div></div>';",
+"  if(WMOD==='pool'){rWinPool(v,h);return;}",
+"  rWinConfig(v,h);}",
+"function wmSwitch(m){WMOD=m;rWindows();}",
+"/* ── 模块① 统一配置管理台: 官方 mstsc 五页连接档案 ── */",
+"function rWinConfig(v,h){",
+"  if(WRD.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载连接档案…</p></div>';cmd('winRdpList');return;}",
+"  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">连接档案 '+WRD.list.length+' 个 · 官方五页全功能收编</span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrNew()\">＋新建</button> <button class=\"btn ghost\" onclick=\"cmd(&#39;winRdpOpenDir&#39;)\">打开目录</button> <button class=\"btn ghost\" onclick=\"wrReload()\">⟳</button></span></div></div>';",
 "  for(var i=0;i<WRD.list.length;i++){var p=WRD.list[i];",
 "    h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">🖥 '+esc(p.name||'')+'</span><span class=\"v\">'+",
-"      '<button class=\"btn primary\" onclick=\"wrGoEmbed('+i+')\">内嵌连接</button> '+",
+"      '<button class=\"btn primary\" onclick=\"wrOpenDesk('+i+')\">开桌面(独立板块)</button> '+",
 "      '<button class=\"btn ghost\" onclick=\"wrGo('+i+')\">官方 mstsc</button> '+",
 "      '<button class=\"btn ghost\" onclick=\"wrEdit('+i+')\">编辑</button> '+",
 "      '<button class=\"btn danger\" onclick=\"wrDel('+i+')\">删除</button></span></div>'+",
@@ -89,9 +105,45 @@ const FRONTEND_JS = [
 "function wrEdit(i){var p=WRD.list[i];if(p)WRD.edit=p.name;rWindows();}",
 "function wrDel(i){var p=WRD.list[i];if(!p)return;WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpDel',{name:p.name});}",
 "function wrGo(i){var p=WRD.list[i];if(p)cmd('winRdpConnect',{name:p.name});}",
-"function wrGoEmbed(i){var p=WRD.list[i];if(!p)return;WEMB={url:null,label:(p.name||p.host||'')};rWindows();cmd('winRdpEmbed',{profile:p});}",
-"function wrEmbClose(){WEMB={url:null,label:null};rWindows();}",
+"function wrOpenDesk(i){var p=WRD.list[i];if(!p)return;toast('拉起桌面板块 '+(p.name||p.host||'')+' …',true);cmd('winRdpEmbed',{profile:p});}",
 "function wrCancel(){WRD.edit=null;rWindows();}",
+"/* ── 模块② 账号池(仿切号板 · 多 Windows 账号生命周期) ── */",
+"function rWinPool(v,h){",
+"  if(WACC.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">👥</div><p style=\"color:var(--muted)\">加载 Windows 账号…</p></div>';cmd('winAcctList');return;}",
+"  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">Windows 账号 '+WACC.list.length+' 个 · 每账号一路独立桌面(RDPWrap 多会话)</span><span class=\"v\"><button class=\"btn primary\" onclick=\"waNew()\">＋建号</button> <button class=\"btn ghost\" onclick=\"waReload()\">⟳</button></span></div></div>';",
+"  if(WACC.creating)h+=waForm();",
+"  for(var i=0;i<WACC.list.length;i++){var a=WACC.list[i];",
+"    var sess=a.session?('● 会话 '+esc(String(a.session.id||''))+' · '+esc(String(a.session.state||''))):'○ 无会话';",
+"    var tgt=(a.target&&a.target.hostname?esc(String(a.target.hostname))+':'+esc(String(a.target.port||'3389')):'127.0.0.1:3389');",
+"    h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">👤 '+esc(a.name||'')+(a.admin?' · 管理员':'')+(a.managed?' · 归一建号':'')+'</span><span class=\"v\">'+",
+"      '<button class=\"btn primary\" onclick=\"waOpenDesk('+i+')\">开桌面(独立板块)</button> '+",
+"      (a.session?('<button class=\"btn ghost\" onclick=\"waLogoff('+i+')\">注销会话</button> '):'')+",
+"      '<button class=\"btn danger\" onclick=\"waDel('+i+')\">删号</button></span></div>'+",
+"      '<div class=\"cr\"><span class=\"l\" style=\"color:var(--muted)\">'+sess+' · RDP '+tgt+'</span></div></div>';}",
+"  v.innerHTML=h;}",
+"function waForm(){var h='<div class=\"card\"><div class=\"cr\"><span class=\"l\"><b>建号 · 新建 Windows 本地账号</b></span><span class=\"v\" style=\"color:var(--muted)\">New-LocalUser + 加入 Remote Desktop Users(需管理员)</span></div>';",
+"  h+='<div class=\"cr\"><span class=\"l\">账号名</span><span class=\"v\"><input id=\"wa_name\" placeholder=\"字母数字与 . _ - , ≤20\"></span></div>';",
+"  h+='<div class=\"cr\"><span class=\"l\">密码</span><span class=\"v\"><input id=\"wa_pw\" type=\"password\" placeholder=\"留空用默认强口令\"></span></div>';",
+"  h+='<div class=\"cr\"><span class=\"l\"></span><span class=\"v\"><label><input type=\"checkbox\" id=\"wa_admin\">同时加入 Administrators</label></span></div>';",
+"  h+='<div class=\"cr\"><span class=\"l\"></span><span class=\"v\"><button class=\"btn primary\" onclick=\"waCreate()\">创建</button> <button class=\"btn ghost\" onclick=\"waCancel()\">取消</button></span></div></div>';",
+"  return h;}",
+"function waReload(){WACC.list=null;rWindows();}",
+"function waNew(){WACC.creating=true;rWindows();}",
+"function waCancel(){WACC.creating=false;rWindows();}",
+"function waCreate(){var g=function(id){return document.getElementById(id);};var name=g('wa_name').value.trim();if(!name){toast('账号名不能为空',false);return;}var pw=g('wa_pw').value;var admin=g('wa_admin').checked;WACC.creating=false;WACC.list=null;rWindows();cmd('winAcctCreate',{name:name,password:pw,admin:admin});}",
+"function waDel(i){var a=WACC.list[i];if(!a)return;if(typeof confirm==='function'&&!confirm('确认删除 Windows 账号 “'+a.name+'” 及其用户配置? 不可逆。'))return;WACC.list=null;rWindows();cmd('winAcctDestroy',{name:a.name});}",
+"function waLogoff(i){var a=WACC.list[i];if(!a||!a.session)return;if(typeof confirm==='function'&&!confirm('确认注销 “'+a.name+'” 的会话 '+a.session.id+'?'))return;WACC.list=null;rWindows();cmd('winAcctLogoff',{id:a.session.id});}",
+"function waOpenDesk(i){var a=WACC.list[i];if(!a)return;var t=a.target||{};toast('拉起桌面板块 '+a.name+' …',true);cmd('winRdpEmbed',{profile:{host:t.hostname||'127.0.0.1',port:t.port||'3389',name:a.name}});}",
+"/* ── 独立桌面板块: 动态新建与主页/账号平级的顶层 tab, canvas 走 rdpjs 网关 ── */",
+"function wdSpawn(url,label){if(!url)return;var id='wdesk-'+(++WDESK.seq);",
+"  var nav=document.querySelector('.ni[data-tab=\"windows\"]');",
+"  if(nav&&nav.parentNode){var ni=document.createElement('div');ni.className='ni';ni.setAttribute('data-tab',id);ni.title='Windows 桌面 · '+(label||'');ni.textContent='🖥';ni.setAttribute('onclick',\"sw('\"+id+\"')\");nav.parentNode.insertBefore(ni,nav.nextSibling);}",
+"  var vwin=document.getElementById('v-windows');",
+"  if(vwin&&vwin.parentNode){var tv=document.createElement('div');tv.className='tv';tv.id='v-'+id;",
+"    tv.innerHTML='<div class=\"st\">🖥 Windows 桌面 · '+esc(label||'')+' <span style=\"color:var(--muted)\">route A · rdpjs 网关 canvas · 非 mstsc</span> <button class=\"btn ghost\" onclick=\"wdClose(&#39;'+id+'&#39;)\">关闭板块</button></div><iframe src=\"'+esc(url)+'\" style=\"width:100%;height:calc(100vh - 96px);min-height:560px;border:0;background:#000;display:block\" allow=\"clipboard-read;clipboard-write\"></iframe>';",
+"    vwin.parentNode.appendChild(tv);}",
+"  try{sw(id);}catch(e){}}",
+"function wdClose(id){var ni=document.querySelector('.ni[data-tab=\"'+id+'\"]');if(ni&&ni.parentNode)ni.parentNode.removeChild(ni);var tv=document.getElementById('v-'+id);if(tv&&tv.parentNode)tv.parentNode.removeChild(tv);try{sw('windows');}catch(e){}}",
 "function wrTab(t){document.querySelectorAll('.wtab').forEach(function(d){d.style.display='none';});var pane=document.getElementById('wtab_'+t);if(pane)pane.style.display='';document.querySelectorAll('[data-wtab]').forEach(function(b){b.className='btn ghost';});var el=document.querySelector('[data-wtab=\"'+t+'\"]');if(el)el.className='btn';}",
 "function wrRes(el){var i=parseInt(el.value,10);var lb=document.getElementById('wf_reslabel');if(lb)lb.textContent=i>=WRD_RES.length?'全屏':(WRD_RES[i][0]+' × '+WRD_RES[i][1]+' 像素');}",
 "function wrSave(){function g(id){return document.getElementById(id);}",
@@ -104,7 +156,10 @@ const FRONTEND_JS = [
 "    conntype:g('wf_conn').value,wallpaper:g('wf_wall').checked,fontsmoothing:g('wf_font').checked,composition:g('wf_comp').checked,fullwindowdrag:g('wf_drag').checked,menuanims:g('wf_anim').checked,themes:g('wf_theme').checked,bitmapcache:g('wf_cache').checked,autoreconnect:g('wf_reconn').checked,",
 "    authlevel:g('wf_auth').value,gwmethod:g('wf_gwm').value,gateway:g('wf_gw').value.trim(),gwbypass:g('wf_gwbypass').checked,gwcreds:g('wf_gwcred').checked};",
 "  WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpSave',{profile:prof});}",
-"window.addEventListener('message',function(ev){var d=ev.data||{};if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}else if(d.type==='winRdpEmbed'){if(d.error){toast(d.error,false);WEMB={url:null,label:null};}else{WEMB={url:d.url,label:d.label||WEMB.label};}if(S.tab==='windows')rWindows();}});",
+"window.addEventListener('message',function(ev){var d=ev.data||{};",
+"  if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}",
+"  else if(d.type==='winAcctData'){WACC.list=d.items||[];if(S.tab==='windows')rWindows();}",
+"  else if(d.type==='winRdpEmbed'){if(d.error){toast(d.error,false);}else{wdSpawn(d.url,d.label);}}});",
 ].join("\n");
 
 // 宿主侧: RDP 档案落盘(~/.dao/rdp) + 标准 .rdp 生成 + 官方 mstsc.exe 启动(仅 Windows)。
@@ -257,6 +312,114 @@ async function daoWinRdpEmbed(profile) {
     const q = 'view.html?ip=' + encodeURIComponent(ip) + '&port=' + encodeURIComponent(rport) + '&label=' + encodeURIComponent(label);
     return { ok: true, url: 'http://127.0.0.1:' + DAO_RDPWEB_PORT + '/' + q, ip: ip, port: rport, label: label };
 }
+// ── 模块② 账号池宿主原语(多 Windows 账号生命周期 · 对齐 core/accounts.py 语义 · 不落盘口令) ──
+// New-LocalUser + Remote Desktop Users(建号) / quser(会话态) / logoff(注销) / Remove-LocalUser(删号)。
+// 注册表 ~/.dao/accounts.json 仅存 hostname/port/username/admin(无口令); 口令仅瞬时传给 PowerShell。
+function daoWinAcctDir() {
+    const d = path.join(os.homedir(), '.dao');
+    try { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* 守柔 */ }
+    return d;
+}
+function daoWinAcctRegPath() { return path.join(daoWinAcctDir(), 'accounts.json'); }
+function daoWinAcctReg() {
+    try { return JSON.parse(fs.readFileSync(daoWinAcctRegPath(), 'utf8')) || {}; } catch (e) { return {}; }
+}
+function daoWinAcctRegSave(reg) {
+    try { fs.writeFileSync(daoWinAcctRegPath(), JSON.stringify(reg, null, 2), 'utf8'); } catch (e) { /* 守柔 */ }
+}
+function daoWinAcctNameOk(n) { return /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(n || ''); }
+function daoPSQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+function daoPS(script) {
+    try {
+        const cp = require('child_process');
+        const r = cp.spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 60000 });
+        return { rc: (r.status === null || r.status === undefined) ? 1 : r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+    } catch (e) { return { rc: 127, out: '', err: String(e && e.message || e) }; }
+}
+function daoParseQuser(out) {
+    const map = {};
+    if (!out) return map;
+    const lines = out.split(/\\r?\\n/).filter((l) => l.trim());
+    for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].replace(/^>/, '').trim().split(/\\s+/);
+        if (!parts.length) continue;
+        const uname = parts[0];
+        let sid = null, state = null;
+        for (let j = 1; j < parts.length; j++) {
+            if (/^\\d+$/.test(parts[j])) { sid = parts[j]; state = parts[j + 1] || null; break; }
+        }
+        map[uname.toLowerCase()] = { id: sid, state: state };
+    }
+    return map;
+}
+function daoWinAcctList() {
+    if (process.platform !== 'win32') return [];
+    const reg = daoWinAcctReg();
+    const sess = daoParseQuser(daoPS('quser 2>$null').out);
+    const names = [], seen = {};
+    const gl = daoPS('Get-LocalUser | Where-Object {$_.Enabled -eq $true} | Select-Object -ExpandProperty Name');
+    gl.out.split(/\\r?\\n/).forEach((l) => { l = l.trim(); if (l && !seen[l.toLowerCase()]) { seen[l.toLowerCase()] = 1; names.push(l); } });
+    Object.keys(reg).forEach((n) => { if (!seen[n.toLowerCase()]) { seen[n.toLowerCase()] = 1; names.push(n); } });
+    return names.map((n) => {
+        const r = reg[n] || {};
+        return {
+            name: n, admin: !!r.admin, managed: !!reg[n],
+            target: { hostname: r.hostname || '127.0.0.1', port: r.port || '3389' },
+            session: sess[n.toLowerCase()] || null,
+        };
+    });
+}
+function daoWinAcctCreate(name, password, admin) {
+    if (process.platform !== 'win32') return { error: '账号管理仅 Windows 本机可用' };
+    if (!daoWinAcctNameOk(name)) return { error: '非法账号名(限字母数字与 . _ - , ≤20): ' + name };
+    const pw = password || 'Dao@2026!';
+    const script = [
+        "$ErrorActionPreference='Stop'",
+        '$pw = ConvertTo-SecureString ' + daoPSQuote(pw) + ' -AsPlainText -Force',
+        '$u = Get-LocalUser -Name ' + daoPSQuote(name) + ' -ErrorAction SilentlyContinue',
+        'if ($null -eq $u) { New-LocalUser -Name ' + daoPSQuote(name) + ' -Password $pw -PasswordNeverExpires -AccountNeverExpires | Out-Null }',
+        'else { Set-LocalUser -Name ' + daoPSQuote(name) + ' -Password $pw }',
+        "Add-LocalGroupMember -Group 'Remote Desktop Users' -Member " + daoPSQuote(name) + ' -ErrorAction SilentlyContinue',
+        (admin ? "Add-LocalGroupMember -Group 'Administrators' -Member " + daoPSQuote(name) + ' -ErrorAction SilentlyContinue' : ''),
+        "Write-Output 'OK'",
+    ].join('\\n');
+    const r = daoPS(script);
+    if (r.rc !== 0) return { error: (r.err || r.out || ('rc=' + r.rc)) };
+    const reg = daoWinAcctReg();
+    reg[name] = { hostname: '127.0.0.1', port: '3389', username: name, admin: !!admin };
+    daoWinAcctRegSave(reg);
+    return { ok: true, name: name };
+}
+function daoWinAcctDestroy(name) {
+    if (process.platform !== 'win32') return { error: '账号管理仅 Windows 本机可用' };
+    if (!daoWinAcctNameOk(name)) return { error: '非法账号名: ' + name };
+    const script = [
+        "$ErrorActionPreference='SilentlyContinue'",
+        '$q = quser 2>$null',
+        'if ($q) { $q | Select-Object -Skip 1 | ForEach-Object {',
+        "  $cols = ($_ -replace '^>','').Trim() -split '\\\\s+'",
+        '  if ($cols[0] -ieq ' + daoPSQuote(name) + ') {',
+        "    $sid = ($cols | Where-Object { $_ -match '^\\\\d+$' } | Select-Object -First 1)",
+        '    if ($sid) { logoff $sid }',
+        '  } } }',
+        'Remove-LocalUser -Name ' + daoPSQuote(name) + ' -ErrorAction SilentlyContinue',
+        "Get-CimInstance Win32_UserProfile | Where-Object { $_.LocalPath -like ('*\\\\' + " + daoPSQuote(name) + ') } | Remove-CimInstance -ErrorAction SilentlyContinue',
+        "Write-Output 'OK'",
+    ].join('\\n');
+    const r = daoPS(script);
+    const reg = daoWinAcctReg();
+    if (reg[name]) { delete reg[name]; daoWinAcctRegSave(reg); }
+    if (r.rc !== 0) return { error: (r.err || r.out || ('rc=' + r.rc)) };
+    return { ok: true, name: name };
+}
+function daoWinAcctLogoff(id) {
+    if (process.platform !== 'win32') return { error: '账号管理仅 Windows 本机可用' };
+    const sid = parseInt(id, 10);
+    if (!Number.isFinite(sid)) return { error: '非法会话 ID: ' + id };
+    const r = daoPS('logoff ' + sid);
+    if (r.rc !== 0 && r.err) return { error: r.err };
+    return { ok: true };
+}
 `;
 
 const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块(RDP 档案管理 · 官方 mstsc 收编) ──
@@ -291,8 +454,31 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
                 reply(Object.assign({ type: 'winRdpEmbed' }, r || {}));
                 break;
             }
+            // ── 模块② 账号池(多 Windows 账号生命周期) ──
+            case 'winAcctList': {
+                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                break;
+            }
+            case 'winAcctCreate': {
+                const r = daoWinAcctCreate(msg.name, msg.password, msg.admin);
+                if (r && r.error) reply({ type: 'error', msg: r.error });
+                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                break;
+            }
+            case 'winAcctDestroy': {
+                const r = daoWinAcctDestroy(msg.name);
+                if (r && r.error) reply({ type: 'error', msg: r.error });
+                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                break;
+            }
+            case 'winAcctLogoff': {
+                const r = daoWinAcctLogoff(msg.id);
+                if (r && r.error) reply({ type: 'error', msg: r.error });
+                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                break;
+            }
 `;
 
-const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winRdpEmbed'";
+const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winRdpEmbed', 'winAcctList', 'winAcctCreate', 'winAcctDestroy', 'winAcctLogoff'";
 
 module.exports = { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD };
