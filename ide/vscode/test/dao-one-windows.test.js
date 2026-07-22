@@ -126,6 +126,18 @@ test("宿主 .rdp 键映射与本仓 rdpFileContent 完全一致(官方语义单
   for (const s of samples) assert.strictEqual(fn(s), ref(s), JSON.stringify(s));
 });
 
+test("账号池注册表专用文件, 绝不复用/覆盖 Devin ~/.dao/accounts.json(登录态)", () => {
+  const reg = new Function(
+    "path", "os", "fs",
+    HOST_HELPERS + "\nreturn { daoWinAcctRegPath, daoWinAcctReg };"
+  )(path, require("os"), fs);
+  const p = reg.daoWinAcctRegPath();
+  assert.ok(/win-rdp-accounts\.json$/.test(p), "注册表未用专用文件 win-rdp-accounts.json: " + p);
+  assert.ok(!/[\\/]accounts\.json$/.test(p), "注册表复用了 Devin 登录态 accounts.json(会污染并覆盖 token 存储)");
+  // 守卫: 标量键(如 devinToken)一律忽略, 仅收账号对象; 防误读非本表 JSON 污染账号列
+  assert.ok(HOST_HELPERS.includes("typeof j[k] === 'object'"), "daoWinAcctReg 缺非对象条目过滤守卫");
+});
+
 test("补丁表锚点在真源快照上唯一(有快照时)", () => {
   const snap = "/home/ubuntu/dao_one_2_28_14/vendor-vsix-out-extension.js";
   if (!fs.existsSync(snap)) return; // CI 无快照, 本地/实机衍生时验证

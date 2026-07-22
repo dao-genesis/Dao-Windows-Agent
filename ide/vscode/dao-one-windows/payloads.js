@@ -320,9 +320,17 @@ function daoWinAcctDir() {
     try { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); } catch (e) { /* 守柔 */ }
     return d;
 }
-function daoWinAcctRegPath() { return path.join(daoWinAcctDir(), 'accounts.json'); }
+// 专用注册表: 绝不复用 ~/.dao/accounts.json(那是 Devin 登录态账号池 · 复用会污染账号列并在写入时覆盖其 token 存储)。
+function daoWinAcctRegPath() { return path.join(daoWinAcctDir(), 'win-rdp-accounts.json'); }
 function daoWinAcctReg() {
-    try { return JSON.parse(fs.readFileSync(daoWinAcctRegPath(), 'utf8')) || {}; } catch (e) { return {}; }
+    try {
+        const j = JSON.parse(fs.readFileSync(daoWinAcctRegPath(), 'utf8'));
+        if (!j || typeof j !== 'object' || Array.isArray(j)) return {};
+        // 守柔: 仅收 value 为对象的条目(标量键如 token/activeAccount 一律忽略, 防误读非本表 JSON)。
+        const reg = {};
+        for (const k of Object.keys(j)) { if (j[k] && typeof j[k] === 'object' && !Array.isArray(j[k])) reg[k] = j[k]; }
+        return reg;
+    } catch (e) { return {}; }
 }
 function daoWinAcctRegSave(reg) {
     try { fs.writeFileSync(daoWinAcctRegPath(), JSON.stringify(reg, null, 2), 'utf8'); } catch (e) { /* 守柔 */ }
