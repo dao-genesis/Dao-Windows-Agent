@@ -19,7 +19,7 @@ function buildPatches() {
   const navGithub =
     '<div class="ni" data-tab="github" onclick="sw(\'github\')" title="GitHub · 统一管理(PAT/组织/迁仓/公私/多账号舰队/GitHub MCP 同步)">🐙</div>';
   const navWindows =
-    '<div class="ni" data-tab="windows" onclick="sw(\'windows\')" title="Windows · 远程桌面连接(官方 mstsc 收编)">🪟</div>';
+    '<div class="ni" data-tab="windows" onclick="sw(\'windows\')" title="Windows · 远程桌面归一管理(① 配置台 ② 账号池 · 开桌面=独立板块)">🪟</div>';
   return [
     {
       name: "solo 白名单",
@@ -41,7 +41,7 @@ function buildPatches() {
       name: "sw() 分发",
       anchor: "if(t==='backups'){ rBackups(); return; }",
       replace:
-        "if(t==='windows'){ rWindows(); return; }\n  if(t==='backups'){ rBackups(); return; }",
+        "if(t==='windows'){ rWindows(); return; }\n  if(t&&t.indexOf('wdesk-')===0){ return; }\n  if(t==='backups'){ rBackups(); return; }",
     },
     {
       name: "板块渲染器(五页 mstsc 表单)",
@@ -80,7 +80,8 @@ function applyPatches(source) {
         "锚点[" + p.name + "]出现 " + n + " 次(要求恰好 1 次), 上游全能板结构已变, 需重对齐锚点"
       );
     }
-    out = out.replace(p.anchor, p.replace);
+    // 用函数式替换: 负载(如账号池 PowerShell)含 $'、$&、$` 等序列, 字符串式 replace 会误解析。
+    out = out.replace(p.anchor, () => p.replace);
   }
   return "// " + MARK + " applied\n" + out;
 }
