@@ -79,8 +79,10 @@ let activeId = null;
 let nextId = 1;
 let nextSlot = 1;
 function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
+// 同源前缀: 经主口反代(/wdesk/desktop)打开时, 所有宿主接口与 WS 都走同一前缀 —— 公网/IDE 同源直达。
+const PFX = (function(){ var m = location.pathname.match(/^(.*)\/desktop\/?$/); return (m && m[1]) || ''; })();
 function hostFetch(pathq, method){
-  return fetch(pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
+  return fetch(PFX + pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
 }
 let lastLocalClip = null;
 let lastRemoteClip = null;
@@ -244,7 +246,9 @@ async function connectInstance(it) {
     if (tokenData.error) { setStatus(it.label + ' · 令牌: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' · 令牌获取失败: ' + e.message, '#ff4444'); it.connecting = false; return; }
   const wsPort = tokenData.ws_port || 4823;
-  const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token);
+  const wsUrl = PFX
+    ? ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + PFX + '-ws?token=' + encodeURIComponent(tokenData.token))
+    : ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token));
   setStatus(it.label + ' · 建立 WS 隧道...', '#ffcc00');
   const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
   const client = new Guacamole.Client(tunnel);

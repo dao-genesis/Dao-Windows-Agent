@@ -20,6 +20,9 @@ function fixture() {
     "async function handleMiddlePanelMessage(msg, context) {",
     "    try {",
     "        switch (msg.command) {",
+    "        && !route.startsWith('/i/')",
+    "    if (BRIDGE_DAEMON_ROUTES.has(route)) {",
+    "            const up = daoWsUpstreamFor(uurl.pathname, uurl.search || '');",
     "'getProxyPanel']",
   ].join("\n");
 }
@@ -106,6 +109,30 @@ test("分而治之: 开桌面=顶层独立页(一账号一页 · 官方 Guacamol
   assert.ok(!out.includes("view.html?ip="), "残留旧 rdpjs view.html 路线");
   assert.ok(!out.includes("rdp_cred.json"), "残留旧 rdpjs 凭据文件路线");
   assert.ok(!out.includes("9250"), "残留旧 rdpjs 网关端口");
+});
+
+test("真机缺陷修复护栏: 同源桌面路由 / guacd 先行 / 账号池异步不阻塞 / UI 看门狗", () => {
+  const out = applyPatches(fixture());
+  // 缺陷#1 · 同源桌面路由: 顶层页 URL 走主口 /wdesk 反代(公网可达), 不再裸发 127.0.0.1:4824
+  assert.ok(out.includes("'/wdesk/desktop'"), "winDeskEnsure 未返回同源相对地址 /wdesk/desktop");
+  assert.ok(out.includes("function daoWdeskHttpProxy("), "缺 /wdesk HTTP 反代");
+  assert.ok(out.includes("function daoWdeskWsProxy("), "缺 /wdesk-ws WS 反代");
+  assert.ok(out.includes("route.startsWith('/wdesk/')"), "路由表未接 /wdesk 分支");
+  assert.ok(out.includes("&& !route.startsWith('/wdesk')"), "/wdesk 未入免鉴权白名单");
+  assert.ok(out.includes("uurl.pathname === '/wdesk-ws'"), "WS 升级未接 /wdesk-ws 分支");
+  assert.ok(out.includes("localUrl"), "缺系统浏览器兜底 localUrl");
+  // 缺陷#2 · 账号池: 异步 PowerShell(不阻塞宿主消息循环) + 永远回包(错误也回)
+  assert.ok(out.includes("function daoPSAsync("), "缺异步 PowerShell daoPSAsync");
+  assert.ok(out.includes("async function daoWinAcctList("), "daoWinAcctList 未异步化");
+  assert.ok(out.includes("await daoWinAcctList()"), "winAcctList case 未 await");
+  assert.ok(/catch \(e\) \{ reply\(\{ type: 'winAcctData', items: \[\], error:/.test(out), "winAcctList 异常未回包");
+  // 缺陷#3 · UI 看门狗: 加载 20s 无回包即收束并提示重试
+  assert.ok(out.includes("function wWatch("), "缺前端加载看门狗 wWatch");
+  assert.ok(out.includes("function wWatchClear("), "缺看门狗清除 wWatchClear");
+  // 缺陷#4 · guacd 先行: 不受 4824 已监听短路遮蔽
+  const iEnsure = out.indexOf("async function daoWinDeskEnsure(");
+  const body = out.slice(iEnsure, out.indexOf("function daoWdeskHttpProxy("));
+  assert.ok(body.indexOf("guacd") < body.indexOf("daoTcpUp(DAO_TUNNEL_HTTP_PORT)"), "guacd 拉起仍在 4824 短路之后");
 });
 
 test("隧道账号注册表专用文件(win-guac-accounts.json), 绝不写 Devin ~/.dao/accounts.json", () => {
