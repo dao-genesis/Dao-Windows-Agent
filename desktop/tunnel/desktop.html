@@ -233,8 +233,12 @@ async function connectInstance(it) {
   const h = container.clientHeight;
   let tokenData;
   try {
-    const q = 'ide=' + encodeURIComponent(ideKey(it))
+    let q = 'ide=' + encodeURIComponent(ideKey(it))
             + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
+    // 会话策略直通(.rdp 档案键 → 官方 token 选项): 管理面在 URL 上带来什么, 原样递给隧道。
+    ['clipboard', 'drive', 'readonly', 'dpi'].forEach(function(k){
+      var v = Q.get(k); if (v) q += '&' + k + '=' + encodeURIComponent(v);
+    });
     tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h);
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' · 令牌: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
