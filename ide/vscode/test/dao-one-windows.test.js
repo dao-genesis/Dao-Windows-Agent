@@ -88,6 +88,11 @@ test("分而治之: 开桌面=顶层独立页(一账号一页 · 官方 Guacamol
   // 管理行按钮接线: 连接档案/账号池 开桌面均带真实账号与目标
   assert.ok(out.includes("wdeskOpen(p.name,p.name"), "连接档案 开桌面未传档案目标");
   assert.ok(out.includes("wdeskOpen(a.name,a.name"), "账号池 开桌面未传账号目标");
+  // .rdp 档案键 → 官方 token 会话选项直通(剪贴板/驱动器/旁观)
+  assert.ok(out.includes("function wdeskOptsQ("), "缺档案键→token 选项映射 wdeskOptsQ");
+  assert.ok(out.includes("clipboard=off"), "剪贴板禁用未映射 clipboard=off");
+  assert.ok(out.includes("&drive="), "驱动器重定向未映射 drive=");
+  assert.ok(out.includes("readonly=1"), "旁观模式未映射 readonly=1");
   // 宿主原语: 官方 Guacamole 链路(guacd + guacamole-lite 隧道), 凭据由隧道持有
   assert.ok(out.includes("function daoWinDeskEnsure("), "缺宿主 daoWinDeskEnsure");
   assert.ok(out.includes("function daoWinGuacAcctSync("), "缺隧道账号注册表登记 daoWinGuacAcctSync");
