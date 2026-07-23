@@ -28,7 +28,7 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:system-ui,sans
 #desktop.grid .inst .caption{display:block;position:absolute;top:0;left:0;z-index:2;padding:1px 6px;font-size:10px;background:rgba(20,20,26,.72);border-bottom-right-radius:4px;pointer-events:none}
 </style></head><body>
 <div id="bar">
-  <b>☯ DAO 桌面</b>
+  <b id="ttl">☯ DAO 桌面</b>
   <select id="acct" title="账号（多 RDP 一路一桌面）" onchange="onAcctChange()"></select>
   <div id="tabs"></div>
   <button onclick="addInstance()" title="同账号再开一路独立桌面会话（多 RDP 分身，并行互不干扰）">＋分身</button>
@@ -45,6 +45,9 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:system-ui,sans
 const Q = new URLSearchParams(location.search);
 let ACCOUNT = Q.get('account') || '';
 const LABEL = Q.get('label') || '';
+// 锁定页模式(分而治之): 带 account(或 lock=1)打开时, 本页只承载这一个账号的整块桌面 ——
+// 账号选择/切换归统一管理面, 页内不再显示账号下拉(保留同账号分身/平铺/连接断开)。
+const LOCKED = !!ACCOUNT || Q.get('lock') === '1';
 const IDE_SESSION = Q.get('ide') || (function(){
   try {
     let s = localStorage.getItem('dao_ide_session');
@@ -108,6 +111,13 @@ setInterval(function(){
 }, 2000);
 
 function initAccounts(){
+  if (LOCKED) {
+    acctEl.style.display = 'none';
+    var ttl = document.getElementById('ttl');
+    if (ttl && (LABEL || ACCOUNT)) ttl.textContent = '☯ ' + (LABEL || ACCOUNT);
+    document.title = '🖥 ' + (LABEL || ACCOUNT || 'DAO 桌面');
+    return;
+  }
   hostFetch('/accounts').then(function(d){
     ACCOUNTS = (d && d.accounts) || [];
     var names = ACCOUNTS.map(function(a){ return a.name; });

@@ -69,28 +69,48 @@ test("账号池宿主原语(多 Windows 账号生命周期 · 白名单/case/Pow
   assert.ok(out.includes("d.type==='winAcctData'"), "缺 winAcctData 回执处理");
 });
 
-test("③ 内嵌远程桌面=官方 Guacamole 引擎(同一面板内 · 持久驻留 · 非自造 rdpjs)", () => {
+test("分而治之: 开桌面=顶层独立页(一账号一页 · 官方 Guacamole 引擎 · 非自造 rdpjs)", () => {
   const out = applyPatches(fixture());
-  // 三模块外壳: ③ 远程桌面切换按钮 + 持久桌面容器
-  assert.ok(out.includes("wmSwitch(&#39;desktop&#39;)"), "缺 ③ 远程桌面切换按钮");
-  assert.ok(out.includes("wdeskwrap"), "缺持久桌面容器 wdeskwrap");
-  assert.ok(out.includes("function ensureDesk("), "缺桌面拉起 ensureDesk");
-  assert.ok(out.includes("function deskMount("), "缺桌面挂载 deskMount");
-  assert.ok(out.includes("function dwRetry("), "缺失败重试 dwRetry");
-  // winDeskReady 回执挂载进本面板(同一页, 不再另开顶层 tab)
+  // 管理面只留 ①配置台 ②账号池 —— ③内嵌桌面模式与共享 iframe 彻底退场
+  assert.ok(!out.includes("wmSwitch(&#39;desktop&#39;)"), "残留 ③ 内嵌远程桌面模式按钮");
+  assert.ok(!out.includes("wdeskwrap"), "残留共享桌面容器 wdeskwrap");
+  assert.ok(!out.includes("function ensureDesk("), "残留内嵌桌面 ensureDesk");
+  assert.ok(!out.includes("function deskMount("), "残留内嵌桌面 deskMount");
+  // 开桌面 = 交给外壳(/shell)在顶层页面栏开一张独立 iframe 页(如 Devin 多实例)
+  assert.ok(out.includes("function wdeskOpen("), "缺独立页打开 wdeskOpen");
+  assert.ok(out.includes("function daoWinDeskReady("), "缺 winDeskReady 独立页回执 daoWinDeskReady");
   assert.ok(out.includes("d.type==='winDeskReady'"), "缺 winDeskReady 回执处理");
-  assert.ok(out.includes("deskMount(d.url,d.error)"), "winDeskReady 回执未挂载内嵌桌面");
-  assert.ok(!out.includes("function wdSpawn("), "残留旧独立顶层桌面板块 wdSpawn");
+  assert.ok(out.includes("daoWinDeskReady(d)"), "winDeskReady 回执未走独立页打开");
+  assert.ok(out.includes("type:'open'"), "未向外壳发 type:'open' 顶层开页消息");
+  assert.ok(out.includes("'wdesk:'+d.account"), "顶层页 id 未按账号隔离(wdesk:<account>)");
+  assert.ok(out.includes("account='+encodeURIComponent(d.account)"), "桌面页 URL 未携带账号参数");
+  assert.ok(out.includes("winDeskOpenExternal"), "缺外壳缺位时的系统浏览器兜底");
+  // 管理行按钮接线: 连接档案/账号池 开桌面均带真实账号与目标
+  assert.ok(out.includes("wdeskOpen(p.name,p.name"), "连接档案 开桌面未传档案目标");
+  assert.ok(out.includes("wdeskOpen(a.name,a.name"), "账号池 开桌面未传账号目标");
   // 宿主原语: 官方 Guacamole 链路(guacd + guacamole-lite 隧道), 凭据由隧道持有
   assert.ok(out.includes("function daoWinDeskEnsure("), "缺宿主 daoWinDeskEnsure");
+  assert.ok(out.includes("function daoWinGuacAcctSync("), "缺隧道账号注册表登记 daoWinGuacAcctSync");
+  assert.ok(out.includes("DAO_ACCOUNTS_JSON"), "隧道未接账号注册表(DAO_ACCOUNTS_JSON)");
   assert.ok(out.includes("case 'winDeskEnsure'"), "缺 case winDeskEnsure");
   assert.ok(NOAUTH_ADD.includes("winDeskEnsure"), "NOAUTH_ADD 缺 winDeskEnsure");
+  assert.ok(NOAUTH_ADD.includes("winDeskOpenExternal"), "NOAUTH_ADD 缺 winDeskOpenExternal");
   assert.ok(out.includes("/desktop"), "桌面未指向隧道 /desktop 单页客户端");
   assert.ok(out.includes("guacd"), "宿主未拉起 guacd");
   // 本源护栏: 自造 node-rdpjs 路线彻底退场
   assert.ok(!out.includes("view.html?ip="), "残留旧 rdpjs view.html 路线");
   assert.ok(!out.includes("rdp_cred.json"), "残留旧 rdpjs 凭据文件路线");
   assert.ok(!out.includes("9250"), "残留旧 rdpjs 网关端口");
+});
+
+test("隧道账号注册表专用文件(win-guac-accounts.json), 绝不写 Devin ~/.dao/accounts.json", () => {
+  const g = new Function(
+    "path", "os", "fs",
+    HOST_HELPERS + "\nreturn { daoWinGuacAcctPath };"
+  )(path, require("os"), fs);
+  const p = g.daoWinGuacAcctPath();
+  assert.ok(/win-guac-accounts\.json$/.test(p), "隧道注册表未用专用文件: " + p);
+  assert.ok(!/[\\/]accounts\.json$/.test(p), "隧道注册表复用了 Devin 登录态 accounts.json");
 });
 
 test("幂等: 已注入的源拒绝二次注入", () => {
