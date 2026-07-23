@@ -19,7 +19,7 @@ function buildPatches() {
   const navGithub =
     '<div class="ni" data-tab="github" onclick="sw(\'github\')" title="GitHub · 统一管理(PAT/组织/迁仓/公私/多账号舰队/GitHub MCP 同步)">🐙</div>';
   const navWindows =
-    '<div class="ni" data-tab="windows" onclick="sw(\'windows\')" title="Windows · 远程桌面归一管理(① 配置台 ② 账号池 · 开桌面=独立板块)">🪟</div>';
+    '<div class="ni" data-tab="windows" onclick="sw(\'windows\')" title="Windows · 统一管理面(① 配置台 ② 账号池 · 开桌面=顶层独立页·一账号一页)">🪟</div>';
   return [
     {
       name: "solo 白名单",
@@ -41,7 +41,7 @@ function buildPatches() {
       name: "sw() 分发",
       anchor: "if(t==='backups'){ rBackups(); return; }",
       replace:
-        "if(t==='windows'){ rWindows(); return; }\n  if(t&&t.indexOf('wdesk-')===0){ return; }\n  if(t==='backups'){ rBackups(); return; }",
+        "if(t==='windows'){ rWindows(); return; }\n  if(t==='backups'){ rBackups(); return; }",
     },
     {
       name: "板块渲染器(五页 mstsc 表单)",
