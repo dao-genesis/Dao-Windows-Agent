@@ -61,6 +61,29 @@ function buildPatches() {
       replace: "    try {\n        switch (msg.command) {\n" + HOST_CASES,
     },
     {
+      name: "同源桌面路由 · 免鉴权白名单(/wdesk 桌面页须公网可开, 与 /shell 同策)",
+      anchor: "&& !route.startsWith('/i/')",
+      replace:
+        "&& !route.startsWith('/i/')\n        && !route.startsWith('/wdesk')",
+    },
+    {
+      name: "同源桌面路由 · HTTP 反代(/wdesk/* → 127.0.0.1:4824 guacamole-lite 隧道)",
+      anchor: "if (BRIDGE_DAEMON_ROUTES.has(route)) {",
+      replace:
+        "// dao-one-windows · 同源桌面路由: 公网/IDE 只见主口一个源, 桌面页与 token/输入仲裁同源穿行\n" +
+        "    if (route === '/wdesk' || route.startsWith('/wdesk/')) {\n" +
+        "        return await daoWdeskHttpProxy(route, url, req);\n" +
+        "    }\n" +
+        "    if (BRIDGE_DAEMON_ROUTES.has(route)) {",
+    },
+    {
+      name: "同源桌面路由 · WS 升级反代(/wdesk-ws → 127.0.0.1:4823 Guacamole 帧透传)",
+      anchor: "const up = daoWsUpstreamFor(uurl.pathname, uurl.search || '');",
+      replace:
+        "if (uurl.pathname === '/wdesk-ws' || uurl.pathname === '/wdesk-ws/') { daoWdeskWsProxy(req, clientSocket, head, uurl); return; }\n" +
+        "            const up = daoWsUpstreamFor(uurl.pathname, uurl.search || '');",
+    },
+    {
       name: "免登录白名单",
       anchor: "'getProxyPanel']",
       replace: "'getProxyPanel', " + NOAUTH_ADD + "]",

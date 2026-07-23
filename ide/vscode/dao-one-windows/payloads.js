@@ -19,6 +19,13 @@ const FRONTEND_JS = [
 "var WACC={list:null,creating:false};",
 "var WMOD='config';",
 "var WRD_RES=[[640,480],[800,600],[1024,768],[1280,720],[1366,768],[1600,900],[1920,1080],[2560,1440]];",
+"/* 加载看门狗: 宿主命令 20s 无回包即收束 loading 态并提示重试(不再无限「加载中…」)。 */",
+"var WWD=null;",
+"function wWatch(){if(WWD)clearTimeout(WWD);WWD=setTimeout(function(){WWD=null;if(S.tab!=='windows')return;var stuck=false;",
+"  if(WMOD==='pool'&&WACC.list===null){WACC.list=[];stuck=true;}",
+"  if(WMOD==='config'&&WRD.list===null){WRD.list=[];stuck=true;}",
+"  if(stuck){toast('加载超时(宿主 20s 无回包) · 点 ⟳ 重试',false);rWindows();}},20000);}",
+"function wWatchClear(){if(WWD){clearTimeout(WWD);WWD=null;}}",
 "function wrCur(){if(WRD.edit===''||WRD.edit===null)return {};var p={};(WRD.list||[]).forEach(function(x){if(x.name===WRD.edit)p=x;});return p;}",
 "function wrForm(){var p=wrCur();",
 "  function iv(k,d){var v=p[k]!==undefined?p[k]:(d===undefined?'':d);return esc(String(v));}",
@@ -104,14 +111,17 @@ const FRONTEND_JS = [
 "function daoWinDeskReady(d){if(d&&d.error){toast('官方引擎未就绪: '+d.error,false);return;}",
 "  if(!d||!d.url||!d.account)return;",
 "  var lbl=d.label||d.account;",
-"  var u=d.url+'?account='+encodeURIComponent(d.account)+'&label='+encodeURIComponent(lbl)+'&lock=1&autoconnect=1'+wdeskOptsQ(WDESKOPTS[d.account]);",
+"  var q='?account='+encodeURIComponent(d.account)+'&label='+encodeURIComponent(lbl)+'&lock=1&autoconnect=1'+wdeskOptsQ(WDESKOPTS[d.account]);",
+"  /* 同源相对地址(/wdesk/desktop): 外壳 iframe 相对本源解析 → IDE(localhost:9920)与公网隧道两端皆可达(根治 127.0.0.1:4824 公网空白)。 */",
+"  var u=d.url+q;",
+"  var xu=(d.localUrl||d.url)+q;",
 "  var msg={type:'open',id:'wdesk:'+d.account,url:u,label:'🖥 '+lbl,email:d.account};",
 "  try{if(window.parent&&window.parent!==window){window.parent.postMessage(msg,'*');}",
 "    else if(window.top&&window.top!==window){window.top.postMessage(msg,'*');}",
-"    else{cmd('winDeskOpenExternal',{url:u});}}catch(e){cmd('winDeskOpenExternal',{url:u});}}",
+"    else{cmd('winDeskOpenExternal',{url:xu});}}catch(e){cmd('winDeskOpenExternal',{url:xu});}}",
 "/* ── 模块① 统一配置管理台: 官方 mstsc 五页连接档案 ── */",
 "function rWinConfig(v,h){",
-"  if(WRD.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载连接档案…</p></div>';cmd('winRdpList');return;}",
+"  if(WRD.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载连接档案…</p></div>';wWatch();cmd('winRdpList');return;}",
 "  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">连接档案 '+WRD.list.length+' 个 · 官方五页全功能收编</span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrNew()\">＋新建</button> <button class=\"btn ghost\" onclick=\"cmd(&#39;winRdpOpenDir&#39;)\">打开目录</button> <button class=\"btn ghost\" onclick=\"wrReload()\">⟳</button></span></div></div>';",
 "  for(var i=0;i<WRD.list.length;i++){var p=WRD.list[i];",
 "    h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">🖥 '+esc(p.name||'')+'</span><span class=\"v\">'+",
@@ -131,7 +141,7 @@ const FRONTEND_JS = [
 "function wrCancel(){WRD.edit=null;rWindows();}",
 "/* ── 模块② 账号池(仿切号板 · 多 Windows 账号生命周期) ── */",
 "function rWinPool(v,h){",
-"  if(WACC.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">👥</div><p style=\"color:var(--muted)\">加载 Windows 账号…</p></div>';cmd('winAcctList');return;}",
+"  if(WACC.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">👥</div><p style=\"color:var(--muted)\">加载 Windows 账号…</p></div>';wWatch();cmd('winAcctList');return;}",
 "  h+='<div class=\"card\"><div class=\"cr\"><span class=\"l\">Windows 账号 '+WACC.list.length+' 个 · 每账号一路独立桌面(RDPWrap 多会话)</span><span class=\"v\"><button class=\"btn primary\" onclick=\"waNew()\">＋建号</button> <button class=\"btn ghost\" onclick=\"waReload()\">⟳</button></span></div></div>';",
 "  if(WACC.creating)h+=waForm();",
 "  for(var i=0;i<WACC.list.length;i++){var a=WACC.list[i];",
@@ -170,8 +180,8 @@ const FRONTEND_JS = [
 "    authlevel:g('wf_auth').value,gwmethod:g('wf_gwm').value,gateway:g('wf_gw').value.trim(),gwbypass:g('wf_gwbypass').checked,gwcreds:g('wf_gwcred').checked};",
 "  WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpSave',{profile:prof});}",
 "window.addEventListener('message',function(ev){var d=ev.data||{};",
-"  if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}",
-"  else if(d.type==='winAcctData'){WACC.list=d.items||[];if(S.tab==='windows')rWindows();}",
+"  if(d.type==='winRdpData'){wWatchClear();WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(d.error)toast('档案: '+d.error,false);if(S.tab==='windows')rWindows();}",
+"  else if(d.type==='winAcctData'){wWatchClear();WACC.list=d.items||[];if(d.error)toast('账号池: '+d.error,false);if(S.tab==='windows')rWindows();}",
 "  else if(d.type==='winDeskReady'){daoWinDeskReady(d);}});",
 ].join("\n");
 
@@ -280,6 +290,8 @@ function daoWinRdpConnect(name) {
 // 链路: 顶层页 iframe(/desktop?account=X 单页客户端) → guacamole-lite 隧道(WS 4823/HTTP 4824) → guacd(WSL 4822) → RDP 3389。
 // 凭据由隧道持有并铸加密 token, 不下发面板。此原语确保 guacd+隧道在位、把目标登记进隧道账号注册表, 并给出 /desktop 地址。
 const DAO_TUNNEL_HTTP_PORT = parseInt(process.env.DAO_GUAC_HTTP_PORT || '4824', 10);
+const DAO_TUNNEL_WS_PORT = parseInt(process.env.DAO_GUAC_WS_PORT || '4823', 10);
+const DAO_GUACD_PORT = parseInt(process.env.DAO_GUACD_PORT || '4822', 10);
 // 隧道账号注册表(account → RDP 目标 · 无口令): 专用文件, 隧道经 DAO_ACCOUNTS_JSON 活读。
 // 绝不写 ~/.dao/accounts.json(Devin 登录态池); 口令仍留隧道侧 DEFAULT_RDP/环境, 不经面板。
 function daoWinGuacAcctPath() { return path.join(os.homedir(), '.dao', 'win-guac-accounts.json'); }
@@ -322,15 +334,17 @@ async function daoWinDeskEnsure(opts) {
     if (process.platform !== 'win32') return { error: '远程桌面仅 Windows 本机可用' };
     opts = opts || {};
     if (opts.account) daoWinGuacAcctSync(opts.account, opts.target);
-    const baseUrl = 'http://127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '/desktop';
-    const ret = { ok: true, url: baseUrl, account: opts.account || null, label: opts.label || opts.account || null };
-    if (await daoTcpUp(DAO_TUNNEL_HTTP_PORT)) return ret;
     const cp = require('child_process');
-    // guacd 跑在 WSL(systemd 托管) —— best-effort 拉起, 静默容错
-    try {
-        cp.spawn('wsl.exe', ['-d', 'Ubuntu-24.04', '-u', 'root', '--', 'systemctl', 'start', 'guacd'],
-            { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    } catch (e) { /* 守柔 */ }
+    // guacd 先行(WSL/systemd 托管 · best-effort): 隐道在而 guacd 亡的场景也要拉起 —— 不受下方 4824 短路遮蔽。
+    if (!(await daoTcpUp(DAO_GUACD_PORT))) {
+        try {
+            cp.spawn('wsl.exe', ['-d', 'Ubuntu-24.04', '-u', 'root', '--', 'systemctl', 'start', 'guacd'],
+                { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        } catch (e) { /* 守柔 */ }
+    }
+    // url = 同源相对地址(经主口 /wdesk 反代): IDE 与公网隧道皆可达; localUrl 供系统浏览器兑底直达。
+    const ret = { ok: true, url: '/wdesk/desktop', localUrl: 'http://127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '/desktop', account: opts.account || null, label: opts.label || opts.account || null };
+    if (await daoTcpUp(DAO_TUNNEL_HTTP_PORT)) return ret;
     const dir = daoWinTunnelDir();
     if (!dir) return { error: '未找到 guacamole-lite 隧道(设 DAO_TUNNEL_DIR 或置于 C:/dao_vm/guactunnel; 需先 npm install)' };
     try {
@@ -350,6 +364,66 @@ async function daoWinDeskEnsure(opts) {
     for (let i = 0; i < 24 && !up; i++) { await new Promise((r) => setTimeout(r, 250)); up = await daoTcpUp(DAO_TUNNEL_HTTP_PORT); }
     if (!up) return { error: '隧道未在 127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + ' 起来(检查 guacd/node/依赖)' };
     return ret;
+}
+// ── 同源桌面路由(缺陷#1 根治): 主口(9920) /wdesk/* → 本机隧道 4824 HTTP, /wdesk-ws → 4823 Guacamole WS ──
+// 公网浏览器只见主口一个源; 桌面页/静态资源/token/输入仲裁与 Guacamole 帧全部同源穿行, 零新隧道零新底层。
+function daoWdeskHttpProxy(route, url, req) {
+    return new Promise((resolve) => {
+        const http = require('http');
+        let p = route.slice('/wdesk'.length) || '/';
+        if (p === '/' || p === '') p = '/desktop';
+        const hopt = {
+            host: '127.0.0.1', port: DAO_TUNNEL_HTTP_PORT, path: p + (url.search || ''),
+            method: (req && req.method) || 'GET',
+            headers: { 'content-type': (req && req.headers && req.headers['content-type']) || 'application/json' },
+        };
+        const up = http.request(hopt, (r2) => {
+            const chunks = [];
+            r2.on('data', (c) => chunks.push(c));
+            r2.on('end', () => {
+                const buf = Buffer.concat(chunks);
+                const ct = String(r2.headers['content-type'] || 'text/html; charset=utf-8');
+                const textual = /^(text\\/|application\\/(json|javascript|x-javascript))/i.test(ct);
+                resolve({ _proxy: true, status: r2.statusCode || 200, contentType: ct, headers: {}, binary: !textual, body: textual ? buf.toString('utf8') : buf.toString('base64') });
+            });
+            r2.on('error', () => resolve({ _proxy: true, status: 502, contentType: 'application/json; charset=utf-8', headers: {}, body: JSON.stringify({ error: '桌面隧道响应中断' }) }));
+        });
+        up.setTimeout(20000, () => { try { up.destroy(new Error('timeout')); } catch (e) { /* 守柔 */ } });
+        up.on('error', (e) => resolve({ _proxy: true, status: 502, contentType: 'application/json; charset=utf-8', headers: {}, body: JSON.stringify({ error: '桌面隧道不可达(127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '): ' + String(e && e.message || e) + ' · 先在 🪟 管理面「开桌面」拉起' }) }));
+        if (req && req._relayBody) up.end(req._relayBody);
+        else if (req && typeof req.pipe === 'function' && (hopt.method === 'POST' || hopt.method === 'PUT')) req.pipe(up);
+        else up.end();
+    });
+}
+function daoWdeskWsProxy(req, clientSocket, head, uurl) {
+    const net = require('net');
+    const h = (req && req.headers) || {};
+    let upstream = null;
+    const bail = () => {
+        try { clientSocket.destroy(); } catch (e) { /* 守柔 */ }
+        try { if (upstream) upstream.destroy(); } catch (e) { /* 守柔 */ }
+    };
+    clientSocket.on('error', bail);
+    upstream = net.connect(DAO_TUNNEL_WS_PORT, '127.0.0.1', () => {
+        const lines = [
+            'GET /' + (uurl.search || '') + ' HTTP/1.1',
+            'Host: 127.0.0.1:' + DAO_TUNNEL_WS_PORT,
+            'Connection: Upgrade',
+            'Upgrade: ' + (h['upgrade'] || 'websocket'),
+            'Sec-WebSocket-Version: ' + (h['sec-websocket-version'] || '13'),
+        ];
+        if (h['sec-websocket-key']) lines.push('Sec-WebSocket-Key: ' + h['sec-websocket-key']);
+        if (h['sec-websocket-protocol']) lines.push('Sec-WebSocket-Protocol: ' + h['sec-websocket-protocol']);
+        lines.push('', '');
+        try { upstream.write(lines.join('\\r\\n')); } catch (e) { bail(); return; }
+        if (head && head.length) { try { upstream.write(head); } catch (e) { /* 守柔 */ } }
+        // 裸字节双向管道: 101 握手回放 + Guacamole 协议帧透传(不解析不改写)
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+    });
+    upstream.on('error', bail);
+    upstream.on('close', bail);
+    clientSocket.on('close', bail);
 }
 // ── 模块② 账号池宿主原语(多 Windows 账号生命周期 · 对齐 core/accounts.py 语义 · 不落盘口令) ──
 // New-LocalUser + Remote Desktop Users(建号) / quser(会话态) / logoff(注销) / Remove-LocalUser(删号)。
@@ -379,9 +453,20 @@ function daoPSQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
 function daoPS(script) {
     try {
         const cp = require('child_process');
-        const r = cp.spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 60000 });
+        const r = cp.spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { encoding: 'utf8', timeout: 20000, windowsHide: true });
         return { rc: (r.status === null || r.status === undefined) ? 1 : r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
     } catch (e) { return { rc: 127, out: '', err: String(e && e.message || e) }; }
+}
+// 异步版: 不阻塞扩展宿主主线程(spawnSync 会把整个消息循环卡死 → 面板所有命令无回包)。
+function daoPSAsync(script, timeoutMs) {
+    return new Promise((resolve) => {
+        try {
+            const cp = require('child_process');
+            cp.execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+                { encoding: 'utf8', timeout: timeoutMs || 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+                (err, stdout, stderr) => resolve({ rc: err ? 1 : 0, out: String(stdout || '').trim(), err: String(stderr || (err && err.message) || '').trim() }));
+        } catch (e) { resolve({ rc: 127, out: '', err: String(e && e.message || e) }); }
+    });
 }
 function daoParseQuser(out) {
     const map = {};
@@ -399,13 +484,15 @@ function daoParseQuser(out) {
     }
     return map;
 }
-function daoWinAcctList() {
+async function daoWinAcctList() {
     if (process.platform !== 'win32') return [];
     const reg = daoWinAcctReg();
-    const sess = daoParseQuser(daoPS('quser 2>$null').out);
+    // 单次 PowerShell 异步合并取会话态+启用账号(15s 硬上限): 既半成本又不阻主线程。
+    const r = await daoPSAsync("quser 2>$null; Write-Output '===DAO-SPLIT==='; Get-LocalUser | Where-Object {$_.Enabled -eq $true} | Select-Object -ExpandProperty Name", 15000);
+    const parts = r.out.split('===DAO-SPLIT===');
+    const sess = daoParseQuser((parts[0] || '').trim());
     const names = [], seen = {};
-    const gl = daoPS('Get-LocalUser | Where-Object {$_.Enabled -eq $true} | Select-Object -ExpandProperty Name');
-    gl.out.split(/\\r?\\n/).forEach((l) => { l = l.trim(); if (l && !seen[l.toLowerCase()]) { seen[l.toLowerCase()] = 1; names.push(l); } });
+    (parts[1] || '').split(/\\r?\\n/).forEach((l) => { l = l.trim(); if (l && !seen[l.toLowerCase()]) { seen[l.toLowerCase()] = 1; names.push(l); } });
     Object.keys(reg).forEach((n) => { if (!seen[n.toLowerCase()]) { seen[n.toLowerCase()] = 1; names.push(n); } });
     return names.map((n) => {
         const r = reg[n] || {};
@@ -509,25 +596,26 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
             }
             // ── 模块② 账号池(多 Windows 账号生命周期) ──
             case 'winAcctList': {
-                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                try { reply({ type: 'winAcctData', items: await daoWinAcctList() }); }
+                catch (e) { reply({ type: 'winAcctData', items: [], error: String(e && e.message || e) }); }
                 break;
             }
             case 'winAcctCreate': {
                 const r = daoWinAcctCreate(msg.name, msg.password, msg.admin);
-                if (r && r.error) reply({ type: 'error', msg: r.error });
-                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                try { reply({ type: 'winAcctData', items: await daoWinAcctList(), error: (r && r.error) || undefined }); }
+                catch (e) { reply({ type: 'winAcctData', items: [], error: String((r && r.error) || (e && e.message) || e) }); }
                 break;
             }
             case 'winAcctDestroy': {
                 const r = daoWinAcctDestroy(msg.name);
-                if (r && r.error) reply({ type: 'error', msg: r.error });
-                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                try { reply({ type: 'winAcctData', items: await daoWinAcctList(), error: (r && r.error) || undefined }); }
+                catch (e) { reply({ type: 'winAcctData', items: [], error: String((r && r.error) || (e && e.message) || e) }); }
                 break;
             }
             case 'winAcctLogoff': {
                 const r = daoWinAcctLogoff(msg.id);
-                if (r && r.error) reply({ type: 'error', msg: r.error });
-                reply({ type: 'winAcctData', items: daoWinAcctList() });
+                try { reply({ type: 'winAcctData', items: await daoWinAcctList(), error: (r && r.error) || undefined }); }
+                catch (e) { reply({ type: 'winAcctData', items: [], error: String((r && r.error) || (e && e.message) || e) }); }
                 break;
             }
 `;
