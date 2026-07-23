@@ -14,11 +14,9 @@ const FRONTEND_JS = [
 "   本源(正本清源之再正本清源): Windows 收敛为两模块 + N 路独立桌面板块 —",
 "   ① 统一配置管理台(官方 mstsc 五页全功能收编 · 连接档案);",
 "   ② 账号池(仿切号板 · 多 Windows 账号生命周期, 对齐 core/accounts.py 语义);",
-"   开桌面 = 动态新建一个与主页/账号平级的【独立顶层桌面板块】(canvas 走 rdpjs 网关渲染),",
-"   桌面本体不再内嵌 Windows 子标签内部。*/",
+"   ③ 远程桌面 = 官方 Apache Guacamole 引擎把整块 Windows 桌面渲染进本面板同一页(非 mstsc · 非自造 rdpjs · 非浏览器顶层)。*/",
 "var WRD={list:null,edit:null};",
 "var WACC={list:null,creating:false};",
-"var WDESK={seq:0};",
 "var WMOD='config';",
 "var WRD_RES=[[640,480],[800,600],[1024,768],[1280,720],[1366,768],[1600,900],[1920,1080],[2560,1440]];",
 "function wrCur(){if(WRD.edit===''||WRD.edit===null)return {};var p={};(WRD.list||[]).forEach(function(x){if(x.name===WRD.edit)p=x;});return p;}",
@@ -77,16 +75,28 @@ const FRONTEND_JS = [
 "  h+='</div>';",
 "  h+='<div class=\"cr\"><span class=\"l\"></span><span class=\"v\"><button class=\"btn primary\" onclick=\"wrSave()\">保存(.json+.rdp)</button> <button class=\"btn ghost\" onclick=\"wrCancel()\">取消</button></span></div></div>';",
 "  return h;}",
-"/* ── 板块外壳: 两模块切换(① 统一配置管理台 / ② 账号池) ── */",
+"/* ── 板块外壳: 三模块切换(① 配置管理台 / ② 账号池 / ③ 内嵌远程桌面) ──",
+"   ③ 的活桌面 iframe 持久驻留(#wdeskwrap), 切模块只切显隐不重建, 不断会话。*/",
 "function rWindows(){var v=document.getElementById('v-windows');if(!v)return;",
-"  var h='<div class=\"st\">🪟 Windows · 远程桌面归一管理(不依赖浏览器/官方软件 · 桌面路由进独立板块)</div>';",
-"  h+='<div class=\"card\"><div class=\"cr\"><span class=\"v\" style=\"display:flex;gap:6px;flex-wrap:wrap\">'+",
+"  var dw=document.getElementById('wdeskwrap');",
+"  if(!dw){dw=document.createElement('div');dw.id='wdeskwrap';dw.style.display='none';v.appendChild(dw);}",
+"  var main=document.getElementById('wmain');",
+"  if(!main){main=document.createElement('div');main.id='wmain';v.insertBefore(main,dw);}",
+"  var sw='<div class=\"st\">🪟 Windows · 远程桌面归一管理(官方 Guacamole 引擎 · 整块桌面渲染进本面板 · 非浏览器顶层)</div>';",
+"  sw+='<div class=\"card\"><div class=\"cr\"><span class=\"v\" style=\"display:flex;gap:6px;flex-wrap:wrap\">'+",
 "    '<button class=\"btn'+(WMOD==='config'?'':' ghost')+'\" onclick=\"wmSwitch(&#39;config&#39;)\">① 统一配置管理台</button>'+",
 "    '<button class=\"btn'+(WMOD==='pool'?'':' ghost')+'\" onclick=\"wmSwitch(&#39;pool&#39;)\">② 账号池 · 多账号管理</button>'+",
+"    '<button class=\"btn'+(WMOD==='desktop'?'':' ghost')+'\" onclick=\"wmSwitch(&#39;desktop&#39;)\">③ 远程桌面(内嵌)</button>'+",
 "    '</span></div></div>';",
-"  if(WMOD==='pool'){rWinPool(v,h);return;}",
-"  rWinConfig(v,h);}",
+"  if(WMOD==='desktop'){main.innerHTML=sw;ensureDesk();dw.style.display='';return;}",
+"  dw.style.display='none';",
+"  if(WMOD==='pool'){rWinPool(main,sw);return;}",
+"  rWinConfig(main,sw);}",
 "function wmSwitch(m){WMOD=m;rWindows();}",
+"/* ③ 内嵌远程桌面: 官方 Guacamole 单页客户端整块移植进本面板(顶层即 IDE, 非浏览器) */",
+"function ensureDesk(){var dw=document.getElementById('wdeskwrap');if(!dw)return;var s=dw.getAttribute('data-st');if(s==='loading'||s==='ready')return;dw.setAttribute('data-st','loading');dw.innerHTML='<div class=\"st\">🖥 远程桌面 · 官方 Guacamole 引擎</div><div style=\"color:var(--muted);padding:10px\">正在拉起官方引擎(guacd + 隧道)并内嵌整块桌面…</div>';cmd('winDeskEnsure',{});}",
+"function deskMount(url,err){var dw=document.getElementById('wdeskwrap');if(!dw)return;if(err){dw.setAttribute('data-st','err');dw.innerHTML='<div class=\"st\">🖥 远程桌面</div><div style=\"color:#ff6b6b;padding:10px\">官方引擎未就绪: '+esc(err)+'</div><div class=\"cr\"><span class=\"v\"><button class=\"btn\" onclick=\"dwRetry()\">重试</button></span></div>';return;}if(dw.querySelector('iframe')){dw.setAttribute('data-st','ready');return;}dw.setAttribute('data-st','ready');dw.innerHTML='<iframe id=\"wdeskframe\" src=\"'+esc(url)+'?autoconnect=1\" style=\"width:100%;height:calc(100vh - 132px);min-height:520px;border:0;background:#000;display:block\" allow=\"clipboard-read;clipboard-write\"></iframe>';}",
+"function dwRetry(){var dw=document.getElementById('wdeskwrap');if(dw)dw.removeAttribute('data-st');ensureDesk();}",
 "/* ── 模块① 统一配置管理台: 官方 mstsc 五页连接档案 ── */",
 "function rWinConfig(v,h){",
 "  if(WRD.list===null){v.innerHTML=h+'<div class=\"empty\"><div class=\"ic\">🪟</div><p style=\"color:var(--muted)\">加载连接档案…</p></div>';cmd('winRdpList');return;}",
@@ -105,7 +115,7 @@ const FRONTEND_JS = [
 "function wrEdit(i){var p=WRD.list[i];if(p)WRD.edit=p.name;rWindows();}",
 "function wrDel(i){var p=WRD.list[i];if(!p)return;WRD.edit=null;WRD.list=null;rWindows();cmd('winRdpDel',{name:p.name});}",
 "function wrGo(i){var p=WRD.list[i];if(p)cmd('winRdpConnect',{name:p.name});}",
-"function wrOpenDesk(i){var p=WRD.list[i];if(!p)return;toast('拉起桌面板块 '+(p.name||p.host||'')+' …',true);cmd('winRdpEmbed',{profile:p});}",
+"function wrOpenDesk(i){var p=WRD.list[i];if(!p)return;toast('内嵌远程桌面(官方 Guacamole)…',true);WMOD='desktop';rWindows();}",
 "function wrCancel(){WRD.edit=null;rWindows();}",
 "/* ── 模块② 账号池(仿切号板 · 多 Windows 账号生命周期) ── */",
 "function rWinPool(v,h){",
@@ -133,17 +143,8 @@ const FRONTEND_JS = [
 "function waCreate(){var g=function(id){return document.getElementById(id);};var name=g('wa_name').value.trim();if(!name){toast('账号名不能为空',false);return;}var pw=g('wa_pw').value;var admin=g('wa_admin').checked;WACC.creating=false;WACC.list=null;rWindows();cmd('winAcctCreate',{name:name,password:pw,admin:admin});}",
 "function waDel(i){var a=WACC.list[i];if(!a)return;if(typeof confirm==='function'&&!confirm('确认删除 Windows 账号 “'+a.name+'” 及其用户配置? 不可逆。'))return;WACC.list=null;rWindows();cmd('winAcctDestroy',{name:a.name});}",
 "function waLogoff(i){var a=WACC.list[i];if(!a||!a.session)return;if(typeof confirm==='function'&&!confirm('确认注销 “'+a.name+'” 的会话 '+a.session.id+'?'))return;WACC.list=null;rWindows();cmd('winAcctLogoff',{id:a.session.id});}",
-"function waOpenDesk(i){var a=WACC.list[i];if(!a)return;var t=a.target||{};toast('拉起桌面板块 '+a.name+' …',true);cmd('winRdpEmbed',{profile:{host:t.hostname||'127.0.0.1',port:t.port||'3389',name:a.name}});}",
-"/* ── 独立桌面板块: 动态新建与主页/账号平级的顶层 tab, canvas 走 rdpjs 网关 ── */",
-"function wdSpawn(url,label){if(!url)return;var id='wdesk-'+(++WDESK.seq);",
-"  var nav=document.querySelector('.ni[data-tab=\"windows\"]');",
-"  if(nav&&nav.parentNode){var ni=document.createElement('div');ni.className='ni';ni.setAttribute('data-tab',id);ni.title='Windows 桌面 · '+(label||'');ni.textContent='🖥';ni.setAttribute('onclick',\"sw('\"+id+\"')\");nav.parentNode.insertBefore(ni,nav.nextSibling);}",
-"  var vwin=document.getElementById('v-windows');",
-"  if(vwin&&vwin.parentNode){var tv=document.createElement('div');tv.className='tv';tv.id='v-'+id;",
-"    tv.innerHTML='<div class=\"st\">🖥 Windows 桌面 · '+esc(label||'')+' <span style=\"color:var(--muted)\">route A · rdpjs 网关 canvas · 非 mstsc</span> <button class=\"btn ghost\" onclick=\"wdClose(&#39;'+id+'&#39;)\">关闭板块</button></div><iframe src=\"'+esc(url)+'\" style=\"width:100%;height:calc(100vh - 96px);min-height:560px;border:0;background:#000;display:block\" allow=\"clipboard-read;clipboard-write\"></iframe>';",
-"    vwin.parentNode.appendChild(tv);}",
-"  try{sw(id);}catch(e){}}",
-"function wdClose(id){var ni=document.querySelector('.ni[data-tab=\"'+id+'\"]');if(ni&&ni.parentNode)ni.parentNode.removeChild(ni);var tv=document.getElementById('v-'+id);if(tv&&tv.parentNode)tv.parentNode.removeChild(tv);try{sw('windows');}catch(e){}}",
+"function waOpenDesk(i){var a=WACC.list[i];if(!a)return;toast('内嵌远程桌面(官方 Guacamole)…',true);WMOD='desktop';rWindows();}",
+
 "function wrTab(t){document.querySelectorAll('.wtab').forEach(function(d){d.style.display='none';});var pane=document.getElementById('wtab_'+t);if(pane)pane.style.display='';document.querySelectorAll('[data-wtab]').forEach(function(b){b.className='btn ghost';});var el=document.querySelector('[data-wtab=\"'+t+'\"]');if(el)el.className='btn';}",
 "function wrRes(el){var i=parseInt(el.value,10);var lb=document.getElementById('wf_reslabel');if(lb)lb.textContent=i>=WRD_RES.length?'全屏':(WRD_RES[i][0]+' × '+WRD_RES[i][1]+' 像素');}",
 "function wrSave(){function g(id){return document.getElementById(id);}",
@@ -159,7 +160,7 @@ const FRONTEND_JS = [
 "window.addEventListener('message',function(ev){var d=ev.data||{};",
 "  if(d.type==='winRdpData'){WRD.list=d.items||[];if(d.reset)WRD.edit=null;if(S.tab==='windows')rWindows();}",
 "  else if(d.type==='winAcctData'){WACC.list=d.items||[];if(S.tab==='windows')rWindows();}",
-"  else if(d.type==='winRdpEmbed'){if(d.error){toast(d.error,false);}else{wdSpawn(d.url,d.label);}}});",
+"  else if(d.type==='winDeskReady'){deskMount(d.url,d.error);}});",
 ].join("\n");
 
 // 宿主侧: RDP 档案落盘(~/.dao/rdp) + 标准 .rdp 生成 + 官方 mstsc.exe 启动(仅 Windows)。
@@ -263,19 +264,11 @@ function daoWinRdpConnect(name) {
         return { ok: true };
     } catch (e) { return { error: String(e && e.message || e) }; }
 }
-// ── route A · 内嵌远程桌面(官方 RDP 协议 → 归一板块内 canvas · 非 mstsc) ──
-// desktop/rdpweb 网关(node-rdpjs + ws)持凭据(C:/ProgramData/dao_vm/rdp_cred.json·不下发浏览器),
-// 浏览器仅收 bitmap/回传鼠键。此原语确保网关在 127.0.0.1:9250 起来并给出内嵌 view.html 地址。
-const DAO_RDPWEB_PORT = 9250;
-function daoWinRdpwebDir() {
-    const cands = [];
-    if (process.env.DAO_RDPWEB_DIR) cands.push(process.env.DAO_RDPWEB_DIR);
-    cands.push(path.join(os.homedir(), '.dao', 'rdpweb'));
-    cands.push('C:/dao_vm/rdpweb');
-    for (const d of cands) { try { if (d && fs.existsSync(path.join(d, 'gateway.js'))) return d; } catch (e) { /* 守柔 */ } }
-    return null;
-}
-function daoRdpwebUp(port) {
+// ── route A · 内嵌远程桌面(官方 Apache Guacamole 引擎 → 归一板块内同一页 · 非 mstsc) ──
+// 链路: 面板内 iframe(/desktop 单页客户端) → guacamole-lite 隧道(WS 4823/HTTP 4824) → guacd(WSL 4822) → RDP 3389。
+// 凭据由隧道持有并铸加密 token, 不下发面板。此原语确保 guacd+隧道在位并给出 /desktop 地址。
+const DAO_TUNNEL_HTTP_PORT = parseInt(process.env.DAO_GUAC_HTTP_PORT || '4824', 10);
+function daoTcpUp(port) {
     return new Promise((resolve) => {
         const net = require('net');
         let done = false;
@@ -286,31 +279,42 @@ function daoRdpwebUp(port) {
         setTimeout(() => fin(false), 800);
     });
 }
-async function daoWinRdpEmbed(profile) {
+function daoWinTunnelDir() {
+    const cands = [];
+    if (process.env.DAO_TUNNEL_DIR) cands.push(process.env.DAO_TUNNEL_DIR);
+    cands.push('C:/dao_vm/guactunnel');
+    cands.push(path.join(os.homedir(), '.dao', 'guactunnel'));
+    for (const d of cands) { try { if (d && fs.existsSync(path.join(d, 'server.js'))) return d; } catch (e) { /* 守柔 */ } }
+    return null;
+}
+async function daoWinDeskEnsure() {
     if (process.platform !== 'win32') return { error: '内嵌远程桌面仅 Windows 本机可用' };
-    const p = profile || {};
-    const ip = (p.host && String(p.host).trim()) || '127.0.0.1';
-    const rport = (p.port && String(p.port).trim()) || '3389';
-    const label = (p.name || p.host || (ip + ':' + rport));
-    const credPath = 'C:/ProgramData/dao_vm/rdp_cred.json';
-    if (!fs.existsSync(credPath)) return { error: '缺凭据 ' + credPath + '(网关持有·不下发浏览器):{"username","password","domain"}' };
-    let up = await daoRdpwebUp(DAO_RDPWEB_PORT);
-    if (!up) {
-        const dir = daoWinRdpwebDir();
-        if (!dir) return { error: '未找到 desktop/rdpweb 网关(设 DAO_RDPWEB_DIR 或置于 ~/.dao/rdpweb;需先 npm install + fetch-client-assets.ps1)' };
-        try {
-            const cp = require('child_process');
-            const child = cp.spawn(process.execPath, ['gateway.js'], {
+    const baseUrl = 'http://127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '/desktop';
+    if (await daoTcpUp(DAO_TUNNEL_HTTP_PORT)) return { ok: true, url: baseUrl };
+    const cp = require('child_process');
+    // guacd 跑在 WSL(systemd 托管) —— best-effort 拉起, 静默容错
+    try {
+        cp.spawn('wsl.exe', ['-d', 'Ubuntu-24.04', '-u', 'root', '--', 'systemctl', 'start', 'guacd'],
+            { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } catch (e) { /* 守柔 */ }
+    const dir = daoWinTunnelDir();
+    if (!dir) return { error: '未找到 guacamole-lite 隧道(设 DAO_TUNNEL_DIR 或置于 C:/dao_vm/guactunnel; 需先 npm install)' };
+    try {
+        const start = path.join(dir, 'start.ps1');
+        if (fs.existsSync(start)) {
+            cp.spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', start],
+                { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        } else {
+            cp.spawn(process.execPath, ['server.js'], {
                 cwd: dir, detached: true, stdio: 'ignore', windowsHide: true,
                 env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' })
-            });
-            child.unref();
-        } catch (e) { return { error: '网关启动失败: ' + String(e && e.message || e) }; }
-        for (let i = 0; i < 24 && !up; i++) { await new Promise((r) => setTimeout(r, 250)); up = await daoRdpwebUp(DAO_RDPWEB_PORT); }
-        if (!up) return { error: '网关未在 127.0.0.1:' + DAO_RDPWEB_PORT + ' 起来(检查 node/依赖/客户端资产)' };
-    }
-    const q = 'view.html?ip=' + encodeURIComponent(ip) + '&port=' + encodeURIComponent(rport) + '&label=' + encodeURIComponent(label);
-    return { ok: true, url: 'http://127.0.0.1:' + DAO_RDPWEB_PORT + '/' + q, ip: ip, port: rport, label: label };
+            }).unref();
+        }
+    } catch (e) { return { error: '隧道启动失败: ' + String(e && e.message || e) }; }
+    let up = false;
+    for (let i = 0; i < 24 && !up; i++) { await new Promise((r) => setTimeout(r, 250)); up = await daoTcpUp(DAO_TUNNEL_HTTP_PORT); }
+    if (!up) return { error: '隧道未在 127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + ' 起来(检查 guacd/node/依赖)' };
+    return { ok: true, url: baseUrl };
 }
 // ── 模块② 账号池宿主原语(多 Windows 账号生命周期 · 对齐 core/accounts.py 语义 · 不落盘口令) ──
 // New-LocalUser + Remote Desktop Users(建号) / quser(会话态) / logoff(注销) / Remove-LocalUser(删号)。
@@ -457,9 +461,9 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
                 reply({ type: 'actionResult', command: 'winRdpOpenDir', ok: true });
                 break;
             }
-            case 'winRdpEmbed': {
-                const r = await daoWinRdpEmbed(msg.profile || {});
-                reply(Object.assign({ type: 'winRdpEmbed' }, r || {}));
+            case 'winDeskEnsure': {
+                const r = await daoWinDeskEnsure();
+                reply(Object.assign({ type: 'winDeskReady' }, r || {}));
                 break;
             }
             // ── 模块② 账号池(多 Windows 账号生命周期) ──
@@ -487,6 +491,6 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
             }
 `;
 
-const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winRdpEmbed', 'winAcctList', 'winAcctCreate', 'winAcctDestroy', 'winAcctLogoff'";
+const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winDeskEnsure', 'winAcctList', 'winAcctCreate', 'winAcctDestroy', 'winAcctLogoff'";
 
 module.exports = { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD };

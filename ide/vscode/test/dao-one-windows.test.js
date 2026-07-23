@@ -69,22 +69,28 @@ test("账号池宿主原语(多 Windows 账号生命周期 · 白名单/case/Pow
   assert.ok(out.includes("d.type==='winAcctData'"), "缺 winAcctData 回执处理");
 });
 
-test("开桌面=独立顶层板块(动态平级 tab · 非内嵌 Windows 子标签)", () => {
+test("③ 内嵌远程桌面=官方 Guacamole 引擎(同一面板内 · 持久驻留 · 非自造 rdpjs)", () => {
   const out = applyPatches(fixture());
-  // 动态桌面板块创建/关闭
-  assert.ok(out.includes("function wdSpawn("), "缺独立桌面板块 wdSpawn");
-  assert.ok(out.includes("function wdClose("), "缺桌面板块关闭 wdClose");
-  assert.ok(out.includes("'wdesk-'+(++WDESK.seq)"), "桌面板块未生成平级 tab id");
-  // sw() 分发放行 wdesk- 动态板块
-  assert.ok(out.includes("t.indexOf('wdesk-')===0"), "sw() 未放行 wdesk- 动态板块");
-  // winRdpEmbed 回执改为拉起独立板块(不再内嵌)
-  assert.ok(out.includes("wdSpawn(d.url,d.label)"), "winRdpEmbed 回执未拉起独立桌面板块");
-  // 本源护栏: 不再把桌面 iframe 内嵌进 Windows 板块(v-windows)自身
-  assert.ok(!out.includes("function wrGoEmbed("), "残留旧内嵌 wrGoEmbed");
-  assert.ok(!out.includes("var WEMB="), "残留旧内嵌态 WEMB");
-  // 开桌面走网关 view.html(单目标 canvas), 服务端持凭据不下发浏览器
-  assert.ok(out.includes("view.html?ip="), "桌面未指向 view.html 单目标视图");
-  assert.ok(out.includes("rdp_cred.json"), "网关未从服务端凭据文件取凭据");
+  // 三模块外壳: ③ 远程桌面切换按钮 + 持久桌面容器
+  assert.ok(out.includes("wmSwitch(&#39;desktop&#39;)"), "缺 ③ 远程桌面切换按钮");
+  assert.ok(out.includes("wdeskwrap"), "缺持久桌面容器 wdeskwrap");
+  assert.ok(out.includes("function ensureDesk("), "缺桌面拉起 ensureDesk");
+  assert.ok(out.includes("function deskMount("), "缺桌面挂载 deskMount");
+  assert.ok(out.includes("function dwRetry("), "缺失败重试 dwRetry");
+  // winDeskReady 回执挂载进本面板(同一页, 不再另开顶层 tab)
+  assert.ok(out.includes("d.type==='winDeskReady'"), "缺 winDeskReady 回执处理");
+  assert.ok(out.includes("deskMount(d.url,d.error)"), "winDeskReady 回执未挂载内嵌桌面");
+  assert.ok(!out.includes("function wdSpawn("), "残留旧独立顶层桌面板块 wdSpawn");
+  // 宿主原语: 官方 Guacamole 链路(guacd + guacamole-lite 隧道), 凭据由隧道持有
+  assert.ok(out.includes("function daoWinDeskEnsure("), "缺宿主 daoWinDeskEnsure");
+  assert.ok(out.includes("case 'winDeskEnsure'"), "缺 case winDeskEnsure");
+  assert.ok(NOAUTH_ADD.includes("winDeskEnsure"), "NOAUTH_ADD 缺 winDeskEnsure");
+  assert.ok(out.includes("/desktop"), "桌面未指向隧道 /desktop 单页客户端");
+  assert.ok(out.includes("guacd"), "宿主未拉起 guacd");
+  // 本源护栏: 自造 node-rdpjs 路线彻底退场
+  assert.ok(!out.includes("view.html?ip="), "残留旧 rdpjs view.html 路线");
+  assert.ok(!out.includes("rdp_cred.json"), "残留旧 rdpjs 凭据文件路线");
+  assert.ok(!out.includes("9250"), "残留旧 rdpjs 网关端口");
 });
 
 test("幂等: 已注入的源拒绝二次注入", () => {
