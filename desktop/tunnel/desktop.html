@@ -1,0 +1,330 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<title>☯ DAO 桌面 · 官方 Guacamole 引擎</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+#bar{padding:4px 10px;background:#24242a;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid #333;flex-shrink:0}
+#bar button{padding:3px 8px;border:none;border-radius:3px;background:#3c8dbc;color:#fff;cursor:pointer;font-size:11px}
+#bar select{background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px}
+#tabs{display:flex;gap:4px;align-items:center;overflow-x:auto;max-width:45%}
+.tab{padding:2px 8px;border-radius:3px;background:#333;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px;font-size:11px;border:1px solid transparent}
+.tab.on{background:#2a4a63;border-color:#3c8dbc}
+.tab .dot{width:7px;height:7px;border-radius:50%;background:#999;flex-shrink:0}
+.tab .x{opacity:.5;cursor:pointer;padding:0 1px}
+.tab .x:hover{opacity:1;color:#ff6666}
+#bar button.on{background:#2a4a63;outline:1px solid #3c8dbc}
+#status{flex:1;text-align:right;opacity:.7}
+#desktop{flex:1;overflow:hidden;position:relative}
+.inst{position:absolute;top:0;left:0;right:0;bottom:0;display:none}
+.inst.on{display:block}
+.inst>div{position:absolute!important;top:0;left:0}
+.inst .caption{display:none}
+#overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;font-size:14px;opacity:.6}
+/* 平铺网格：多路分身同屏并置，各占一格、画面皆活、点谁谁得输入焦点。 */
+#desktop.grid{display:grid;gap:2px;padding:2px;background:#0e0e12}
+#desktop.grid .inst{position:relative;top:auto;left:auto;right:auto;bottom:auto;display:block;overflow:hidden;background:#000;border:1px solid #2a2a32;border-radius:4px}
+#desktop.grid .inst.on{border-color:#3c8dbc;box-shadow:0 0 0 1px #3c8dbc}
+#desktop.grid .inst>div{position:absolute!important;top:0;left:0}
+#desktop.grid .inst .caption{display:block;position:absolute;top:0;left:0;z-index:2;padding:1px 6px;font-size:10px;background:rgba(20,20,26,.72);border-bottom-right-radius:4px;pointer-events:none}
+</style></head><body>
+<div id="bar">
+  <b>☯ DAO 桌面</b>
+  <select id="acct" title="账号（多 RDP 一路一桌面）" onchange="onAcctChange()"></select>
+  <div id="tabs"></div>
+  <button onclick="addInstance()" title="同账号再开一路独立桌面会话（多 RDP 分身，并行互不干扰）">＋分身</button>
+  <button id="layoutBtn" onclick="toggleLayout()" title="平铺/标签：平铺网格把多路分身同屏并置，点哪格哪格得输入焦点">▦ 平铺</button>
+  <button onclick="doConnect()">连接</button>
+  <button onclick="doDisconnect()">断开</button>
+  <span id="status">未连接</span>
+</div>
+<div id="desktop"><div id="overlay">点击「连接」即可看到 Windows 桌面；「＋分身」可在本面板内并行多路桌面</div></div>
+<script src="guacamole-common.min.js"></script>
+<script>
+// ☯ 官方面板整块移植：与 ide/vscode/extension.js desktopHtml 同源实现，
+// 改为隧道同源直连（fetch /token · /accounts），供 IDE 归一板块内嵌成一张页面。
+const Q = new URLSearchParams(location.search);
+let ACCOUNT = Q.get('account') || '';
+const LABEL = Q.get('label') || '';
+const IDE_SESSION = Q.get('ide') || (function(){
+  try {
+    let s = localStorage.getItem('dao_ide_session');
+    if (!s) { s = 'ide_' + Math.random().toString(16).slice(2, 10); localStorage.setItem('dao_ide_session', s); }
+    return s;
+  } catch(e) { return 'ide_default'; }
+})();
+let ACCOUNTS = [];
+const container = document.getElementById('desktop');
+const statusEl = document.getElementById('status');
+const acctEl = document.getElementById('acct');
+const tabsEl = document.getElementById('tabs');
+const layoutBtn = document.getElementById('layoutBtn');
+const MAX_RETRIES = 5;
+
+// 网格行列（与 ide/vscode/grid-layout.js 同一份实现）。
+function gridDims(n) {
+  const count = Math.max(0, Math.floor(Number(n) || 0));
+  if (count <= 1) return { cols: 1, rows: 1 };
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  return { cols, rows };
+}
+let layout = 'tabs';
+
+// 多实例分身：一个面板内并行多路同账号独立桌面会话（类多 RDP）。
+let instances = [];
+let activeId = null;
+let nextId = 1;
+let nextSlot = 1;
+function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
+function hostFetch(pathq, method){
+  return fetch(pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
+}
+let lastLocalClip = null;
+let lastRemoteClip = null;
+
+const HUMAN_OWNER = 'human:' + IDE_SESSION;
+function cloneKey(it){
+  return ACCOUNT ? ('account:' + ACCOUNT + '@' + ideKey(it) + '#' + it.slot) : ideKey(it);
+}
+let _lastLeaseAt = 0;
+function humanLease(it){
+  var now = Date.now();
+  if (now - _lastLeaseAt < 1500) return;
+  _lastLeaseAt = now;
+  try {
+    hostFetch('/input?op=acquire&key=' + encodeURIComponent(cloneKey(it))
+      + '&owner=' + encodeURIComponent(HUMAN_OWNER) + '&kind=human&ttl=4000', 'POST')['catch'](function(){});
+  } catch(e) {}
+}
+let _agentHolding = false;
+setInterval(function(){
+  var it = active(); if (!it) return;
+  hostFetch('/input?key=' + encodeURIComponent(cloneKey(it)))
+    .then(function(d){
+      var h = d && d.holders && d.holders[0];
+      var holding = !!(h && h.kind === 'agent');
+      if (holding !== _agentHolding) { _agentHolding = holding; showActiveStatus(); }
+    })['catch'](function(){});
+}, 2000);
+
+function initAccounts(){
+  hostFetch('/accounts').then(function(d){
+    ACCOUNTS = (d && d.accounts) || [];
+    var names = ACCOUNTS.map(function(a){ return a.name; });
+    if (ACCOUNT && names.indexOf(ACCOUNT) < 0) names.unshift(ACCOUNT);
+    if (!names.length) { acctEl.style.display = 'none'; return; }
+    if (!ACCOUNT) ACCOUNT = names[0];
+    acctEl.innerHTML = names.map(function(n){
+      return '<option value="' + n + '"' + (n === ACCOUNT ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+  })['catch'](function(){ acctEl.style.display = 'none'; });
+}
+function onAcctChange(){
+  // 同一面板内切账号：新连接走新账号（既有分身各自保持原会话不动）。
+  ACCOUNT = acctEl.value;
+}
+
+function active(){ for (var i=0;i<instances.length;i++) if (instances[i].id===activeId) return instances[i]; return null; }
+function setStatus(t, c) { statusEl.textContent = t; statusEl.style.color = c || '#e0e0e0'; }
+
+function fit(it){
+  if (!it || !it.display || !it.dw || !it.dh) return;
+  var host = (layout === 'grid') ? it.el : container;
+  var cw = host.clientWidth, ch = host.clientHeight;
+  if (!cw || !ch) return;
+  var scale = Math.min(cw / it.dw, ch / it.dh, 1);
+  try { it.display.scale(scale); } catch(e) {}
+}
+function fitAll(){ instances.forEach(fit); }
+function applyLayout(){
+  if (layout === 'grid') {
+    container.classList.add('grid');
+    var d = gridDims(instances.length);
+    container.style.gridTemplateColumns = 'repeat(' + d.cols + ', 1fr)';
+    container.style.gridTemplateRows = 'repeat(' + d.rows + ', 1fr)';
+  } else {
+    container.classList.remove('grid');
+    container.style.gridTemplateColumns = '';
+    container.style.gridTemplateRows = '';
+  }
+  instances.forEach(function(it){ it.el.className = 'inst' + (it.id===activeId ? ' on' : ''); });
+  if (layoutBtn) layoutBtn.classList.toggle('on', layout === 'grid');
+  requestAnimationFrame(fitAll);
+}
+function toggleLayout(){ layout = (layout === 'grid') ? 'tabs' : 'grid'; applyLayout(); }
+function stateColor(s){ return ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'][s] || '#999'; }
+function showActiveStatus(){
+  var it = active(); if (!it) { setStatus('未连接'); return; }
+  var names = ['空闲','正在连接...','等待中...','已连接 ●','正在断开...','已断开'];
+  var agentTag = _agentHolding ? ' · ⚡AI操作中(动手即接管)' : '';
+  setStatus(it.label + ' · ' + (names[it.state] || '未连接') + agentTag, stateColor(it.state));
+}
+function renderTabs(){
+  tabsEl.innerHTML = '';
+  instances.forEach(function(it){
+    var t = document.createElement('div');
+    t.className = 'tab' + (it.id===activeId ? ' on' : '');
+    var dot = document.createElement('span'); dot.className='dot'; dot.style.background = stateColor(it.state);
+    var nm = document.createElement('span'); nm.textContent = it.label;
+    var x = document.createElement('span'); x.className='x'; x.textContent='×'; x.title='关闭这路分身';
+    x.onclick = function(ev){ ev.stopPropagation(); closeInstance(it.id); };
+    t.appendChild(dot); t.appendChild(nm); t.appendChild(x);
+    t.onclick = function(){ switchInstance(it.id); };
+    tabsEl.appendChild(t);
+  });
+}
+function switchInstance(id){
+  activeId = id;
+  instances.forEach(function(it){ it.el.className = 'inst' + (it.id===id ? ' on' : ''); });
+  renderTabs(); showActiveStatus();
+}
+function newInstance(slot){
+  var id = nextId++;
+  var s = slot || nextSlot;
+  if (s >= nextSlot) nextSlot = s + 1;
+  var el = document.createElement('div'); el.className = 'inst';
+  container.appendChild(el);
+  var it = { id: id, slot: s, label: '分身' + s, el: el, client: null, display: null,
+             connecting: false, userDisconnected: false, retries: 0, retryTimer: null, state: 0 };
+  el.addEventListener('mousedown', function(){ if (it.id !== activeId) switchInstance(it.id); }, true);
+  instances.push(it);
+  switchInstance(id);
+  applyLayout();
+  return it;
+}
+function addInstance(){ var it = newInstance(); connectInstance(it); }
+function closeInstance(id){
+  var idx = instances.findIndex(function(x){ return x.id===id; });
+  if (idx < 0) return;
+  var it = instances[idx];
+  it.userDisconnected = true;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
+  try { container.removeChild(it.el); } catch(e) {}
+  instances.splice(idx, 1);
+  try {
+    var dq = 'ide=' + encodeURIComponent(ideKey(it))
+           + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
+    hostFetch('/sessions?' + dq, 'POST')['catch'](function(){});
+  } catch(e) {}
+  if (activeId === id) { activeId = instances.length ? instances[instances.length-1].id : null; }
+  instances.forEach(function(x){ x.el.className = 'inst' + (x.id===activeId ? ' on' : ''); });
+  renderTabs(); showActiveStatus(); applyLayout();
+}
+
+async function connectInstance(it) {
+  if (!it || it.connecting) return;
+  it.connecting = true;
+  it.userDisconnected = false;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
+  setStatus(it.label + ' · 取 token...', '#ffcc00');
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  let tokenData;
+  try {
+    const q = 'ide=' + encodeURIComponent(ideKey(it))
+            + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
+    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h);
+    if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
+    if (tokenData.error) { setStatus(it.label + ' · 令牌: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
+  } catch (e) { setStatus(it.label + ' · 令牌获取失败: ' + e.message, '#ff4444'); it.connecting = false; return; }
+  const wsPort = tokenData.ws_port || 4823;
+  const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token);
+  setStatus(it.label + ' · 建立 WS 隧道...', '#ffcc00');
+  const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
+  const client = new Guacamole.Client(tunnel);
+  it.client = client;
+  const display = client.getDisplay();
+  it.display = display;
+  var ov = document.getElementById('overlay'); if (ov) ov.remove();
+  it.el.innerHTML = '';
+  it.el.appendChild(display.getElement());
+  var cap = document.createElement('div'); cap.className = 'caption'; cap.textContent = it.label; it.el.appendChild(cap);
+  const mouse = new Guacamole.Mouse(display.getElement());
+  mouse.onEach(['mousedown','mousemove','mouseup'], function(e) {
+    if (!it.client) return;
+    if (e.state && (e.state.left || e.state.middle || e.state.right)) humanLease(it);
+    var s = display.getScale() || 1;
+    var st = e.state;
+    if (s !== 1) st = new Guacamole.Mouse.State(st.x / s, st.y / s, st.left, st.middle, st.right, st.up, st.down);
+    it.client.sendMouseState(st, true);
+  });
+  display.onresize = function(dw, dh) { it.dw = dw; it.dh = dh; fit(it); };
+  // 剪贴板：远端→本地（仅活动分身回写，避免多路互踩）
+  client.onclipboard = function(stream, mimetype) {
+    if (mimetype.indexOf('text/') !== 0) { try { stream.sendAck('OK', 0); } catch(e) {} return; }
+    var reader = new Guacamole.StringReader(stream);
+    var data = '';
+    reader.ontext = function(t) { data += t; };
+    reader.onend = function() {
+      if (it.id !== activeId) return;
+      if (data && data !== lastLocalClip) {
+        lastRemoteClip = data;
+        try { navigator.clipboard.writeText(data)['catch'](function(){}); } catch(e) {}
+      }
+    };
+  };
+  client.onstatechange = function(state) {
+    it.state = state;
+    renderTabs();
+    if (it.id === activeId) showActiveStatus();
+    if (state === 3) { it.retries = 0; }
+    if (state === 5 && !it.userDisconnected) {
+      if (it.retries < MAX_RETRIES) {
+        var delay = Math.min(2000 * Math.pow(2, it.retries), 15000);
+        it.retries++;
+        if (it.id === activeId) setStatus(it.label + ' · 断线，' + (delay/1000) + 's 后重连(' + it.retries + '/' + MAX_RETRIES + ')...', '#ff8800');
+        if (it.retryTimer) clearTimeout(it.retryTimer);
+        it.retryTimer = setTimeout(function(){ connectInstance(it); }, delay);
+      } else if (it.id === activeId) {
+        setStatus(it.label + ' · 已断开（重连次数耗尽，点「连接」手动重试）', '#ff4444');
+      }
+    }
+  };
+  client.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' · 错误: ' + (s.message || s.code || ''), '#ff4444'); };
+  tunnel.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' · 隧道错误: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
+  client.connect();
+  it.connecting = false;
+}
+
+function doConnect(){ var it = active() || newInstance(); connectInstance(it); }
+function doDisconnect(){
+  var it = active(); if (!it) return;
+  it.userDisconnected = true;
+  if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
+  if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
+}
+
+// 键盘：全局一份，只路由到活动分身（多路并行互不串键）
+const keyboard = new Guacamole.Keyboard(document);
+keyboard.onkeydown = function(k) { var it = active(); if (it && it.client) { humanLease(it); it.client.sendKeyEvent(1, k); } };
+keyboard.onkeyup = function(k) { var it = active(); if (it && it.client) it.client.sendKeyEvent(0, k); };
+
+// 剪贴板：本地→远端（聚焦时读本地剪贴板，只发给活动分身）
+function sendClipboard(text) {
+  var it = active();
+  if (!it || !it.client || typeof text !== 'string' || !text || text === lastRemoteClip) return;
+  lastLocalClip = text;
+  try {
+    var stream = it.client.createClipboardStream('text/plain');
+    var writer = new Guacamole.StringWriter(stream);
+    writer.sendText(text);
+    writer.sendEnd();
+  } catch(e) {}
+}
+window.addEventListener('focus', function(){
+  try { navigator.clipboard.readText().then(sendClipboard)['catch'](function(){}); } catch(e) {}
+});
+
+window.addEventListener('resize', fitAll);
+window.addEventListener('beforeunload', function(){
+  instances.forEach(function(it){ if (it.client) { try { it.client.disconnect(); } catch(e) {} } });
+});
+
+initAccounts();
+if (Q.get('autoconnect') === '1') {
+  setTimeout(function(){ doConnect(); }, 300);
+}
+</script>
+</body></html>

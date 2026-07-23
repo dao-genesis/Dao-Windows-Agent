@@ -233,6 +233,23 @@ function mintTokenForTarget(rdp, opts) {
   return encryptToken({ connection: { type: "rdp", settings } });
 }
 
+// —— 官方面板静态资产（整块移植进 IDE 归一板块的单页桌面客户端）——
+// /desktop → desktop.html(guacamole-common-js 全功能面板: 多分身/平铺/重连/键鼠/剪贴板)
+// /guacamole-common.min.js → 官方客户端库(仓内 ide/vscode/media 为真源, 部署时可同目录)
+// 无密可泄(纯静态), 故同 /health 免鉴权。
+const STATIC_FILES = {
+  "/desktop": { name: "desktop.html", type: "text/html; charset=utf-8" },
+  "/guacamole-common.min.js": { name: "guacamole-common.min.js", type: "text/javascript; charset=utf-8" },
+};
+function staticFilePath(name) {
+  const cands = [
+    path.join(__dirname, name),
+    path.join(__dirname, "..", "..", "ide", "vscode", "media", name),
+  ];
+  for (const p of cands) { try { if (fs.existsSync(p)) return p; } catch (e) { /* 守柔 */ } }
+  return null;
+}
+
 // —— 令牌铸造 HTTP（供插件/网页取 token；不外泄加密密钥）——
 const httpServer = http.createServer((req, res) => {
   const u = new URL(req.url, `http://127.0.0.1:${HTTP_PORT}`);
@@ -241,6 +258,18 @@ const httpServer = http.createServer((req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
+    return;
+  }
+  if (req.method === "GET" && STATIC_FILES[u.pathname]) {
+    const meta = STATIC_FILES[u.pathname];
+    const fp = staticFilePath(meta.name);
+    if (!fp) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "缺静态资产 " + meta.name }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": meta.type });
+    res.end(fs.readFileSync(fp));
     return;
   }
   if (!authorized(u.pathname, req.headers["authorization"] || "", u.searchParams.get("auth") || "", HTTP_TOKEN)) {
