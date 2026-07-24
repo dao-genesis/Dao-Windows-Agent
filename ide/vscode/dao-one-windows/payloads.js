@@ -622,4 +622,12 @@ const HOST_CASES = `            // ── dao-one-windows · 🪟 Windows 板块
 
 const NOAUTH_ADD = "'winRdpList', 'winRdpSave', 'winRdpDel', 'winRdpConnect', 'winRdpOpenDir', 'winDeskEnsure', 'winDeskOpenExternal', 'winAcctList', 'winAcctCreate', 'winAcctDestroy', 'winAcctLogoff'";
 
-module.exports = { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD };
+// 负载签名(反者道之动): 负载任一半变化即变, 供再注入器判定「已注入但已过时」并就地重折入。
+// 不手工维护版本号 —— 内容即版本(变即知), 免遗漏 bump。
+const PAYLOAD_SIG = require("crypto")
+  .createHash("sha256")
+  .update(JSON.stringify([FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD]))
+  .digest("hex")
+  .slice(0, 16);
+
+module.exports = { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD, PAYLOAD_SIG };
