@@ -170,6 +170,15 @@ test("负载签名护栏: 首行标记携带 sig, 供再注入器判定「已注
   assert.ok(!staleSample.includes(APPLIED_TAG), "过时样例不应含当前 sig");
 });
 
+test("再注入器双宿主护栏: 扫 ~/.vscode 与 ~/.devin 两处, 且候选重载端口含 9925", () => {
+  const rj = require("../dao-one-windows/reinject");
+  assert.deepStrictEqual(rj.EXT_ROOTS, [".vscode", ".devin"], "EXT_ROOTS 缺双宿主");
+  assert.ok(rj.RELOAD_PORTS.includes(9920) && rj.RELOAD_PORTS.includes(9925), "重载端口缺 9920/9925");
+  assert.deepStrictEqual(rj.verKey("dao.dao-one-2.29.11"), [2, 29, 11]);
+  assert.ok(rj.cmp(rj.verKey("dao.dao-one-2.29.11"), rj.verKey("dao.dao-one-2.29.9")) > 0, "版本比较错");
+  assert.ok(Array.isArray(rj.daoOneTargets()), "daoOneTargets 应返回数组(缺目录时守柔)");
+});
+
 test("前端负载不得破坏模板字面量(禁反引号/禁 ${ 序列)且自身语法合法", () => {
   assert.ok(!FRONTEND_JS.includes("`"), "前端负载含反引号");
   assert.ok(!FRONTEND_JS.includes("${"), "前端负载含 ${");
