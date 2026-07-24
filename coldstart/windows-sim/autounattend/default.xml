@@ -51,27 +51,27 @@
       publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <UserAuthentication>0</UserAuthentication>
     </component>
-    <component name="Networking-MPSSVC-Svc" processorArchitecture="amd64"
-      publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <FirewallGroups>
-        <FirewallGroup wcm:action="add" wcm:keyValue="RDP" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Active>true</Active><Group>Remote Desktop</Group><Profile>all</Profile>
-        </FirewallGroup>
-      </FirewallGroups>
-    </component>
+    <!-- 真机实证缺陷（本轮冷启动复现）：specialize 阶段用 Networking-MPSSVC-Svc/FirewallGroup
+         按字面名 <Group>Remote Desktop</Group> 放行 RDP，会令 Windows Setup 触发
+         "Internal error: Failed to expand 'group' constant" 而弹框中断无人值守装机——防火墙
+         组名是间接字符串常量(@FirewallAPI.dll,-<id>)，字面值无法被展开。此处删除该组件：
+         RDP 防火墙放行改由首登 firstlogon.ps1 的 `Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'`
+         + `fDenyTSConnections=0` 完成（幂等，已在位），装机阶段不再触碰防火墙组常量。 -->
     <!-- 置备兜底（真机实证缺陷：FirstLogonCommands 在部分镜像/OOBE 路径下不触发，
          C:\dao-firstlogon.log 不存在、机控桥永不上线）：specialize 阶段（SYSTEM）调用应答盘
          dao-specialize.cmd → 落 firstlogon 副本 + 装 SetupComplete.cmd（安装收尾 SYSTEM 必跑），
          与 FirstLogonCommands 双保险；firstlogon.ps1 内置 .provisioned 幂等门，重复触发不重跑。
          注：Path 有 259 字符硬上限（真机实证：内联长命令 → "answer file is invalid" 装机中断），
-         故逻辑全部下沉到 dao-specialize.cmd，此处只留短调用。 -->
+         故逻辑全部下沉到 dao-specialize.cmd，此处只留短调用。
+         注2：Path 值会被 Setup 做 %常量% 展开——批处理 `for %i` 的裸 % 会被当常量表达式解析，
+         是无人值守中断的又一雷区；故盘符扫描改用无 % 的 PowerShell 写法。 -->
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
       publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
           <Order>1</Order>
           <Description>Dao provisioning fallback via SetupComplete</Description>
-          <Path>cmd /c for %i in (C D E F G H I J K) do if exist %i:\dao-specialize.cmd call %i:\dao-specialize.cmd</Path>
+          <Path>powershell -NoProfile -ExecutionPolicy Bypass -Command "foreach($c in 67..75){$p=[char]$c+':\dao-specialize.cmd';if(Test-Path $p){cmd /c $p;break}}"</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>
