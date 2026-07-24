@@ -46,6 +46,20 @@ function Get-Payload($name, $url) {
   return $out
 }
 
+# 有界等待安装器（真机踩坑·冷启动实证）：Inno Setup 安装器在 SetupComplete(SYSTEM·无交互)
+# 语境下出错会弹模态框（实证复现：VSCode/Devin user-installer 弹 "Internal error: Failed to
+# expand 'group' constant"、inno_updater 弹 VCRUNTIME140.dll 缺失），-Wait 将永久挂死、
+# 装机永不关机。故所有安装器一律 /SUPPRESSMSGBOXES + 限时等待，超时杀进程续行，置备永不卡死。
+function Invoke-Installer($exe, $arguments, $timeoutSec = 900) {
+  $p = Start-Process $exe -ArgumentList $arguments -PassThru
+  if (-not $p.WaitForExit($timeoutSec * 1000)) {
+    try { $p.Kill() } catch {}
+    Log "installer TIMEOUT(${timeoutSec}s) killed: $exe"
+    return -1
+  }
+  return $p.ExitCode
+}
+
 # 1) 确保 RDP 开、NLA 关（便于 Agent 从宿主 loopback RDP 接入隔离会话）
 Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
 Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 0
@@ -251,7 +265,8 @@ try {
     # winget 不可用时离线兜底（Enterprise Eval 镜像常无 winget/msstore）：官网系统级静默安装
     try {
       $codeInst = Get-Payload 'VSCodeSetup.exe' 'https://update.code.visualstudio.com/latest/win32-x64/stable'
-      Start-Process $codeInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
+      $rc = Invoke-Installer $codeInst @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath')
+      Log "vscode installer exit=$rc"
       foreach ($p in @("$env:ProgramFiles\Microsoft VS Code\bin\code.cmd",
                        "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin\code.cmd")) {
         if (Test-Path $p) { $codeCli = $p; break }
@@ -285,7 +300,8 @@ try {
   $devinCli = Resolve-DevinCli
   if (-not $devinCli) {
     $devinInst = Get-Payload 'DevinUserSetup.exe' 'https://windsurf.com/api/windsurf/download-redirect?build=win32-x64-user&isNext=false'
-    Start-Process $devinInst -ArgumentList '/VERYSILENT','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath' -Wait
+    $rc = Invoke-Installer $devinInst @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath')
+    Log "devin desktop installer exit=$rc"
     $devinCli = Resolve-DevinCli
     Log "devin desktop installed (stable user installer)"
   }
@@ -309,9 +325,9 @@ if (-not (Test-Cmd $freecadPaths)) {
     try {
       # 官方 1.0.0 资产名为 ...-installer-1.exe（NSIS，/S 静默）；旧 py311.exe 命名不存在（404）
       $fc = Get-Payload 'FreeCAD-setup.exe' 'https://github.com/FreeCAD/FreeCAD/releases/download/1.0.0/FreeCAD_1.0.0-conda-Windows-x86_64-installer-1.exe'
-      $p = Start-Process $fc -ArgumentList '/S' -Wait -PassThru
-      if (Test-Cmd $freecadPaths) { Log "freecad installed (offline exit=$($p.ExitCode))" }
-      else { Log "offline freecad NOT verified (exit=$($p.ExitCode))" }
+      $rc = Invoke-Installer $fc @('/S') 1800
+      if (Test-Cmd $freecadPaths) { Log "freecad installed (offline exit=$rc)" }
+      else { Log "offline freecad NOT verified (exit=$rc)" }
     } catch { Log "offline freecad failed: $_" }
   }
 } else { Log "freecad already present" }
@@ -357,10 +373,10 @@ if (-not (Test-Cmd $kicadPaths)) {
   if (-not (Test-Cmd $kicadPaths)) {
     try {
       $kc = Get-Payload 'KiCad-setup.exe' 'https://kicad-downloads.s3.cern.ch/windows/stable/kicad-8.0.9-x86_64.exe'
-      $p = Start-Process $kc -ArgumentList '/S' -Wait -PassThru
+      $rc = Invoke-Installer $kc @('/S') 1800
       # 实机踩坑：安装器秒退也会走到这里，必须以落盘探测为准，禁止假成功日志
-      if (Test-Cmd $kicadPaths) { Log "kicad installed (offline exit=$($p.ExitCode))" }
-      else { Log "offline kicad NOT verified (exit=$($p.ExitCode))：kicad-cli 未落盘" }
+      if (Test-Cmd $kicadPaths) { Log "kicad installed (offline exit=$rc)" }
+      else { Log "offline kicad NOT verified (exit=$rc)：kicad-cli 未落盘" }
     } catch { Log "offline kicad failed: $_" }
   }
 } else { Log "kicad already present" }
