@@ -10,9 +10,12 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD } = require("./payloads");
+const { FRONTEND_JS, HOST_HELPERS, HOST_CASES, NOAUTH_ADD, PAYLOAD_SIG } = require("./payloads");
 
 const MARK = "dao-one-windows";
+// 首行标记同时携带负载签名: 「MARK applied sig=<PAYLOAD_SIG>」。再注入器据此区分
+// 「未注入 / 已注入且最新 / 已注入但过时」三态(过时即从 .prewin 真源就地重折入)。
+const APPLIED_TAG = MARK + " applied sig=" + PAYLOAD_SIG;
 
 // 每条补丁: [锚点(必须恰好出现一次), 替换文本]。锚点缺失/重复即失败, 绝不静默错插。
 function buildPatches() {
@@ -106,7 +109,7 @@ function applyPatches(source) {
     // 用函数式替换: 负载(如账号池 PowerShell)含 $'、$&、$` 等序列, 字符串式 replace 会误解析。
     out = out.replace(p.anchor, () => p.replace);
   }
-  return "// " + MARK + " applied\n" + out;
+  return "// " + APPLIED_TAG + "\n" + out;
 }
 
 function copyTree(src, dst) {
@@ -149,4 +152,4 @@ if (require.main === module) {
   console.log("✓ 衍生完成: " + info.publisher + "." + info.name + "@" + info.version + " → " + path.resolve(outDir));
 }
 
-module.exports = { applyPatches, derive, buildPatches, MARK };
+module.exports = { applyPatches, derive, buildPatches, MARK, APPLIED_TAG, PAYLOAD_SIG };
