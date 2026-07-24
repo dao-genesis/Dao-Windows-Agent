@@ -18,18 +18,23 @@ const { applyPatches, MARK, APPLIED_TAG } = require("./inject");
 
 // 就地重载 dao-vsix(不重装·仅让宿主重读被折入的 vendor 模块)。token 从本机同目录 .bridge-token
 // 读取(用户本机自有令牌·绝不入库/入 PR)。缺 token 则跳过重载(板块于用户下次窗口重载自然生效)。
+// 双宿主之地都可能跑着被注入实例(VS Code 与 Devin Desktop 各自的插件目录与端口),
+// 重载时对候选端口逐个尽力而为(不在的端口自然报错忽略)。
+const RELOAD_PORTS = [9920, 9921, 9922, 9923, 9924, 9925];
 function reloadBridge() {
   let token = "";
   try { token = fs.readFileSync(path.join(__dirname, ".bridge-token"), "utf8").trim(); } catch (e) { /* 守柔 */ }
   if (!token) { console.log("RELOAD_SKIP no-token"); return; }
   const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
     params: { name: "plugin_reload", arguments: { confirm: true } } });
-  const req = http.request({ host: "127.0.0.1", port: 9920, path: "/mcp", method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
-      "Authorization": "Bearer " + token } },
-    (res) => { let d = ""; res.on("data", (c) => d += c); res.on("end", () => console.log("RELOAD " + res.statusCode)); });
-  req.on("error", (e) => console.log("RELOAD_ERR " + (e && e.message || e)));
-  req.write(body); req.end();
+  for (const port of RELOAD_PORTS) {
+    const req = http.request({ host: "127.0.0.1", port, path: "/mcp", method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
+        "Authorization": "Bearer " + token } },
+      (res) => { res.resume(); res.on("end", () => console.log("RELOAD " + port + " " + res.statusCode)); });
+    req.on("error", () => { /* 端口不在 · 守柔 */ });
+    req.write(body); req.end();
+  }
 }
 
 function verKey(name) {
@@ -38,16 +43,25 @@ function verKey(name) {
 }
 function cmp(a, b) { for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] - b[i]; } return 0; }
 
-function highestDaoOne() {
-  const base = path.join(os.homedir(), ".vscode", "extensions");
-  let best = null;
-  for (const n of fs.readdirSync(base)) {
-    if (!/^dao\.dao-one-\d+\.\d+\.\d+$/.test(n)) continue;
-    const f = path.join(base, n, "vendor-vsix", "out", "extension.js");
-    if (!fs.existsSync(f)) continue;
-    if (!best || cmp(verKey(n), verKey(best.name)) > 0) best = { name: n, file: f };
+// 双宿主: VS Code(~/.vscode) 与 Devin Desktop(~/.devin) 各有一套扩展目录,
+// 只修其一即「脑裂」—— 公网入口绑到哪个宿主看到的功能就不同。两处各取最高版都修。
+const EXT_ROOTS = [".vscode", ".devin"];
+function daoOneTargets() {
+  const out = [];
+  for (const root of EXT_ROOTS) {
+    const base = path.join(os.homedir(), root, "extensions");
+    let names;
+    try { names = fs.readdirSync(base); } catch (e) { continue; }
+    let best = null;
+    for (const n of names) {
+      if (!/^dao\.dao-one-\d+\.\d+\.\d+$/.test(n)) continue;
+      const f = path.join(base, n, "vendor-vsix", "out", "extension.js");
+      if (!fs.existsSync(f)) continue;
+      if (!best || cmp(verKey(n), verKey(best.name)) > 0) best = { name: root + "/" + n, file: f };
+    }
+    if (best) out.push(best);
   }
-  return best;
+  return out;
 }
 
 // 折入并落盘。真源 pristineSrc(未注入的官方版)与目标文件 file 可不同(过时重折时
@@ -59,13 +73,10 @@ function injectTo(file, pristineSrc, reason) {
   try { if (!fs.existsSync(file + ".prewin")) fs.writeFileSync(file + ".prewin", pristineSrc, "utf8"); } catch (e) { /* 守柔 */ }
   fs.writeFileSync(file, patched, "utf8");
   console.log(reason + " " + file);
-  reloadBridge();
-  return 10; // 10 = 本次发生了再注入(已请求重载)
+  return 10; // 10 = 本次发生了再注入(需请求重载)
 }
 
-function main() {
-  const t = highestDaoOne();
-  if (!t) { console.log("NO_DAO_ONE"); return 0; }
+function processTarget(t) {
   const src = fs.readFileSync(t.file, "utf8");
 
   // ② 已注入且最新
@@ -84,6 +95,23 @@ function main() {
   return injectTo(t.file, src, "REINJECTED");
 }
 
-const rc = main();
-// 给异步重载请求留出发出的时间窗
-setTimeout(() => process.exit(rc), 1500);
+function main() {
+  const targets = daoOneTargets();
+  if (!targets.length) { console.log("NO_DAO_ONE"); return 0; }
+  let rc = 0, reinjected = false;
+  for (const t of targets) {
+    const r = processTarget(t);
+    if (r === 10) reinjected = true;
+    rc = Math.max(rc, r);
+  }
+  if (reinjected) reloadBridge();
+  return rc;
+}
+
+module.exports = { verKey, cmp, daoOneTargets, processTarget, EXT_ROOTS, RELOAD_PORTS };
+
+if (require.main === module) {
+  const rc = main();
+  // 给异步重载请求留出发出的时间窗
+  setTimeout(() => process.exit(rc), 1500);
+}
