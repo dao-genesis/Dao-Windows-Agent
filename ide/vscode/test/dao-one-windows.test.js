@@ -154,6 +154,22 @@ test("锚点缺失即失败(绝不静默错插)", () => {
   assert.throws(() => applyPatches("nothing here"), /锚点/);
 });
 
+test("负载签名护栏: 首行标记携带 sig, 供再注入器判定「已注入但过时」", () => {
+  const { APPLIED_TAG, PAYLOAD_SIG } = require("../dao-one-windows/inject");
+  // sig 为 16 位十六进制内容哈希, 负载任一半变化即变
+  assert.match(PAYLOAD_SIG, /^[0-9a-f]{16}$/, "PAYLOAD_SIG 非 16 位 hex");
+  assert.strictEqual(APPLIED_TAG, MARK + " applied sig=" + PAYLOAD_SIG);
+  const out = applyPatches(fixture());
+  assert.ok(out.startsWith("// " + APPLIED_TAG), "首行未携带当前 sig");
+  // 三态: 未注入 / 已注入且最新(含 APPLIED_TAG) / 已注入但过时(有 MARK 无当前 sig)
+  assert.ok(!fixture().includes(MARK + " applied"), "真源夹具不应含 MARK");
+  assert.ok(out.includes(MARK + " applied"), "注入产物应含 MARK");
+  // 过时样例(旧 sig)既含 MARK 又不含当前 APPLIED_TAG → 再注入器应判为过时
+  const staleSample = "// " + MARK + " applied sig=deadbeefdeadbeef\nsome old injected body";
+  assert.ok(staleSample.includes(MARK + " applied"), "过时样例应含 MARK");
+  assert.ok(!staleSample.includes(APPLIED_TAG), "过时样例不应含当前 sig");
+});
+
 test("前端负载不得破坏模板字面量(禁反引号/禁 ${ 序列)且自身语法合法", () => {
   assert.ok(!FRONTEND_JS.includes("`"), "前端负载含反引号");
   assert.ok(!FRONTEND_JS.includes("${"), "前端负载含 ${");
