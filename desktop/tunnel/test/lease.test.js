@@ -9,6 +9,11 @@ const path = require("path");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dao-lease-"));
 process.env.DAO_SESSIONS_STATE_JSON = path.join(tmp, "sessions-state.json");
+process.env.DAO_ACCOUNTS_JSON = path.join(tmp, "accounts.json");
+fs.writeFileSync(process.env.DAO_ACCOUNTS_JSON, JSON.stringify({
+  "dao-canvas-demo": { hostname: "127.0.0.1", port: "3389", username: "ai", password: "dummy" },
+  "win-test-2": { hostname: "127.0.0.1", port: "3389", username: "windsurf-test", password: "dummy" },
+}));
 
 const srv = require("../server");
 
@@ -16,6 +21,14 @@ const srv = require("../server");
 assert.strictEqual(typeof srv.recordLease, "function");
 assert.strictEqual(typeof srv.mintToken, "function");
 console.log("✓ require server.js 只暴露纯函数，不占端口");
+
+// 0b) 账号显示名与 Windows 登录名都可路由到同一个真实 RDP 目标，避免手填登录名时 /token 404。
+const ah = srv.resolveAccount("ai");
+assert.ok(ah, "应能用登录名 ai 反解到账户显示名");
+assert.strictEqual(ah.name, "dao-canvas-demo");
+assert.strictEqual(ah.target.port, "3389");
+assert.strictEqual(srv.targetForAccount("windsurf-test").username, "windsurf-test");
+console.log("✓ 账号路由支持显示名/登录名别名");
 
 // 1) 首次登记 → 生成稳定 leaseId，reconnect=false。
 const t1 = srv.mintToken("ide_win1.1", {});
