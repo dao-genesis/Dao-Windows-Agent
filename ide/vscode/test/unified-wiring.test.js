@@ -9,6 +9,11 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
+test("Windows 桌面插件身份与 dao-one 隔离", () => {
+  assert.strictEqual(pkg.publisher, "daowin", "publisher 不应继续占用 dao 命名空间");
+  assert.strictEqual(pkg.name, "dao-windows-desktop", "扩展 ID 应独立于旧 dao.dao-windows-agent");
+});
+
 test("package.json 不再贡献自建 dao.unified / dao.proxyPro 视图（归一宿主唯一 = dao-one）", () => {
   const views = (pkg.contributes.views || {})["daoWin-cascade"] || [];
   for (const id of ["dao.unified", "dao.proxyPro"]) {
