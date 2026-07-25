@@ -104,9 +104,31 @@ function accountsRegistry() {
   return reg;
 }
 
-function targetForAccount(account) {
+function normAccountName(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function resolveAccount(account) {
   const reg = accountsRegistry();
-  return reg[account] ? Object.assign({}, DEFAULT_RDP, reg[account]) : null;
+  const direct = reg[account];
+  if (direct) return { name: account, target: Object.assign({}, DEFAULT_RDP, direct) };
+  const needle = normAccountName(account);
+  if (!needle) return null;
+  for (const [name, target] of Object.entries(reg)) {
+    if (!target || typeof target !== "object") continue;
+    const username = target.username || target.user || "";
+    const domain = target.domain || "";
+    const candidates = [name, username, domain && username ? `${domain}\\${username}` : ""];
+    if (candidates.some((v) => normAccountName(v) === needle)) {
+      return { name, target: Object.assign({}, DEFAULT_RDP, target) };
+    }
+  }
+  return null;
+}
+
+function targetForAccount(account) {
+  const hit = resolveAccount(account);
+  return hit ? hit.target : null;
 }
 
 // ide_<hash> → RDP 目标映射。缺省全部落到同一账号（rdpwrap 单账号多路 RDP：
@@ -286,6 +308,7 @@ const httpServer = http.createServer((req, res) => {
     const reg = accountsRegistry();
     const accounts = Object.keys(reg).map((name) => ({
       name,
+      username: reg[name].username || undefined,
       hostname: reg[name].hostname,
       port: String(reg[name].port),
     }));
@@ -299,16 +322,17 @@ const httpServer = http.createServer((req, res) => {
     // POST /sessions/drop?ide=X          释放一条租约（窗口关闭/分身销毁时调用）
     const ide = u.searchParams.get("ide") || undefined;
     const account = u.searchParams.get("account") || undefined;
+    const canonicalAccount = account ? ((resolveAccount(account) || {}).name || account) : undefined;
     const clone = u.searchParams.get("clone") || undefined;
     if (req.method === "POST") {
-      const dropped = dropLease(ide, account, clone);
+      const dropped = dropLease(ide, canonicalAccount, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, dropped }));
       return;
     }
     let out = listLeases();
     if (ide || account) {
-      const key = leaseKey(ide, account, clone);
+      const key = leaseKey(ide, canonicalAccount, clone);
       out = out.filter((l) => l.key === key);
     }
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -357,15 +381,17 @@ const httpServer = http.createServer((req, res) => {
     const drive = u.searchParams.get("drive") || undefined;
     const readonly = u.searchParams.get("readonly") === "1";
     (async () => {
-      const raw = account ? targetForAccount(account) : targetForIde(ide);
+      const accountHit = account ? resolveAccount(account) : null;
+      const canonicalAccount = accountHit ? accountHit.name : account;
+      const raw = account ? (accountHit && accountHit.target) : targetForIde(ide);
       if (!raw) throw new Error(`未知账号: ${account}`);
       // 后端换机：目标带 via(穿透 WS 端点，如用户本地电脑) → 惰性起本地 connector 口并重写目标。
       const target = await forward.resolveTarget(raw);
       const token = mintTokenForTarget(target, { width, height, dpi, clipboard, drive, readonly });
-      const lease = recordLease(ide, account, target, clone);
+      const lease = recordLease(ide, canonicalAccount, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
-        token, ws_port: WS_PORT, ide: ide || null, account: account || null, clone: clone || null,
+        token, ws_port: WS_PORT, ide: ide || null, account: canonicalAccount || null, requestedAccount: account || null, clone: clone || null,
         leaseId: lease.leaseId, reconnect: lease.reconnect,
         remote: !!raw.via,
       }));
@@ -440,6 +466,7 @@ if (require.main === module) {
 module.exports = {
   mintToken, mintTokenForTarget, encryptToken, startServer, inputArbiter,
   leaseKey, recordLease, listLeases, dropLease, loadLeases,
+  resolveAccount, targetForAccount,
   authorized, isLoopback,
   SESSIONS_STATE_JSON,
 };
