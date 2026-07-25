@@ -36,6 +36,14 @@ function copyDir(src, dst) {
 // 故其 <ns>-cascade 容器 / <ns>.cascade* 视图与命令不合入宿主清单(免留死面板)。
 function isSubCascadeContainer(id) { return /-cascade$/.test(String(id || "")) && id !== "daoWin-cascade"; }
 function isSubCascadeItem(id) { return /^(?!daoWin\.)[A-Za-z0-9_-]+\.cascade(\.|$)/.test(String(id || "")); }
+function isDaoOneOwnedSetting(key) { return /^dao\.(origin|modelUnlock)\./.test(String(key || "")); }
+function cloneWithoutDaoOneOwnedSettings(c) {
+  const out = Object.assign({}, c || {});
+  if (out.properties) {
+    out.properties = Object.fromEntries(Object.entries(out.properties).filter(([k]) => !isDaoOneOwnedSetting(k)));
+  }
+  return out;
+}
 
 // contributes 深合并: 按 command/view/container id 去重, 后到覆盖同 id 旧项。
 function mergeContributes(host, sub) {
@@ -72,11 +80,14 @@ function mergeContributes(host, sub) {
       i >= 0 ? (hm[i] = m) : hm.push(m);
     }
   }
-  // configuration: 可为对象或数组, 归一为数组并按 title 去重。
+  // configuration: 可为对象或数组, 归一为数组并按 title 去重；dao-one 已拥有的 dao.origin/dao.modelUnlock
+  // 配置键不再合入本 VSIX，避免与归一插件并存时 VS Code 报 property already registered。
   if (sub.configuration) {
     const toArr = (c) => (Array.isArray(c) ? c : [c]);
     const hc = (host.configuration = host.configuration ? toArr(host.configuration) : []);
-    for (const c of toArr(sub.configuration)) {
+    for (const raw of toArr(sub.configuration)) {
+      const c = cloneWithoutDaoOneOwnedSettings(raw);
+      if (c.properties && !Object.keys(c.properties).length) continue;
       const i = hc.findIndex((x) => x.title === c.title);
       i >= 0 ? (hc[i] = c) : hc.push(c);
     }

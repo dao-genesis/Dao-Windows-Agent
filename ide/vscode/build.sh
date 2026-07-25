@@ -61,7 +61,8 @@ JS
 echo "== vsce package =="
 cd "$HERE"   # vsce 以 cwd 找 manifest：从仓库根目录调本脚本也能打包
 VER="$(node -p "require('$HERE/package.json').version" 2>/dev/null || echo 0.1.0)"
-OUT="$HERE/dao-windows-agent-${VER}.vsix"
+NAME="$(node -p "require('$HERE/package.json').name" 2>/dev/null || echo dao-windows-desktop)"
+OUT="$HERE/${NAME}-${VER}.vsix"
 # --base*Url 必给：README 内有相对链接（../../docs/*），缺则 vsce 报错中断（真机踩坑）。
 VSCE_ARGS=(package --no-dependencies --allow-missing-repository \
   --baseContentUrl https://example.invalid --baseImagesUrl https://example.invalid -o "$OUT")
