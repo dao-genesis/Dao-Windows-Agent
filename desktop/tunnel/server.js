@@ -21,6 +21,11 @@
 //   DAO_RDP_HOST/PORT  默认 RDP 目标（默认 127.0.0.1:13389，即冷启动 hostfwd→guest:3389）
 //   DAO_RDP_USER/PASS  默认 RDP 凭据（默认 dao/Dao@2026!，仅限本地实验靶机）
 //   DAO_SESSIONS_JSON  会话映射文件（ide_<hash> → RDP 目标）路径
+//   —— 官方 RDP 协议底层默认（可经 /token 查询参数逐项覆盖，见 buildRdpSettings）——
+//   DAO_RDP_GFX        启用 RDPGFX/H.264 官方图形管线（默认 true；旧版 guacd 白/黑屏时设 0 回退）
+//   DAO_RDP_LOSSLESS   强制无损（默认 false）；DAO_RDP_AUDIO off|out|in|both（默认 out）
+//   DAO_RDP_WALLPAPER / _THEMING / _FONT_SMOOTHING / _FULL_WINDOW_DRAG /
+//   _DESKTOP_COMPOSITION / _MENU_ANIMATIONS / _PRINTING  体验/性能标志默认
 
 const http = require("http");
 const crypto = require("crypto");
@@ -224,13 +229,64 @@ function mintToken(ide, opts) {
   return mintTokenForTarget(rdp, opts);
 }
 
-// 目标已解析（含 via 后端换机已重写为本地 connector 口）时直接铸 token。
+// —— 官方 RDP 协议全量设置（正本清源核心问题②：白屏/卡/未用官方底层的技术真身）——
+// 三态布尔：undefined→缺省(不设)；"1"/"true"/"yes"/"on"/true→true；"0"/"false"/"no"/"off"/false→false。
+function triBool(v) {
+  if (v === undefined || v === null || v === "") return undefined;
+  if (v === true) return true;
+  if (v === false) return false;
+  const s = String(v).trim().toLowerCase();
+  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+  return undefined;
+}
+function envBoolDefault(name, dflt) {
+  const v = triBool(process.env[name]);
+  return v === undefined ? dflt : v;
+}
+
+// 体验/性能默认：抗卡优先 + 现代 Windows 保真。可经 opts（/token 查询参数或 .rdp 档案键）逐项覆盖。
+//  - gfx：RDPGFX / H.264(AVC420/AVC444) 官方图形底层管线（guacd 1.5.4+）。Win11 24H2 的 WDDM 输出
+//    在非 GFX 老管线下渲染差、易白/黑屏、帧率低——启用 GFX 才是"用上 Windows 远程桌面官方底层协议"
+//    的技术真身与流畅之本。可经 DAO_RDP_GFX=0 或 ?gfx=0 关闭回退老管线（旧版 guacd 兼容）。
+//  - 高带宽体验项（壁纸/全窗口拖动/桌面合成/菜单动画）默认关 = 更跟手；可逐项开还原真机观感。
+//  - 位图/离屏/字形缓存默认全开 = 流畅；显式关闭才 disable。
+function experienceDefaults() {
+  return {
+    gfx: envBoolDefault("DAO_RDP_GFX", true),
+    lossless: envBoolDefault("DAO_RDP_LOSSLESS", false),
+    wallpaper: envBoolDefault("DAO_RDP_WALLPAPER", false),
+    theming: envBoolDefault("DAO_RDP_THEMING", true),
+    fontSmoothing: envBoolDefault("DAO_RDP_FONT_SMOOTHING", true),
+    fullWindowDrag: envBoolDefault("DAO_RDP_FULL_WINDOW_DRAG", false),
+    desktopComposition: envBoolDefault("DAO_RDP_DESKTOP_COMPOSITION", false),
+    menuAnimations: envBoolDefault("DAO_RDP_MENU_ANIMATIONS", false),
+    bitmapCache: true,
+    offscreenCache: true,
+    glyphCache: true,
+    audio: (process.env.DAO_RDP_AUDIO || "out").toLowerCase(), // off|out|in|both
+    printing: envBoolDefault("DAO_RDP_PRINTING", false),
+  };
+}
+
+// 纯函数（可单测）：把目标 + 会话选项铸成 Guacamole RDP 官方连接设置。
 // 会话策略（可选）：
+//   opts.width/height/dpi            画布尺寸/DPI（display-update 动态分辨率）
+//   opts.gfx/lossless                H.264 官方图形管线 / 强制无损（高保真）
+//   opts.colorDepth                  色深 8|16|24|32
+//   opts.wallpaper/theming/fontSmoothing/fullWindowDrag/desktopComposition/menuAnimations  体验标志
+//   opts.bitmapCache/offscreenCache/glyphCache  缓存（默认开；显式 false 才关）
+//   opts.audio = "off"|"out"|"in"|"both"  音频（out=听远端；in/both=开麦克风上行）
+//   opts.printing                    打印机重定向
+//   opts.serverLayout / opts.timezone  键盘布局 / 时区
 //   opts.clipboard = "off"|"in"|"out"|"on"  剪贴板策略（off 全禁；in 只允本地→远端；out 只允远端→本地；缺省 on 双向）
 //   opts.drive     = 非空字符串     挂载远端驱动器重定向（值为 guest 侧目录，如 C:\\dao-share）
 //   opts.readonly  = true            只观察不控制（旁观分身：画面流照常，鼠键输入不下发）
-function mintTokenForTarget(rdp, opts) {
+//   opts.console   = true            连管理会话（console/会话0）
+function buildRdpSettings(rdp, opts) {
   opts = opts || {};
+  const D = experienceDefaults();
+  const pick = (k) => (opts[k] === undefined ? D[k] : triBool(opts[k]));
   const settings = {
     hostname: rdp.hostname,
     port: String(rdp.port),
@@ -238,11 +294,43 @@ function mintTokenForTarget(rdp, opts) {
     password: rdp.password,
     security: rdp.security || "any", // NLA 关（firstlogon 已设），any 兼容
     "ignore-cert": "true",
-    width: String((opts && opts.width) || 1280),
-    height: String((opts && opts.height) || 800),
-    dpi: String((opts && opts.dpi) || 96),
+    width: String(opts.width || 1280),
+    height: String(opts.height || 800),
+    dpi: String(opts.dpi || 96),
     "resize-method": "display-update",
   };
+  if (rdp.domain) settings.domain = rdp.domain;
+
+  // 色深 / 无损 / GFX（H.264 官方底层管线）
+  const colorDepth = parseInt(opts.colorDepth, 10);
+  if ([8, 16, 24, 32].indexOf(colorDepth) >= 0) settings["color-depth"] = String(colorDepth);
+  if (pick("gfx")) settings["enable-gfx"] = "true";
+  if (pick("lossless")) settings["force-lossless"] = "true";
+
+  // 体验标志（enable-*）：默认关高带宽项以抗卡，可逐项开启还原真机观感
+  if (pick("wallpaper")) settings["enable-wallpaper"] = "true";
+  if (pick("theming")) settings["enable-theming"] = "true";
+  if (pick("fontSmoothing")) settings["enable-font-smoothing"] = "true";
+  if (pick("fullWindowDrag")) settings["enable-full-window-drag"] = "true";
+  if (pick("desktopComposition")) settings["enable-desktop-composition"] = "true";
+  if (pick("menuAnimations")) settings["enable-menu-animations"] = "true";
+
+  // 缓存（disable-*）：默认全开（不设 disable）；显式关闭才 disable
+  if (pick("bitmapCache") === false) settings["disable-bitmap-caching"] = "true";
+  if (pick("offscreenCache") === false) settings["disable-offscreen-caching"] = "true";
+  if (pick("glyphCache") === false) settings["disable-glyph-caching"] = "true";
+
+  // 音频（双向）：off|out|in|both（out=听远端，guacd 默认开；in/both=开麦克风上行）
+  const audio = String(opts.audio || D.audio).toLowerCase();
+  if (audio === "off") settings["disable-audio"] = "true";
+  if (audio === "in" || audio === "both") settings["enable-audio-input"] = "true";
+
+  // 打印机 / 键盘布局 / 时区
+  if (pick("printing")) settings["enable-printing"] = "true";
+  if (opts.serverLayout) settings["server-layout"] = String(opts.serverLayout);
+  if (opts.timezone) settings["timezone"] = String(opts.timezone);
+
+  // 剪贴板策略 / 驱动器重定向 / 只读旁观 / 管理会话
   if (opts.clipboard === "off" || opts.clipboard === "out") settings["disable-paste"] = "true";
   if (opts.clipboard === "off" || opts.clipboard === "in") settings["disable-copy"] = "true";
   if (opts.drive) {
@@ -251,8 +339,37 @@ function mintTokenForTarget(rdp, opts) {
     settings["create-drive-path"] = "true";
   }
   if (opts.readonly) settings["read-only"] = "true";
-  if (rdp.domain) settings.domain = rdp.domain;
-  return encryptToken({ connection: { type: "rdp", settings } });
+  if (triBool(opts.console)) settings["console"] = "true";
+  return settings;
+}
+
+// 目标已解析（含 via 后端换机已重写为本地 connector 口）时直接铸 token。
+function mintTokenForTarget(rdp, opts) {
+  return encryptToken({ connection: { type: "rdp", settings: buildRdpSettings(rdp, opts) } });
+}
+
+// 从 /token 查询参数抽取官方 RDP 体验/会话选项（缺省不设，交由 buildRdpSettings 取默认）。
+function experienceOptsFromQuery(sp) {
+  const g = (k) => { const v = sp.get(k); return v === null ? undefined : v; };
+  return {
+    gfx: g("gfx"),
+    lossless: g("lossless"),
+    colorDepth: g("colordepth") || g("color-depth"),
+    wallpaper: g("wallpaper"),
+    theming: g("theming"),
+    fontSmoothing: g("fontsmoothing"),
+    fullWindowDrag: g("windowdrag") || g("fullwindowdrag"),
+    desktopComposition: g("composition") || g("desktopcomposition"),
+    menuAnimations: g("animations") || g("menuanimations"),
+    bitmapCache: g("bitmapcache"),
+    offscreenCache: g("offscreencache"),
+    glyphCache: g("glyphcache"),
+    audio: g("audio"),
+    printing: g("printing"),
+    serverLayout: g("layout") || g("server-layout"),
+    timezone: g("timezone"),
+    console: g("console"),
+  };
 }
 
 // —— 官方面板静态资产（整块移植进 IDE 归一板块的单页桌面客户端）——
@@ -387,7 +504,8 @@ const httpServer = http.createServer((req, res) => {
       if (!raw) throw new Error(`未知账号: ${account}`);
       // 后端换机：目标带 via(穿透 WS 端点，如用户本地电脑) → 惰性起本地 connector 口并重写目标。
       const target = await forward.resolveTarget(raw);
-      const token = mintTokenForTarget(target, { width, height, dpi, clipboard, drive, readonly });
+      const exp = experienceOptsFromQuery(u.searchParams);
+      const token = mintTokenForTarget(target, Object.assign({ width, height, dpi, clipboard, drive, readonly }, exp));
       const lease = recordLease(ide, canonicalAccount, target, clone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
@@ -464,7 +582,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  mintToken, mintTokenForTarget, encryptToken, startServer, inputArbiter,
+  mintToken, mintTokenForTarget, buildRdpSettings, experienceOptsFromQuery, triBool, encryptToken, startServer, inputArbiter,
   leaseKey, recordLease, listLeases, dropLease, loadLeases,
   resolveAccount, targetForAccount,
   authorized, isLoopback,
