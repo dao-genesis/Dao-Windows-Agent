@@ -168,8 +168,14 @@ try {
   # 关键：rdpwrap.ini 必须含当前 termsrv.dll build 的多会话 offset，否则 wrapper 加载但不打补丁，
   # 表现为"Another user is signed in"、并发被踢（实为单会话）。stock ini 常缺新 build（如 26100.x）段，
   # 故务必刷成社区维护版，并带重试；成功后必须重启 TermService 让 wrapper 重读 offset 才生效。
-  $tsVer = (Get-Item "$env:SystemRoot\System32\termsrv.dll").VersionInfo.FileVersion
-  $tsSection = '[' + (($tsVer -split ' ')[0]) + ']'
+  # 关键（真机踩坑·本源修复）：RDP Wrapper 按 termsrv.dll 的 FIXEDFILEINFO（二进制固定版本）
+  # 匹配 ini 段号，而 .VersionInfo.FileVersion 取的是 StringFileInfo，二者可不同——
+  # 如 25H2 上 FileVersion="10.0.26100.8875" 但固定版本=10.0.26100.8737，社区 ini 只有
+  # [10.0.26100.8737] 段。若用 8875 去找段永远缺失 → 正确 ini 永不落地、多会话哑火（真机实证）。
+  # 故用 FilePart 四元组拼出与 wrapper 一致的固定版本号。
+  $tsInfo = (Get-Item "$env:SystemRoot\System32\termsrv.dll").VersionInfo
+  $tsVer = '{0}.{1}.{2}.{3}' -f $tsInfo.FileMajorPart, $tsInfo.FileMinorPart, $tsInfo.FileBuildPart, $tsInfo.FilePrivatePart
+  $tsSection = '[' + $tsVer + ']'
   $iniPath = "$rdpwrapDir\rdpwrap.ini"
   $iniUrl = 'https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini'
   $iniOk = $false
