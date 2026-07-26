@@ -15,7 +15,8 @@ def test_manifest_valid_and_entrypoints():
     cmds = {c["command"] for c in m["contributes"]["commands"]}
     assert {"daoWin.openPanel", "daoWin.health", "daoWin.ensureBridge"} <= cmds
     props = m["contributes"]["configuration"]["properties"]
-    assert props["daoWin.bridgeUrl"]["default"] == "http://127.0.0.1:9920"
+    assert props["daoWin.bridgeUrl"]["default"] == "http://127.0.0.1:9930"
+    assert props["daoWin.homeMode"]["default"] == "standalone"
     assert props["daoWin.autostart"]["default"] is True
 
 
@@ -249,19 +250,17 @@ def test_unified_freecad_activation_is_lazy():
 
 
 def test_home_windows_master_control():
-    """Windows 总控原语：单页统管（归一面板 🪟 子板块）+ RDP 五页配置收编 + 子板块管理面。"""
+    """Windows 总控：独立宿主主页（daoWinHome）+ RDP 五页配置收编 + 原语面。"""
     with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
         m = json.load(fh)
     cmds = {c["command"] for c in m["contributes"]["commands"]}
     assert "daoWin.home" in cmds
     with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
         src = fh.read()
-    # 原语经 __DAO_WIN_HOME__ 上交归一面板, 不另起独立主页 webview
+    # 真隔离: 默认独立主页 webview(daoWinHome), dao-one 委派仅限显式 homeMode=dao-one
     assert "globalThis.__DAO_WIN_HOME__" in src
-    assert 'createWebviewPanel("daoWinHome"' not in src
-    # 正本清源: 归一宿主唯一 = 原 dao-one/9920 全能板(daoWin.home 打开 dao.openCloudPanel),
-    # 不再回退自建 dao.unified 面板
-    assert '"dao.openCloudPanel"' in src
+    assert 'createWebviewPanel("daoWinHome"' in src
+    assert 'homeMode === "dao-one"' in src
     assert 'executeCommand("dao.unified.open")' not in src
     for op in ("rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
         assert f"{op}(" in src, f"缺原语 {op}"

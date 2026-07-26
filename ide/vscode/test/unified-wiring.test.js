@@ -25,12 +25,18 @@ test("package.json 不再贡献自建 dao.unified / dao.proxyPro 视图（归一
   );
 });
 
-test("激活链停用自建归一面板（unified:false），归一主页指向 dao-one 全能板", () => {
+test("激活链停用自建归一面板（unified:false），主页默认独立宿主（真隔离）", () => {
   const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
   assert.ok(ext.includes("unified: false"), "activateDaoAiBase 应传 unified:false");
-  assert.ok(ext.includes('executeCommand("dao.openCloudPanel")'), "daoWin.home 应打开原 dao-one 全能板");
+  assert.ok(ext.includes('createWebviewPanel("daoWinHome"'), "主页应为本插件独立总控 webview");
+  assert.ok(ext.includes('homeMode === "dao-one"'), "dao-one 委派只允许显式 homeMode=dao-one");
   assert.ok(!ext.includes('executeCommand("dao.unified.open")'), "不应再回退自建 dao.unified 面板");
-  assert.ok(!ext.includes('createWebviewPanel("daoWinHome"'), "不应另起独立主页 webview");
+});
+
+test("主页/桥口配置真隔离（standalone 默认 + 自有桥口 9930）", () => {
+  const props = pkg.contributes.configuration.properties;
+  assert.strictEqual(props["daoWin.homeMode"].default, "standalone", "默认主页应为独立宿主");
+  assert.ok(props["daoWin.bridgeUrl"].default.includes(":9930"), "桥口应与 dao-one/dao-vsix 的 9920/9921 分离");
 });
 
 test("dao-ai-base 保留 unified 开关且默认可被宿主关闭", () => {

@@ -13,6 +13,7 @@ const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
 const { gridDims } = require("./grid-layout");
+const { winHomeHtml } = require("./win-home");
 
 let output;
 let statusItem;
@@ -21,17 +22,20 @@ const desktopPanels = new Map(); // key(账号名或 ide_<hash>) → 桌面路�
 let spawnedBridge = null;
 let activeBridgeUrl = null;
 let _ideTools = null;  // vscode_* IDE 对等面子插件宿主
+let homePanel = null;  // 独立总控主页（VS Code 独立宿主 · 不依赖归一插件）
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("daoWin");
   return {
-    bridgeUrl: (c.get("bridgeUrl") || "http://127.0.0.1:9920").replace(/\/$/, ""),
+    // Windows Agent 自有桥口 9930（与 dao-one/dao-vsix 的 9920/9921 彻底分离，端口不再互撞）。
+    bridgeUrl: (c.get("bridgeUrl") || "http://127.0.0.1:9930").replace(/\/$/, ""),
     token: c.get("token") || "",
     autostart: c.get("autostart") !== false,
     pythonPath: c.get("pythonPath") || "python",
     tunnelHttpUrl: (c.get("tunnelHttpUrl") || "http://127.0.0.1:4824").replace(/\/$/, ""),
     tunnelWsPort: parseInt(c.get("tunnelWsPort") || "4823", 10),
     tunnelToken: c.get("tunnelToken") || "",
+    homeMode: c.get("homeMode") || "standalone",
   };
 }
 
@@ -279,7 +283,7 @@ function fetchAccounts(tunnelHttpUrl, tunnelToken) {
 
 // —— 桌面路由面板（主前端：guacamole-common-js canvas → WS 隧道 → guacd → RDP 会话）——
 // account 非空=按账号路由（多账号类虚拟机·扩展本源）；否则按 ide_<hash>（向后兼容）。
-function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts, tunnelToken) {
+function desktopHtml(webview, context, sessionId, account, tunnelHttpUrl, tunnelWsPort, accounts, tunnelToken, extraTokenQuery) {
   const guacUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "guacamole-common.min.js"));
   const cspSource = webview.cspSource;
   // 隧道主机由 tunnelHttpUrl 推导（自适应任意环境：本机 127.0.0.1 / 宿主 10.0.2.2 / 局域网 IP / 公网）。
@@ -318,6 +322,13 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
 #desktop.grid .inst.on{border-color:#3c8dbc;box-shadow:0 0 0 1px #3c8dbc}
 #desktop.grid .inst>div{position:absolute!important;top:0;left:0}
 #desktop.grid .inst .caption{display:block;position:absolute;top:0;left:0;z-index:2;padding:1px 6px;font-size:10px;background:rgba(20,20,26,.72);border-bottom-right-radius:4px;pointer-events:none}
+/* 官方设置抽屉（显示/本地资源/体验/键盘时区/会话 → 逐键直通隧道 /token 官方参数） */
+#settings{display:none;position:absolute;top:0;right:0;bottom:0;width:300px;z-index:9;background:#202027;border-left:1px solid #333;padding:10px;overflow-y:auto;font-size:12px}
+#settings.on{display:block}
+#settings h4{margin:8px 0 4px;font-size:12px;opacity:.85}
+#settings .fr{display:flex;align-items:center;gap:6px;margin:3px 0;flex-wrap:wrap}
+#settings .fr label{display:flex;align-items:center;gap:3px}
+#settings select,#settings input[type=text]{background:#2a2a32;color:#e0e0e0;border:1px solid #444;border-radius:3px;padding:2px 4px;font-size:11px}
 </style></head><body>
 <div id="bar">
   <b>\u2630 DAO \u684c\u9762</b>
@@ -327,8 +338,29 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:var(--vscode-f
   <button id="layoutBtn" onclick="toggleLayout()" title="\u5e73\u94fa/\u6807\u7b7e\uff1a\u5e73\u94fa\u7f51\u683c\u628a\u591a\u8def\u5206\u8eab\u540c\u5c4f\u5e76\u7f6e\uff0c\u70b9\u54ea\u683c\u54ea\u683c\u5f97\u8f93\u5165\u7126\u70b9">\u25a6 \u5e73\u94fa</button>
   <button onclick="doConnect()">\u8fde\u63a5</button>
   <button onclick="doDisconnect()">\u65ad\u5f00</button>
+  <button onclick="doReconnect()" title="\u65ad\u5f00\u5e76\u91cd\u65b0\u8fde\u63a5\u6d3b\u52a8\u5206\u8eab">\u27f3 \u91cd\u8fde</button>
+  <button onclick="sendCtrlAltDel()" title="\u5411\u8fdc\u7aef\u4f1a\u8bdd\u53d1\u9001 Ctrl+Alt+Del">CAD</button>
+  <button id="settingsBtn" onclick="toggleSettings()" title="\u5b98\u65b9\u8fdc\u7a0b\u684c\u9762\u8bbe\u7f6e\uff08\u663e\u793a/\u672c\u5730\u8d44\u6e90/\u4f53\u9a8c/\u952e\u76d8\u65f6\u533a/\u4f1a\u8bdd\uff09">\u2699 \u8bbe\u7f6e</button>
   <button onclick="doFullscreen()">\u2922</button>
   <span id="status">\u672a\u8fde\u63a5</span>
+</div>
+<div id="settings">
+  <h4>\u663e\u793a</h4>
+  <div class="fr">\u989c\u8272\u6df1\u5ea6 <select id="st_colordepth"><option value="">\u7f3a\u7701</option><option value="8">8 \u4f4d</option><option value="16">\u589e\u5f3a\u8272(16 \u4f4d)</option><option value="24">\u771f\u5f69\u8272(24 \u4f4d)</option><option value="32">\u6700\u9ad8\u8d28\u91cf(32 \u4f4d)</option></select></div>
+  <div class="fr">GFX/H.264 <select id="st_gfx"><option value="">\u7f3a\u7701</option><option value="1">\u5f00</option><option value="0">\u5173</option></select> \u65e0\u635f <select id="st_lossless"><option value="">\u7f3a\u7701</option><option value="1">\u5f00</option><option value="0">\u5173</option></select></div>
+  <h4>\u672c\u5730\u8d44\u6e90</h4>
+  <div class="fr">\u526a\u8d34\u677f <select id="st_clipboard"><option value="">\u53cc\u5411(\u7f3a\u7701)</option><option value="off">\u7981\u7528</option><option value="in">\u4ec5\u672c\u5730\u2192\u8fdc\u7aef</option><option value="out">\u4ec5\u8fdc\u7aef\u2192\u672c\u5730</option></select></div>
+  <div class="fr">\u8fdc\u7a0b\u97f3\u9891 <select id="st_audio"><option value="">\u7f3a\u7701(\u64ad\u653e)</option><option value="off">\u4e0d\u64ad\u653e</option><option value="out">\u64ad\u653e</option><option value="in">\u5f55\u5236</option><option value="both">\u64ad\u653e+\u5f55\u5236</option></select> \u6253\u5370\u673a <select id="st_printing"><option value="">\u7f3a\u7701</option><option value="1">\u5f00</option><option value="0">\u5173</option></select></div>
+  <div class="fr">\u9a71\u52a8\u5668\u91cd\u5b9a\u5411 <input type="text" id="st_drive" placeholder="\u5982 C:\\dao-share" size="14"></div>
+  <h4>\u4f53\u9a8c</h4>
+  <div class="fr"><label><input type="checkbox" id="st_wallpaper">\u684c\u9762\u80cc\u666f</label><label><input type="checkbox" id="st_theming" checked>\u89c6\u89c9\u6837\u5f0f</label><label><input type="checkbox" id="st_fontsmoothing" checked>\u5b57\u4f53\u5e73\u6ed1</label></div>
+  <div class="fr"><label><input type="checkbox" id="st_windowdrag">\u62d6\u62c9\u65f6\u663e\u793a\u7a97\u53e3\u5185\u5bb9</label><label><input type="checkbox" id="st_composition">\u684c\u9762\u5408\u6210</label></div>
+  <div class="fr"><label><input type="checkbox" id="st_animations">\u83dc\u5355\u548c\u7a97\u53e3\u52a8\u753b</label><label><input type="checkbox" id="st_bitmapcache" checked>\u6301\u4e45\u6027\u4f4d\u56fe\u7f13\u5b58</label></div>
+  <h4>\u952e\u76d8 / \u65f6\u533a</h4>
+  <div class="fr">\u5e03\u5c40 <input type="text" id="st_layout" placeholder="\u5982 en-us-qwerty" size="12"> \u65f6\u533a <input type="text" id="st_timezone" placeholder="\u5982 Asia/Shanghai" size="12"></div>
+  <h4>\u4f1a\u8bdd</h4>
+  <div class="fr"><label><input type="checkbox" id="st_readonly">\u53ea\u89c2\u5bdf\u4e0d\u63a7\u5236(\u65c1\u89c2)</label><label><input type="checkbox" id="st_console">\u7ba1\u7406\u4f1a\u8bdd(console)</label></div>
+  <div class="fr"><button onclick="applySettings()">\u5e94\u7528\u5e76\u91cd\u8fde</button><button onclick="toggleSettings()">\u5173\u95ed</button></div>
 </div>
 <div id="desktop"><div id="overlay">\u70b9\u51fb\u300c\u8fde\u63a5\u300d\u5373\u53ef\u770b\u5230 Windows \u684c\u9762\uff1b\u300c\uff0b\u5206\u8eab\u300d\u53ef\u5728\u672c\u7a97\u53e3\u5185\u5e76\u884c\u591a\u8def\u684c\u9762</div></div>
 <script src="${guacUri}"></script>
@@ -339,6 +371,8 @@ const TUNNEL_TOKEN = ${JSON.stringify(tunnelToken || "")};
 const IDE_SESSION = ${JSON.stringify(sessionId)};
 const ACCOUNT = ${JSON.stringify(account)};
 const ACCOUNTS = ${JSON.stringify(accounts || [])};
+// 档案预置的官方 token 参数（开桌面时由 .rdp 档案五页直通）。
+const EXTRA_Q = ${JSON.stringify(extraTokenQuery || "")};
 const vscodeApi = acquireVsCodeApi();
 const container = document.getElementById('desktop');
 const statusEl = document.getElementById('status');
@@ -380,7 +414,8 @@ function saveLayout(){
   try {
     vscodeApi.setState({ slots: instances.map(function(x){ return x.slot; }),
                          activeSlot: (active() || {}).slot || null,
-                         layout: layout });
+                         layout: layout,
+                         settings: settingsSnapshot() });
   } catch(e) {}
 }
 let lastLocalClip = null;
@@ -566,7 +601,7 @@ async function connectInstance(it) {
     // 账号路由时带稳定分身号 clone=slot：同账号多分身各自独立租约 key(account:<名>#<slot>)，重连各归其位。
     const q = 'ide=' + encodeURIComponent(ideKey(it))
             + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
-    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h + '&dpi=' + hs.dpi);
+    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h + '&dpi=' + hs.dpi + EXTRA_Q + settingsQuery());
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' \u00b7 \u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); it.connecting = false; return; }
@@ -635,6 +670,57 @@ async function connectInstance(it) {
   it.connecting = false;
 }
 
+// —— 官方设置抽屉：前端逐键绑定隧道 /token 官方参数（与服务端 experienceOptsFromQuery 同名）——
+var SETTINGS_SEL = ['st_colordepth','st_gfx','st_lossless','st_clipboard','st_audio','st_printing'];
+var SETTINGS_CHK_DEF = { st_wallpaper:false, st_theming:true, st_fontsmoothing:true, st_windowdrag:false,
+                         st_composition:false, st_animations:false, st_bitmapcache:true, st_readonly:false, st_console:false };
+var SETTINGS_TXT = ['st_drive','st_layout','st_timezone'];
+function settingsQuery(){
+  var g = function(id){ var el = document.getElementById(id); return el ? el.value : ''; };
+  var c = function(id){ var el = document.getElementById(id); return el ? el.checked : SETTINGS_CHK_DEF[id]; };
+  var q = '';
+  if (g('st_colordepth')) q += '&colordepth=' + g('st_colordepth');
+  if (g('st_gfx')) q += '&gfx=' + g('st_gfx');
+  if (g('st_lossless')) q += '&lossless=' + g('st_lossless');
+  if (g('st_clipboard')) q += '&clipboard=' + g('st_clipboard');
+  if (g('st_audio')) q += '&audio=' + g('st_audio');
+  if (g('st_printing')) q += '&printing=' + g('st_printing');
+  if (g('st_drive')) q += '&drive=' + encodeURIComponent(g('st_drive'));
+  if (g('st_layout')) q += '&layout=' + encodeURIComponent(g('st_layout'));
+  if (g('st_timezone')) q += '&timezone=' + encodeURIComponent(g('st_timezone'));
+  // 体验复选项：仅偏离默认时才下发（缺省交由服务端 experienceDefaults）
+  var pairs = { st_wallpaper:'wallpaper', st_theming:'theming', st_fontsmoothing:'fontsmoothing',
+                st_windowdrag:'windowdrag', st_composition:'composition', st_animations:'animations', st_bitmapcache:'bitmapcache' };
+  for (var id in pairs) { if (c(id) !== SETTINGS_CHK_DEF[id]) q += '&' + pairs[id] + '=' + (c(id) ? '1' : '0'); }
+  if (c('st_readonly')) q += '&readonly=1';
+  if (c('st_console')) q += '&console=1';
+  return q;
+}
+function settingsSnapshot(){
+  var s = {};
+  SETTINGS_SEL.concat(SETTINGS_TXT).forEach(function(id){ var el = document.getElementById(id); if (el) s[id] = el.value; });
+  for (var id in SETTINGS_CHK_DEF) { var el = document.getElementById(id); if (el) s[id] = el.checked; }
+  return s;
+}
+function settingsRestore(s){
+  if (!s) return;
+  SETTINGS_SEL.concat(SETTINGS_TXT).forEach(function(id){ var el = document.getElementById(id); if (el && s[id] !== undefined) el.value = s[id]; });
+  for (var id in SETTINGS_CHK_DEF) { var el = document.getElementById(id); if (el && s[id] !== undefined) el.checked = !!s[id]; }
+}
+function toggleSettings(){
+  var el = document.getElementById('settings');
+  el.classList.toggle('on');
+  var b = document.getElementById('settingsBtn'); if (b) b.classList.toggle('on', el.classList.contains('on'));
+}
+function applySettings(){ saveLayout(); doReconnect(); }
+function doReconnect(){ var it = active(); if (!it) return doConnect(); connectInstance(it); }
+// Ctrl+Alt+Del：官方会话操作（锁定/切用户/任务管理器），keysym 顺按逆松。
+function sendCtrlAltDel(){
+  var it = active(); if (!it || !it.client) return;
+  var ks = [0xFFE3, 0xFFE9, 0xFFFF];
+  ks.forEach(function(k){ it.client.sendKeyEvent(1, k); });
+  ks.slice().reverse().forEach(function(k){ it.client.sendKeyEvent(0, k); });
+}
 function doConnect(){ var it = active() || newInstance(); connectInstance(it); }
 function doDisconnect(){
   var it = active(); if (!it) return;
@@ -681,6 +767,7 @@ function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 // \u6fc0\u6d3b\u5373\u81ea\u52a8\u8fde\u63a5\uff1b\u82e5\u6709\u6301\u4e45\u5316\u5206\u8eab\u5e03\u5c40\uff08\u91cd\u8f7d\u524d\uff09\u5219\u6309\u539f slot \u9010\u4e00\u590d\u8fde\uff08\u7a97\u53e3\u2194\u4f1a\u8bdd\u786e\u5b9a\u6027\u7ed1\u5b9a\uff09
 setTimeout(function boot(){
   var st = null; try { st = vscodeApi.getState(); } catch(e) {}
+  if (st && st.settings) settingsRestore(st.settings);
   if (st && (st.layout === 'grid' || st.layout === 'tabs')) { layout = st.layout; applyLayout(); }
   if (st && st.slots && st.slots.length) {
     st.slots.forEach(function(s){ var it = newInstance(s); connectInstance(it); });
@@ -693,7 +780,7 @@ setTimeout(function boot(){
 }
 
 // account 为空=本 IDE 窗口默认会话（ide_<hash>）；非空=指定 Windows 账号一路独立桌面。
-async function openDesktop(context, account) {
+async function openDesktop(context, account, opts) {
   const sessionId = windowSessionId();
   const c = cfg();
   const key = account || sessionId;
@@ -706,7 +793,7 @@ async function openDesktop(context, account) {
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media")] }
   );
   desktopPanels.set(key, p);
-  p.webview.html = desktopHtml(p.webview, context, sessionId, account || null, c.tunnelHttpUrl, c.tunnelWsPort, accounts, c.tunnelToken);
+  p.webview.html = desktopHtml(p.webview, context, sessionId, account || null, c.tunnelHttpUrl, c.tunnelWsPort, accounts, c.tunnelToken, (opts && opts.tokenQuery) || "");
   p.onDidDispose(() => { desktopPanels.delete(key); });
   p.webview.onDidReceiveMessage((msg) => {
     if (msg.type === "state" && msg.state === 3) {
@@ -1125,12 +1212,93 @@ function installWinHomeHook() {
   };
 }
 
-// 归一主页 = 原 dao-one/9920 全能板本体(🪟 Windows 为其中一个 tab · 经 dao-one-windows 衍生注入)。
-// 不再回退到任何自建面板——宿主缺失即明示提示装衍生版, 绝不静默顶替本源。
-function openHome() {
-  return vscode.commands.executeCommand("dao.openCloudPanel").then(null, () =>
-    vscode.window.showWarningMessage(
-      "DAO: 未找到归一宿主(dao-one)。请安装 dao-one(+🪟 Windows) 衍生版: ide/vscode/dao-one-windows/"));
+// .rdp 档案键 → 官方 token 会话选项（五页配置全量直通面板内 Guacamole 桌面，
+// 与 desktop/tunnel/server.js experienceOptsFromQuery 的查询键一一对应；只搬运不生产）。
+function rdpProfileTokenQuery(p) {
+  if (!p) return "";
+  const tb = (v, d) => (v === undefined || v === null ? d : !!v);
+  let q = "";
+  if (p.clipboard === false) q += "&clipboard=off";
+  if (p.drives) q += "&drive=" + encodeURIComponent("C:\\dao-share");
+  if (p.readonly) q += "&readonly=1";
+  const bpp = parseInt(p.bpp, 10);
+  if (bpp === 8 || bpp === 16 || bpp === 24 || bpp === 32) q += "&colordepth=" + bpp;
+  if (p.wallpaper !== undefined) q += "&wallpaper=" + (tb(p.wallpaper, true) ? "1" : "0");
+  if (p.themes !== undefined) q += "&theming=" + (tb(p.themes, true) ? "1" : "0");
+  if (p.fontsmoothing !== undefined) q += "&fontsmoothing=" + (tb(p.fontsmoothing, false) ? "1" : "0");
+  if (p.fullwindowdrag !== undefined) q += "&windowdrag=" + (tb(p.fullwindowdrag, false) ? "1" : "0");
+  if (p.composition !== undefined) q += "&composition=" + (tb(p.composition, false) ? "1" : "0");
+  if (p.menuanims !== undefined) q += "&animations=" + (tb(p.menuanims, false) ? "1" : "0");
+  if (p.bitmapcache !== undefined) q += "&bitmapcache=" + (tb(p.bitmapcache, true) ? "1" : "0");
+  const am = parseInt(p.audiomode, 10);
+  if (am === 2) q += "&audio=off";
+  else if (parseInt(p.audiocapture, 10) === 1) q += "&audio=both";
+  else if (am === 0 || am === 1) q += "&audio=out";
+  if (p.printers !== undefined) q += "&printing=" + (tb(p.printers, false) ? "1" : "0");
+  return q;
+}
+
+// 独立总控主页快照（rdp 档案/账号池/子板块 → webview state）。
+async function homeState(context) {
+  const c = cfg();
+  const accounts = await fetchAccounts(c.tunnelHttpUrl, c.tunnelToken);
+  const h = globalThis.__DAO_WIN_HOME__ || {};
+  let info = { rdp: [], subplugins: [], platform: process.platform };
+  try { if (typeof h.info === "function") info = h.info(); } catch (_) {}
+  return Object.assign({ sessionId: windowSessionId(), accounts }, info);
+}
+
+async function homeRefresh(context) {
+  if (!homePanel) return;
+  const data = await homeState(context);
+  try { homePanel.webview.postMessage({ type: "state", data }); } catch (_) {}
+}
+
+async function handleHomeMessage(context, msg) {
+  const h = globalThis.__DAO_WIN_HOME__ || {};
+  if (msg.type === "refresh") return homeRefresh(context);
+  if (msg.type === "rdpSave" && msg.profile) { try { h.rdpSave(msg.profile); } catch (e) { vscode.window.showErrorMessage("DAO: 存档失败 " + e.message); } return homeRefresh(context); }
+  if (msg.type === "rdpDelete" && msg.name) { try { h.rdpDelete(msg.name); } catch (_) {} return homeRefresh(context); }
+  if (msg.type === "rdpLaunch" && msg.name) { try { h.rdpLaunch(msg.name); } catch (e) { vscode.window.showErrorMessage("DAO: 启动失败 " + e.message); } return; }
+  if (msg.type === "revealDir") { try { h.revealDir(msg.which); } catch (_) {} return; }
+  if (msg.type === "help") { vscode.env.openExternal(vscode.Uri.parse("https://learn.microsoft.com/zh-cn/windows-server/remote/remote-desktop-services/clients/remote-desktop-clients")); return; }
+  if (msg.type === "acctCreate") { await manageAccount(context, "create"); return homeRefresh(context); }
+  if (msg.type === "acctDestroy" && msg.name) {
+    const pick = await vscode.window.showWarningMessage("销毁 Windows 账号 " + msg.name + "?", { modal: true }, "销毁");
+    if (pick !== "销毁") return;
+    const info = await ensureBridge(context);
+    if (info) await apiCall(info.url, info.token, "POST", "/api/account.destroy", { name: msg.name }, 60000);
+    return homeRefresh(context);
+  }
+  if (msg.type === "openDesktop") {
+    if (msg.profile) {
+      const prof = listRdpProfiles().find((r) => r.name === msg.profile);
+      return openDesktop(context, (prof && prof.username) || null, { tokenQuery: rdpProfileTokenQuery(prof) });
+    }
+    return openDesktop(context, msg.account || null);
+  }
+}
+
+// 独立总控主页（daoWinHome）：Windows Agent 在 VS Code 内自己的前端宿主。
+async function openStandaloneHome(context) {
+  if (homePanel) { homePanel.reveal(); return homeRefresh(context); }
+  const p = vscode.window.createWebviewPanel("daoWinHome", "\u262f DAO Windows \u00b7 \u72ec\u7acb\u603b\u63a7",
+    vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  homePanel = p;
+  p.webview.html = winHomeHtml(await homeState(context));
+  p.onDidDispose(() => { if (homePanel === p) homePanel = null; });
+  p.webview.onDidReceiveMessage((msg) => { handleHomeMessage(context, msg); });
+}
+
+// 主页宿主取舍：默认 standalone = 本插件自己的独立总控（真隔离，不注入/不依赖 dao-one）；
+// 显式设 daoWin.homeMode=dao-one 才委派归一全能板（Devin Desktop 归一插件保持自身边界）。
+function openHome(context) {
+  if (cfg().homeMode === "dao-one") {
+    return vscode.commands.executeCommand("dao.openCloudPanel").then(null, () =>
+      vscode.window.showWarningMessage(
+        "DAO: 未找到归一宿主(dao-one)。可将 daoWin.homeMode 设回 standalone 使用独立总控"));
+  }
+  return openStandaloneHome(context);
 }
 
 // 二合一统领(参照 devin-remote/dao-one): 子引擎 vendored 在 vendor/<名>/extension.js,
@@ -1260,7 +1428,7 @@ async function activate(context) {
   try { const nsp = harvestSubplugins(path.join(context.extensionPath, "vendor")); if (nsp) log("已收编领域子插件 " + nsp + " 个"); } catch (e) { log("子插件收编异常: " + e.message); }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("daoWin.home", () => openHome()),
+    vscode.commands.registerCommand("daoWin.home", () => openHome(context)),
     vscode.commands.registerCommand("daoWin.openDesktop", () => openDesktop(context)),
     vscode.commands.registerCommand("daoWin.openAccountDesktop", () => openAccountDesktop(context)),
     vscode.commands.registerCommand("daoWin.accountCreate", () => manageAccount(context, "create")),
@@ -1312,4 +1480,4 @@ function deactivate() {
 }
 
 // desktopHtml 一并导出仅供 headless 单测（校验 webview 模板脚本语法完好，防模板字面量吞字报废整段脚本）。
-module.exports = { activate, deactivate, desktopHtml, rdpFileContent };
+module.exports = { activate, deactivate, desktopHtml, rdpFileContent, rdpProfileTokenQuery };
