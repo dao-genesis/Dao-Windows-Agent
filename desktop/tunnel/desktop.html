@@ -98,6 +98,20 @@ const API_BASE = WRAP ? (WRAP.origin + WRAP.pfx) : PFX;
 function hostFetch(pathq, method){
   return fetch(API_BASE + pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
 }
+// 同源包装(/__web?u=)下相对 <script src> 会落到主口根路径而 404 —— 缺库时按 API_BASE 补载一次。
+let guacLoading = null;
+function ensureGuac(){
+  if (typeof Guacamole !== 'undefined') return Promise.resolve();
+  if (guacLoading) return guacLoading;
+  guacLoading = new Promise(function(resolve, reject){
+    var s = document.createElement('script');
+    s.src = API_BASE + '/guacamole-common.min.js';
+    s.onload = function(){ (typeof Guacamole !== 'undefined') ? resolve() : reject(new Error('库加载后仍不可用')); };
+    s.onerror = function(){ reject(new Error('无法加载 ' + s.src)); };
+    document.head.appendChild(s);
+  });
+  return guacLoading;
+}
 let lastLocalClip = null;
 let lastRemoteClip = null;
 
@@ -293,6 +307,7 @@ async function connectInstance(it) {
       ? ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + PFX + '-ws?token=' + encodeURIComponent(tokenData.token))
       : ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token)));
   setStatus(it.label + ' · 建立 WS 隧道...', '#ffcc00');
+  try { await ensureGuac(); } catch (e) { setStatus(it.label + ' · 客户端库加载失败: ' + e.message, '#ff4444'); it.connecting = false; return; }
   const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
   const client = new Guacamole.Client(tunnel);
   it.client = client;
