@@ -31,6 +31,22 @@ button.ghost{background:transparent;color:var(--vscode-foreground);border:1px so
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--vscode-panel-border);padding:4px 6px;text-align:left;font-size:12px}
 .wtab{padding:2px 0}
+/* 官方「远程桌面连接」对话框原样外壳（标题栏 + 页签条 + 页脚按钮行）。 */
+.mstsc{max-width:560px;border:1px solid #6f6f6f;border-radius:2px;background:#f0f0f0;color:#000;margin:8px 0;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.mstsc .titlebar{display:flex;align-items:center;gap:8px;background:linear-gradient(#fbfbfb,#e8e8e8);border-bottom:1px solid #d0d0d0;padding:8px 12px}
+.mstsc .titlebar .ico{font-size:24px;line-height:1}
+.mstsc .titlebar .tt{font-size:20px;color:#003399;font-weight:400}
+.mstsc .tabbar{display:flex;gap:0;padding:8px 12px 0;background:#f0f0f0}
+.mstsc .tabbar button{border:1px solid #a0a0a0;border-bottom:none;border-radius:4px 4px 0 0;background:#e1e1e1;color:#000;padding:4px 12px;margin-right:2px;font-size:12px}
+.mstsc .tabbar button.sel{background:#f0f0f0;position:relative;top:1px;font-weight:600}
+.mstsc .body{border-top:1px solid #a0a0a0;margin:0 12px;background:#f0f0f0;padding:8px 4px}
+.mstsc .st{font-weight:600;margin:8px 4px 4px;color:#003399}
+.mstsc .cr .l{color:#000;opacity:.95}
+.mstsc input,.mstsc select{background:#fff;color:#000;border:1px solid #7a7a7a;border-radius:0;padding:2px 4px}
+.mstsc .footer{display:flex;justify-content:flex-end;gap:8px;padding:10px 12px;border-top:1px solid #d0d0d0;background:#f0f0f0}
+.mstsc .footer button{min-width:78px;background:#e1e1e1;color:#000;border:1px solid #8a8a8a;border-radius:3px;padding:4px 10px}
+.mstsc .footer button.primary{background:#dceaffff;border-color:#3a7bd0;font-weight:600}
+.mstsc .footer .spread{margin-right:auto;display:flex;gap:6px}
 </style></head><body>
 <h2>\u262f DAO Windows Agent \u00b7 \u72ec\u7acb\u603b\u63a7</h2>
 <div class="sid">VS Code \u72ec\u7acb\u5bbf\u4e3b\uff08\u4e0d\u4f9d\u8d56\u5f52\u4e00\u63d2\u4ef6\uff09\u00b7 \u672c\u7a97\u53e3\u4f1a\u8bdd <b id="sid"></b> \u00b7 \u5b98\u65b9\u8fdc\u7a0b\u684c\u9762\u6a21\u5757\u524d\u7aef\u5316 + \u8d26\u53f7\u6c60</div>
@@ -65,8 +81,10 @@ function wrForm(){
   let ri=WRD_RES.length;
   if(p.fullscreen===false){ ri=6; for(let i=0;i<WRD_RES.length;i++){ if(String(WRD_RES[i][0])===String(p.width)&&String(WRD_RES[i][1])===String(p.height)) ri=i; } }
   const resLabel=ri>=WRD_RES.length?'\u5168\u5c4f':(WRD_RES[ri][0]+' \u00d7 '+WRD_RES[ri][1]+' \u50cf\u7d20');
-  let h='<div class="card"><div class="cr"><b>'+(WEDIT?'\u7f16\u8f91':'\u65b0\u5efa')+' \u00b7 \u8fdc\u7a0b\u684c\u9762\u8fde\u63a5</b><span class="muted">\u5b98\u65b9\u5bf9\u8bdd\u6846\u539f\u6837\u6536\u7f16 \u2192 \u6807\u51c6 .rdp \u00b7 \u8fde\u63a5\u5373 mstsc</span></div>';
-  h+='<div class="cr"><span class="v">'+[['general','\u5e38\u89c4'],['display','\u663e\u793a'],['local','\u672c\u5730\u8d44\u6e90'],['exp','\u4f53\u9a8c'],['adv','\u9ad8\u7ea7']].map(function(t){return '<button class="'+(WTAB===t[0]?'':'ghost')+'" data-wtab="'+t[0]+'" onclick="wrTab(\\''+t[0]+'\\')">'+t[1]+'</button>';}).join('')+'</span></div>';
+  let h='<div class="mstsc">';
+  h+='<div class="titlebar"><span class="ico">\ud83d\udda5\ufe0f</span><span class="tt">\u8fdc\u7a0b\u684c\u9762\u8fde\u63a5</span></div>';
+  h+='<div class="tabbar">'+[['general','\u5e38\u89c4'],['display','\u663e\u793a'],['local','\u672c\u5730\u8d44\u6e90'],['exp','\u4f53\u9a8c'],['adv','\u9ad8\u7ea7']].map(function(t){return '<button class="'+(WTAB===t[0]?'sel':'')+'" data-wtab="'+t[0]+'" onclick="wrTab(\\''+t[0]+'\\')">'+t[1]+'</button>';}).join('')+'</div>';
+  h+='<div class="body">';
   h+='<div id="wtab_general" class="wtab"'+(WTAB==='general'?'':' style="display:none"')+'>';
   h+='<div class="st">\u767b\u5f55\u8bbe\u7f6e</div>';
   h+='<div class="cr"><span class="l">\u8ba1\u7b97\u673a(C)</span><span class="v"><input id="wf_host" placeholder="\u793a\u4f8b: computer.fabrikam.com" value="'+iv('host')+'"> : <input id="wf_port" size="5" placeholder="3389" value="'+iv('port')+'"></span></div>';
@@ -109,11 +127,34 @@ function wrForm(){
   h+='<div class="cr"><span class="l">\u670d\u52a1\u5668\u540d(V)</span><span class="v"><input id="wf_gw" value="'+iv('gateway')+'"></span></div>';
   h+='<div class="cr"><span class="l"></span><span class="v"><label><input type="checkbox" id="wf_gwbypass"'+ck('gwbypass',true)+'>\u5bf9\u672c\u5730\u5730\u5740\u7ed5\u8fc7 RD \u7f51\u5173\u670d\u52a1\u5668(B)</label> <label><input type="checkbox" id="wf_gwcred"'+ck('gwcreds',true)+'>\u5bf9 RD \u7f51\u5173\u4f7f\u7528\u6211\u7684 RD \u51ed\u636e(N)</label></span></div>';
   h+='</div>';
-  h+='<div class="cr"><span class="l"></span><span class="v"><button onclick="wrSave()">\u4fdd\u5b58(.json+.rdp)</button> <button class="ghost" onclick="WEDIT=null;render()">\u53d6\u6d88</button></span></div></div>';
+  h+='</div>'; // .body
+  // 官方页脚：连接 / 帮助（右），另存为 / 打开 / 保存（左）——与官方对话框按钮布局同构。
+  h+='<div class="footer">';
+  h+='<div class="spread"><button onclick="wrSave()">\u4fdd\u5b58(S)</button>'
+    +'<button onclick="wrSaveAs()">\u53e6\u5b58\u4e3a(V)\u2026</button>'
+    +'<button onclick="post({type:\\'revealDir\\',which:\\'rdp\\'})">\u6253\u5f00(E)\u2026</button></div>';
+  h+='<button class="primary" onclick="wrConnect()">\u8fde\u63a5(N)</button>';
+  h+='<button onclick="WEDIT=null;render()">\u53d6\u6d88</button>';
+  h+='<button onclick="post({type:\\'help\\'})">\u5e2e\u52a9(H)</button>';
+  h+='</div>';
+  h+='</div>'; // .mstsc
   return h;
 }
+// 「连接(N)」：先落存档，再以该档案在面板内直开桌面（官方对话框「连接」语义）。
+function wrConnect(){
+  var g=document.getElementById('wf_name');
+  var name=(WEDIT||(g?g.value:'')||'').trim();
+  wrSave();
+  if(name) post({type:'openDesktop', profile:name});
+}
+// 「另存为(V)」：解锁连接名输入，以新名另存一份。
+function wrSaveAs(){
+  var g=document.getElementById('wf_name');
+  if(g){ g.disabled=false; g.value=''; g.focus(); }
+  WEDIT='';
+}
 function wrTab(t){ WTAB=t; ['general','display','local','exp','adv'].forEach(function(k){ var el=document.getElementById('wtab_'+k); if(el) el.style.display=(k===t)?'':'none'; });
-  document.querySelectorAll('[data-wtab]').forEach(function(b){ b.className=(b.getAttribute('data-wtab')===t)?'':'ghost'; }); }
+  document.querySelectorAll('[data-wtab]').forEach(function(b){ b.className=(b.getAttribute('data-wtab')===t)?'sel':''; }); }
 function wrRes(el){ var i=parseInt(el.value,10); document.getElementById('wf_reslabel').textContent = i>=WRD_RES.length?'\u5168\u5c4f':(WRD_RES[i][0]+' \u00d7 '+WRD_RES[i][1]+' \u50cf\u7d20'); }
 function wrSave(){
   const g=id=>document.getElementById(id);

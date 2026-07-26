@@ -1261,6 +1261,7 @@ async function handleHomeMessage(context, msg) {
   if (msg.type === "rdpDelete" && msg.name) { try { h.rdpDelete(msg.name); } catch (_) {} return homeRefresh(context); }
   if (msg.type === "rdpLaunch" && msg.name) { try { h.rdpLaunch(msg.name); } catch (e) { vscode.window.showErrorMessage("DAO: 启动失败 " + e.message); } return; }
   if (msg.type === "revealDir") { try { h.revealDir(msg.which); } catch (_) {} return; }
+  if (msg.type === "help") { vscode.env.openExternal(vscode.Uri.parse("https://learn.microsoft.com/zh-cn/windows-server/remote/remote-desktop-services/clients/remote-desktop-clients")); return; }
   if (msg.type === "acctCreate") { await manageAccount(context, "create"); return homeRefresh(context); }
   if (msg.type === "acctDestroy" && msg.name) {
     const pick = await vscode.window.showWarningMessage("销毁 Windows 账号 " + msg.name + "?", { modal: true }, "销毁");
