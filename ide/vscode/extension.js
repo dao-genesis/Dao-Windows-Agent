@@ -460,7 +460,7 @@ function applyLayout(){
     instances.forEach(function(it){ it.el.className = 'inst' + (it.id===activeId ? ' on' : ''); });
   }
   if (layoutBtn) layoutBtn.classList.toggle('on', layout === 'grid');
-  requestAnimationFrame(fitAll);
+  requestAnimationFrame(function(){ fitAll(); pushSizes(); });
 }
 function toggleLayout(){ layout = (layout === 'grid') ? 'tabs' : 'grid'; applyLayout(); saveLayout(); }
 function stateColor(s){ return ['#999','#ffcc00','#ffcc00','#44ff44','#ff8800','#ff4444'][s] || '#999'; }
@@ -528,6 +528,28 @@ function closeInstance(id){
   renderTabs(); showActiveStatus(); applyLayout(); saveLayout();
 }
 
+// 尺寸本源: 每路分身按它实际宿主格子(平铺=各自格子·标签=整容器)的物理像素要尺寸,
+// 连接后窗口/布局变化再经官方 display-update 通道(client.sendSize)动态重水——桌面永远占满面板。
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+function hostSize(it){
+  var host = (layout === 'grid' && it && it.el && it.el.clientWidth) ? it.el : container;
+  var w = Math.max(host.clientWidth || 0, 320), h = Math.max(host.clientHeight || 0, 240);
+  return { w: Math.round(w * DPR), h: Math.round(h * DPR), dpi: Math.round(96 * DPR) };
+}
+var sizeTimer = null;
+function pushSizes(){
+  if (sizeTimer) clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(function(){
+    sizeTimer = null;
+    instances.forEach(function(it){
+      if (!it.client || it.state !== 3) return;
+      var s = hostSize(it);
+      if (Math.abs((it.dw||0) - s.w) < 16 && Math.abs((it.dh||0) - s.h) < 16) return;
+      try { it.client.sendSize(s.w, s.h); } catch(e) {}
+    });
+  }, 400);
+}
+
 async function connectInstance(it) {
   if (!it || it.connecting) return;
   it.connecting = true;
@@ -535,15 +557,16 @@ async function connectInstance(it) {
   if (it.retryTimer) { clearTimeout(it.retryTimer); it.retryTimer = null; }
   if (it.client) { try { it.client.disconnect(); } catch(e) {} it.client = null; }
   setStatus(it.label + ' \u00b7 \u53d6 token...', '#ffcc00');
-  const w = container.clientWidth;
-  const h = container.clientHeight;
+  const hs = hostSize(it);
+  const w = hs.w;
+  const h = hs.h;
   let tokenData;
   try {
     // \u6bcf\u6b21\u94f8\u65b0 token = \u65b0\u5f00\u4e00\u8def\u72ec\u7acb RDP \u8fde\u63a5\uff08guest \u5173\u5355\u4f1a\u8bdd\u9650\u5236\u540e\u5373\u5404\u6210\u4e00\u8def\u72ec\u7acb\u4f1a\u8bdd\uff09
     // 账号路由时带稳定分身号 clone=slot：同账号多分身各自独立租约 key(account:<名>#<slot>)，重连各归其位。
     const q = 'ide=' + encodeURIComponent(ideKey(it))
             + (ACCOUNT ? ('&account=' + encodeURIComponent(ACCOUNT) + '&clone=' + encodeURIComponent(String(it.slot))) : '');
-    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h);
+    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h + '&dpi=' + hs.dpi);
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' \u00b7 \u4ee4\u724c: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' \u00b7 \u4ee4\u724c\u83b7\u53d6\u5931\u8d25: ' + e.message, '#ff4444'); it.connecting = false; return; }
@@ -590,7 +613,7 @@ async function connectInstance(it) {
     renderTabs();
     if (it.id === activeId) showActiveStatus();
     vscodeApi.postMessage({type:'state', state: state, instance: it.id});
-    if (state === 3) { it.retries = 0; if (it.id === activeId) vscodeApi.postMessage({type:'readClipboard'}); }
+    if (state === 3) { it.retries = 0; pushSizes(); if (it.id === activeId) vscodeApi.postMessage({type:'readClipboard'}); }
     if (state === 5 && !it.userDisconnected) {
       if (it.retries < MAX_RETRIES) {
         var delay = Math.min(2000 * Math.pow(2, it.retries), 15000);
@@ -604,7 +627,10 @@ async function connectInstance(it) {
     }
   };
   client.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' \u00b7 \u9519\u8bef: ' + (s.message || s.code || ''), '#ff4444'); };
-  tunnel.onerror = function(s) { if (it.id === activeId) setStatus(it.label + ' \u00b7 \u96a7\u9053\u9519\u8bef: ' + (s && (s.message || s.code) || ''), '#ff4444'); };
+  tunnel.onerror = function(s) {
+    var msg = (s && (s.message || s.code)) || '';
+    setTimeout(function(){ if (it.id === activeId && !it.retryTimer && it.state !== 3) setStatus(it.label + ' \u00b7 \u96a7\u9053\u9519\u8bef: ' + msg, '#ff4444'); }, 80);
+  };
   client.connect();
   it.connecting = false;
 }
@@ -648,7 +674,7 @@ window.addEventListener('message', function(ev) {
   }
 });
 window.addEventListener('focus', function() { var it = active(); if (it && it.client) vscodeApi.postMessage({type:'readClipboard'}); });
-window.addEventListener('resize', function() { fitAll(); });
+window.addEventListener('resize', function() { fitAll(); pushSizes(); });
 
 function doFullscreen() { vscodeApi.postMessage({type:'fullscreen'}); }
 
