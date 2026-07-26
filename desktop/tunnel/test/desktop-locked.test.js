@@ -18,9 +18,17 @@ test("锁定模式要素齐备(LOCKED · 隐藏账号下拉 · 标题回显账�
 
 test("同源前缀(PFX): 经主口 /wdesk 反代打开时接口与 WS 均走同一前缀(公网可达)", () => {
   assert.ok(html.includes("const PFX"), "缺同源前缀 PFX");
-  assert.ok(html.includes("fetch(PFX + pathq"), "宿主接口未走 PFX 前缀");
+  assert.ok(html.includes("fetch(API_BASE + pathq"), "宿主接口未走同源基址");
   assert.ok(html.includes("PFX + '-ws?token='"), "Guacamole WS 未走同源 /wdesk-ws");
   assert.ok(html.includes("location.hostname + ':' + wsPort"), "直连(无前缀)WS 路线丢失");
+});
+
+test("同源包装拆封(WRAP): 经 IDE 主口 /__web?u=<真址> 打开时参数与接口/WS 基址取自内层地址", () => {
+  assert.ok(html.includes("var WRAP"), "缺 WRAP 拆封");
+  assert.ok(html.includes(".get('u')"), "未从 ?u= 拆内层地址");
+  assert.ok(html.includes("WRAP ? new URLSearchParams(WRAP.search)"), "参数未取自内层地址");
+  assert.ok(html.includes("WRAP ? (WRAP.origin + WRAP.pfx)"), "接口基址未取自内层地址");
+  assert.ok(html.includes("WRAP.wsProto + '://' + WRAP.wsHost + WRAP.pfx + '-ws?token='"), "WS 未走内层同源 /wdesk-ws");
 });
 
 test("锁定模式保留同账号多路能力(分身/平铺/连接/断开)与内联脚本语法完好", () => {
