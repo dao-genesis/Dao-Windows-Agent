@@ -1457,6 +1457,19 @@ async function activate(context) {
     })
   );
 
+  // 深链入口：vscode://daowin.dao-windows-desktop/home|desktop|panel
+  // 供远程编排/自动化可靠唤起面板（不依赖命令面板 UI）。
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri(uri) {
+        const p = (uri.path || "").replace(/^\/+/, "").toLowerCase();
+        if (p === "desktop") return openDesktop(context);
+        if (p === "panel") return openPanel(context);
+        return openHome(context);
+      }
+    })
+  );
+
   // 激活即后台连桥并为本窗口建隔离会话（零点击冷启动）
   const info = await ensureBridge(context);
   if (info) {
