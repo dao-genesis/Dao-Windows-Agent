@@ -128,9 +128,10 @@ const FRONTEND_JS = [
 "  if(!d||!d.url||!d.account)return;",
 "  var lbl=d.label||d.account;",
 "  var q='?account='+encodeURIComponent(d.account)+'&label='+encodeURIComponent(lbl)+'&lock=1&autoconnect=1'+wdeskOptsQ(WDESKOPTS[d.account]);",
-"  /* 以本页自身源绝对化(/wdesk/desktop → http(s)://本源/wdesk/desktop): 外壳(vscode-webview 源)iframe 无法解析相对地址(白屏), 绝对化后 IDE 与公网隧道两端皆可达。 */",
+"  /* 以本页自身源绝对化(/wdesk/desktop → http(s)://本源/wdesk/desktop): 外壳(vscode-webview 源)iframe 无法解析相对地址(白屏), 绝对化后 IDE 与公网隧道两端皆可达。",
+"     vscode-webview 源时改走主口 /__web?u=<主口/wdesk/desktop+参数> 同源包装(外壳 iframe 唯一可达路径 · 桌面页自拆 u); 缺主口才兑底 localUrl。 */",
 "  var u=d.url+q;",
-"  try{var au=new URL(u,location.href);u=(au.protocol==='http:'||au.protocol==='https:')?au.href:((d.localUrl||d.url)+q);}catch(e){u=(d.localUrl||d.url)+q;}",
+"  try{var au=new URL(u,location.href);u=(au.protocol==='http:'||au.protocol==='https:')?au.href:(d.mainUrl?(d.mainWrap+encodeURIComponent(d.mainUrl+q)):((d.localUrl||d.url)+q));}catch(e){u=d.mainUrl?(d.mainWrap+encodeURIComponent(d.mainUrl+q)):((d.localUrl||d.url)+q);}",
 "  var xu=(d.localUrl||d.url)+q;",
 "  var msg={type:'open',id:'wdesk:'+d.account,url:u,label:'🖥 '+lbl,email:d.account};",
 "  try{if(window.parent&&window.parent!==window){window.parent.postMessage(msg,'*');}",
@@ -360,7 +361,17 @@ async function daoWinDeskEnsure(opts) {
         } catch (e) { /* 守柔 */ }
     }
     // url = 同源相对地址(经主口 /wdesk 反代): IDE 与公网隧道皆可达; localUrl 供系统浏览器兑底直达。
-    const ret = { ok: true, url: '/wdesk/desktop', localUrl: 'http://127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '/desktop', account: opts.account || null, label: opts.label || opts.account || null };
+    // 主口同源地址(vscode-webview 外壳兑底): 外壳 iframe 只能达主口 /__web 同源包装, 直连其他本地端口会白屏。
+    let daoMainPort = 0;
+    try { daoMainPort = (typeof ws === 'object' && ws && ws.port) ? parseInt(ws.port, 10) : 0; } catch (e) { /* 守柔 */ }
+    const daoMainBase = daoMainPort ? ('http://127.0.0.1:' + daoMainPort) : null;
+    const ret = {
+        ok: true, url: '/wdesk/desktop',
+        localUrl: 'http://127.0.0.1:' + DAO_TUNNEL_HTTP_PORT + '/desktop',
+        mainUrl: daoMainBase ? (daoMainBase + '/wdesk/desktop') : null,
+        mainWrap: daoMainBase ? (daoMainBase + '/__web?u=') : null,
+        account: opts.account || null, label: opts.label || opts.account || null,
+    };
     if (await daoTcpUp(DAO_TUNNEL_HTTP_PORT)) return ret;
     const dir = daoWinTunnelDir();
     if (!dir) return { error: '未找到 guacamole-lite 隧道(设 DAO_TUNNEL_DIR 或置于 C:/dao_vm/guactunnel; 需先 npm install)' };

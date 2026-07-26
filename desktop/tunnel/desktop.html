@@ -42,7 +42,20 @@ body{overflow:hidden;background:#1a1a1e;color:#e0e0e0;font-family:system-ui,sans
 <script>
 // ☯ 官方面板整块移植：与 ide/vscode/extension.js desktopHtml 同源实现，
 // 改为隧道同源直连（fetch /token · /accounts），供 IDE 归一板块内嵌成一张页面。
-const Q = new URLSearchParams(location.search);
+// 同源包装拆封: 经 IDE 主口 /__web?u=<真址> 反代打开时, 参数与同源基址都在 u 内 ——
+// 拆出内层地址作为参数源与接口/WS 基址(vscode-webview 外壳唯一可达路径)。
+var WRAP = (function(){
+  try {
+    var u = new URLSearchParams(location.search).get('u');
+    if (!u) return null;
+    var t = new URL(u);
+    if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
+    var m = t.pathname.match(/^(.*)\/desktop\/?$/);
+    if (!m) return null;
+    return { origin: t.origin, pfx: m[1] || '', search: t.search, wsHost: t.host, wsProto: (t.protocol === 'https:' ? 'wss' : 'ws') };
+  } catch(e) { return null; }
+})();
+const Q = WRAP ? new URLSearchParams(WRAP.search) : new URLSearchParams(location.search);
 let ACCOUNT = Q.get('account') || '';
 const LABEL = Q.get('label') || '';
 // 锁定页模式(分而治之): 带 account(或 lock=1)打开时, 本页只承载这一个账号的整块桌面 ——
@@ -80,9 +93,10 @@ let nextId = 1;
 let nextSlot = 1;
 function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
 // 同源前缀: 经主口反代(/wdesk/desktop)打开时, 所有宿主接口与 WS 都走同一前缀 —— 公网/IDE 同源直达。
-const PFX = (function(){ var m = location.pathname.match(/^(.*)\/desktop\/?$/); return (m && m[1]) || ''; })();
+const PFX = WRAP ? WRAP.pfx : (function(){ var m = location.pathname.match(/^(.*)\/desktop\/?$/); return (m && m[1]) || ''; })();
+const API_BASE = WRAP ? (WRAP.origin + WRAP.pfx) : PFX;
 function hostFetch(pathq, method){
-  return fetch(PFX + pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
+  return fetch(API_BASE + pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
 }
 let lastLocalClip = null;
 let lastRemoteClip = null;
@@ -250,9 +264,11 @@ async function connectInstance(it) {
     if (tokenData.error) { setStatus(it.label + ' · 令牌: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' · 令牌获取失败: ' + e.message, '#ff4444'); it.connecting = false; return; }
   const wsPort = tokenData.ws_port || 4823;
-  const wsUrl = PFX
-    ? ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + PFX + '-ws?token=' + encodeURIComponent(tokenData.token))
-    : ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token));
+  const wsUrl = WRAP
+    ? (WRAP.wsProto + '://' + WRAP.wsHost + WRAP.pfx + '-ws?token=' + encodeURIComponent(tokenData.token))
+    : (PFX
+      ? ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + PFX + '-ws?token=' + encodeURIComponent(tokenData.token))
+      : ((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.hostname + ':' + wsPort + '/?token=' + encodeURIComponent(tokenData.token)));
   setStatus(it.label + ' · 建立 WS 隧道...', '#ffcc00');
   const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
   const client = new Guacamole.Client(tunnel);
