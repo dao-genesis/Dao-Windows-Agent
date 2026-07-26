@@ -326,6 +326,9 @@ function daoWinGuacAcctSync(account, target) {
         port: String(t.port || old.port || '3389'),
         username: t.username || old.username || account,
     });
+    // 子账号凭据直通隧道(根治「子账号卡等待中」): 无各账号口令时隧道会回落 DEFAULT_RDP(主账号)口令,
+    // 子账号 RDP 认证必败。口令仅写本机 0700 目录注册表(与既有隧道侧口令同域), 绝不进仓/面板。
+    if (t.password) reg[account].password = t.password;
     try { fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 }); } catch (e) { /* 守柔 */ }
     try { fs.writeFileSync(p, JSON.stringify(reg, null, 2), 'utf8'); } catch (e) { /* 守柔 */ }
 }
@@ -550,6 +553,7 @@ function daoWinAcctCreate(name, password, admin) {
     const reg = daoWinAcctReg();
     reg[name] = { hostname: '127.0.0.1', port: '3389', username: name, admin: !!admin };
     daoWinAcctRegSave(reg);
+    daoWinGuacAcctSync(name, { username: name, password: pw });
     return { ok: true, name: name };
 }
 function daoWinAcctDestroy(name) {
