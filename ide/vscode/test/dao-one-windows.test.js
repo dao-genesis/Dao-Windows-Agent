@@ -85,6 +85,9 @@ test("分而治之: 开桌面=顶层独立页(一账号一页 · 官方 Guacamol
   assert.ok(out.includes("d.type==='winDeskReady'"), "缺 winDeskReady 回执处理");
   assert.ok(out.includes("daoWinDeskReady(d)"), "winDeskReady 回执未走独立页打开");
   assert.ok(out.includes("type:'open'"), "未向外壳发 type:'open' 顶层开页消息");
+  // 桌面页 URL 必须以本页自身源绝对化(webview 外壳无法解析相对地址 → 白屏), 且非 http(s) 源回退 localUrl
+  assert.ok(out.includes("new URL(u,location.href)"), "桌面页 URL 未按本页源绝对化(webview 白屏根因)");
+  assert.ok(/protocol==='http:'\|\|au\.protocol==='https:'/.test(out), "非 http(s) 源未回退 localUrl");
   assert.ok(out.includes("'wdesk:'+d.account"), "顶层页 id 未按账号隔离(wdesk:<account>)");
   assert.ok(out.includes("account='+encodeURIComponent(d.account)"), "桌面页 URL 未携带账号参数");
   assert.ok(out.includes("winDeskOpenExternal"), "缺外壳缺位时的系统浏览器兜底");
