@@ -96,6 +96,25 @@ test("分而治之: 开桌面=顶层独立页(一账号一页 · 官方 Guacamol
   assert.ok(out.includes("clipboard=off"), "剪贴板禁用未映射 clipboard=off");
   assert.ok(out.includes("&drive="), "驱动器重定向未映射 drive=");
   assert.ok(out.includes("readonly=1"), "旁观模式未映射 readonly=1");
+  // 官方五页(显示/本地资源/体验)全量直通面板内桌面: mstsc 同义配置 → Guacamole 官方参数
+  assert.ok(out.includes("&colordepth="), "色深(bpp)未映射 colordepth");
+  assert.ok(out.includes("&wallpaper="), "桌面背景未映射 wallpaper");
+  assert.ok(out.includes("&theming="), "视觉样式未映射 theming");
+  assert.ok(out.includes("&fontsmoothing="), "字体平滑未映射 fontsmoothing");
+  assert.ok(out.includes("&windowdrag="), "拖拉显示窗口内容未映射 windowdrag");
+  assert.ok(out.includes("&composition="), "桌面布局未映射 composition");
+  assert.ok(out.includes("&animations="), "菜单窗口动画未映射 animations");
+  assert.ok(out.includes("&bitmapcache="), "位图缓存未映射 bitmapcache");
+  assert.ok(out.includes("audio=off") && out.includes("audio=both"), "远程音频/录音未映射 audio");
+  assert.ok(out.includes("&printing="), "打印机未映射 printing");
+  // 连接档案「开桌面」把整份五页档案原样递给映射器(非仅剪贴板/驱动器两键)
+  assert.ok(/wdeskOpen\(p\.name,p\.name,\{[^}]*\},p\)/.test(out), "开桌面未传整份五页档案");
+  // 五页映射语义抽检(实例化前端负载中的 wdeskOptsQ 纯函数)
+  const q = new Function("var window={addEventListener:function(){}};var document={getElementById:function(){return null;}};\n" + FRONTEND_JS + "\n;return wdeskOptsQ;\nfunction esc(s){return s}function cmd(){}function toast(){}var S={tab:''};")();
+  assert.strictEqual(q(null), "");
+  const full = q({ bpp: "16", wallpaper: false, themes: false, fontsmoothing: true, fullwindowdrag: true, composition: true, menuanims: true, bitmapcache: false, audiomode: "2", printers: true, clipboard: false, drives: true });
+  ["colordepth=16", "wallpaper=0", "theming=0", "fontsmoothing=1", "windowdrag=1", "composition=1", "animations=1", "bitmapcache=0", "audio=off", "printing=1", "clipboard=off", "&drive="].forEach((s) => assert.ok(full.includes(s), "五页直通缺 " + s));
+  assert.ok(q({ audiomode: "0", audiocapture: "1" }).includes("audio=both"), "录音未映射 audio=both");
   // 宿主原语: 官方 Guacamole 链路(guacd + guacamole-lite 隧道), 凭据由隧道持有
   assert.ok(out.includes("function daoWinDeskEnsure("), "缺宿主 daoWinDeskEnsure");
   assert.ok(out.includes("function daoWinGuacAcctSync("), "缺隧道账号注册表登记 daoWinGuacAcctSync");
