@@ -26,7 +26,7 @@
     "commands": [
       {
         "command": "daoWin.home",
-        "title": "DAO: 归一主页（原 dao-one/9920 全能板 · 含 🪟 Windows 板块）"
+        "title": "DAO: Windows 总控主页（独立宿主 · 官方配置台 + 账号池）"
       },
       {
         "command": "daoWin.openDesktop",
@@ -104,8 +104,14 @@
       "properties": {
         "daoWin.bridgeUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:9920",
-          "description": "机控桥地址（默认连本机已部署桥；连不上且开启自启时，插件用自带 runtime 起本地桥）"
+          "default": "http://127.0.0.1:9930",
+          "description": "机控桥地址（Windows Agent 自有桥口 9930，与 dao-one/dao-vsix 的 9920/9921 分离；连不上且开启自启时，插件用自带 runtime 起本地桥）"
+        },
+        "daoWin.homeMode": {
+          "type": "string",
+          "enum": ["standalone", "dao-one"],
+          "default": "standalone",
+          "description": "主页宿主：standalone=本插件独立总控（真隔离，不依赖归一插件）；dao-one=显式委派归一全能板（需另装 dao-one）"
         },
         "daoWin.token": {
           "type": "string",
