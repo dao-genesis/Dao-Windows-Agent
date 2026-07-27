@@ -39,6 +39,24 @@ test("主页/桥口配置真隔离（standalone 默认 + 自有桥口 9930）", 
   assert.ok(props["daoWin.bridgeUrl"].default.includes(":9930"), "桥口应与 dao-one/dao-vsix 的 9920/9921 分离");
 });
 
+test("Windows 总控原语默认不外泄进程全局（道并行而不相悖·同进程 dao-one 不拾取本板块）", () => {
+  const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
+  // 原语构建应落在模块内自持变量，而非无条件挂进程全局。
+  assert.ok(ext.includes("winHomeApi = {"), "installWinHomeHook 应把原语存入模块内 winHomeApi");
+  assert.ok(
+    !/installWinHomeHook\(\)\s*\{[\s\S]*?globalThis\.__DAO_WIN_HOME__\s*=\s*\{/.test(ext),
+    "installWinHomeHook 不应再无条件把原语对象直接挂到 globalThis.__DAO_WIN_HOME__"
+  );
+  // 唯一上交点：publishWinHomeHook，且只在显式 dao-one 委派时调用。
+  assert.ok(ext.includes("function publishWinHomeHook()"), "应存在唯一上交函数 publishWinHomeHook");
+  assert.ok(
+    /homeMode === "dao-one"\)\s*publishWinHomeHook\(\)/.test(ext),
+    "installWinHomeHook 内只在 homeMode=dao-one 时才上交全局"
+  );
+  // 本插件自身读取原语走模块内自持（含全局兜底），保证 standalone 下独立总控仍可用。
+  assert.ok(ext.includes("winHomeApi || globalThis.__DAO_WIN_HOME__"), "自读原语应优先模块内 winHomeApi");
+});
+
 test("dao-ai-base 保留 unified 开关且默认可被宿主关闭", () => {
   const idx = fs.readFileSync(path.join(ROOT, "dao-ai-base", "index.js"), "utf8");
   assert.ok(idx.includes("o.unified !== false"), "index.js 应支持 unified:false 停用自建面板");
