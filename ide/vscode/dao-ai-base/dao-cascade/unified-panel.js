@@ -1630,7 +1630,7 @@ function renderWinRdpForm(){
   let ri=WF_RES.length;
   if(p.fullscreen===false){ri=WF_RES.findIndex(r=>String(r[0])===String(p.width)&&String(r[1])===String(p.height));if(ri<0)ri=6;}
   const resLabel=ri>=WF_RES.length?'全屏':(WF_RES[ri][0]+' × '+WF_RES[ri][1]+' 像素');
-  let h='<div class="card"><div class="cr"><span class="l"><b>'+(WINEDIT?'编辑':'新建')+' · 远程桌面连接</b></span><span class="v muted">官方对话框原样收编 → 标准 .rdp · 连接即 mstsc</span></div>';
+  let h='<div class="card"><div class="cr"><span class="l"><button class="btn sec" id="winRdpBack">← 返回连接列表</button> <b>'+(WINEDIT?'编辑':'新建')+' · 远程桌面连接</b></span><span class="v muted">官方对话框原样收编 → 标准 .rdp · 连接即 mstsc</span></div>';
   h+='<div class="cr"><span class="v" style="display:flex;gap:4px;flex-wrap:wrap">'+[['general','常规'],['display','显示'],['local','本地资源'],['exp','体验'],['adv','高级']].map((t,i)=>'<button class="btn'+(i?' sec':'')+'" data-wtab="'+t[0]+'">'+t[1]+'</button>').join('')+'</span></div>';
   // 常规 · 登录设置/连接设置
   h+='<div id="wtab_general" class="wtab">';
@@ -1991,6 +1991,7 @@ function render(){
       authlevel:g('wf_auth').value,gwmethod:g('wf_gwm').value,gateway:g('wf_gw').value,gwbypass:g('wf_gwbypass').checked,gwcreds:g('wf_gwcred').checked};
     WIN=null;WINEDIT=null;render();vscode.postMessage({type:'win-rdp-save',profile:prof});};
   const wrc=document.getElementById('winRdpCancel'); if(wrc)wrc.onclick=()=>{WINEDIT=null;render();};
+  const wrb=document.getElementById('winRdpBack'); if(wrb)wrb.onclick=()=>{WINEDIT=null;render();};
   if((S.board==='overview'||S.board==='windows')&&WIN===null)vscode.postMessage({type:'win-state'});
   document.querySelectorAll('[data-tabgo]').forEach(el=>el.onclick=()=>sw(el.dataset.tabgo));
   const prf=document.getElementById('pcbRf'); if(prf)prf.onclick=()=>{PCB=null;render();vscode.postMessage({type:'pcb-state'});};

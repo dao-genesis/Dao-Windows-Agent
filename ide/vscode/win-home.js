@@ -1,16 +1,15 @@
 "use strict";
-// DAO Windows Agent · 独立总控主页（VS Code 独立宿主 · 真隔离）
+// DAO · 归一 Windows 总控 · 旧版兜底页（homeMode=standalone 或归一面板不可用时）
 //
-// 本模块 = Windows Agent 自己的前端主页：官方 mstsc 五页配置台 + 账号池 + 开桌面，
-// 全部承载在本插件自己的 webview（daoWinHome）里，不注入、不依赖 dao-one/归一插件。
-// 归一插件（Devin Desktop）保持自身边界；确需归一宿主时经 daoWin.homeMode=dao-one 显式委派。
+// 本体前端 = 插件内置归一面板(dao.unified) 的 🪟 Windows 板块（同一底层·融为一体）；
+// 本模块只是其兜底 webview：官方 mstsc 五页配置台 + 账号池 + 开桌面，数据同源。
 //
 // 数据面：RDP 档案原语（rdpSave/rdpDelete/rdpLaunch/info）与账号池（桥 /api/account.*、
 // 隧道 /accounts）均由宿主 extension.js 处理消息后回推，本文件只负责前端模板（headless 可测）。
 
 const WRD_RES = [[640, 480], [800, 600], [1024, 768], [1280, 720], [1366, 768], [1600, 900], [1920, 1080], [2560, 1440]];
 
-// 独立总控主页模板。state = { sessionId, platform, rdp:[], accounts:[], subplugins:[] }。
+// 归一 Windows 总控兜底页模板。state = { sessionId, platform, rdp:[], accounts:[], subplugins:[] }。
 function winHomeHtml(state) {
   return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <style>
@@ -48,8 +47,8 @@ table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--v
 .mstsc .footer button.primary{background:#dceaffff;border-color:#3a7bd0;font-weight:600}
 .mstsc .footer .spread{margin-right:auto;display:flex;gap:6px}
 </style></head><body>
-<h2>\u262f DAO Windows Agent \u00b7 \u72ec\u7acb\u603b\u63a7</h2>
-<div class="sid">VS Code \u72ec\u7acb\u5bbf\u4e3b\uff08\u4e0d\u4f9d\u8d56\u5f52\u4e00\u63d2\u4ef6\uff09\u00b7 \u672c\u7a97\u53e3\u4f1a\u8bdd <b id="sid"></b> \u00b7 \u5b98\u65b9\u8fdc\u7a0b\u684c\u9762\u6a21\u5757\u524d\u7aef\u5316 + \u8d26\u53f7\u6c60</div>
+<h2>\u262f \u5f52\u4e00 \u00b7 Windows \u603b\u63a7</h2>
+<div class="sid">\u5f52\u4e00\u63d2\u4ef6\u540c\u4e00\u5e95\u5c42 \u00b7 \u672c\u7a97\u53e3\u4f1a\u8bdd <b id="sid"></b> \u00b7 \u5b98\u65b9\u8fdc\u7a0b\u684c\u9762\u6a21\u5757\u524d\u7aef\u5316 + \u8d26\u53f7\u6c60</div>
 <div class="row">
   <button id="mTabConfig" onclick="wmSwitch('config')">\u2460 \u7edf\u4e00\u914d\u7f6e\u7ba1\u7406\u53f0\uff08\u5b98\u65b9 mstsc \u4e94\u9875\uff09</button>
   <button id="mTabPool" class="ghost" onclick="wmSwitch('pool')">\u2461 \u8d26\u53f7\u6c60 \u00b7 \u591a\u8d26\u53f7\u7ba1\u7406</button>
@@ -81,7 +80,8 @@ function wrForm(){
   let ri=WRD_RES.length;
   if(p.fullscreen===false){ ri=6; for(let i=0;i<WRD_RES.length;i++){ if(String(WRD_RES[i][0])===String(p.width)&&String(WRD_RES[i][1])===String(p.height)) ri=i; } }
   const resLabel=ri>=WRD_RES.length?'\u5168\u5c4f':(WRD_RES[ri][0]+' \u00d7 '+WRD_RES[ri][1]+' \u50cf\u7d20');
-  let h='<div class="mstsc">';
+  let h='<div class="row" style="margin:6px 0"><button class="ghost" onclick="WEDIT=null;render()">\u2190 \u8fd4\u56de\u8fde\u63a5\u5217\u8868</button></div>';
+  h+='<div class="mstsc">';
   h+='<div class="titlebar"><span class="ico">\ud83d\udda5\ufe0f</span><span class="tt">\u8fdc\u7a0b\u684c\u9762\u8fde\u63a5</span></div>';
   h+='<div class="tabbar">'+[['general','\u5e38\u89c4'],['display','\u663e\u793a'],['local','\u672c\u5730\u8d44\u6e90'],['exp','\u4f53\u9a8c'],['adv','\u9ad8\u7ea7']].map(function(t){return '<button class="'+(WTAB===t[0]?'sel':'')+'" data-wtab="'+t[0]+'" onclick="wrTab(\\''+t[0]+'\\')">'+t[1]+'</button>';}).join('')+'</div>';
   h+='<div class="body">';

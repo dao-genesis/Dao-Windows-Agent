@@ -1,5 +1,5 @@
-// 归一宿主接线护栏（正本清源后）：归一宿主唯一 = 原 dao-one/9920 全能板，
-// 🪟 Windows 经 dao-one-windows 衍生注入为其同级 tab；本仓不得再自建归一/Proxy Pro 侧栏顶替本源。
+// 归一宿主接线护栏（归一本体化后）：本插件本体前端 = 内置归一面板(dao.unified·同一底层)，
+// 🪟 Windows 为其中板块；与 Devin Desktop 的 dao-one 仅靠扩展名/宿主 IDE 隔离，不再另起独立总控架构。
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
@@ -14,52 +14,52 @@ test("Windows 桌面插件身份与 dao-one 隔离", () => {
   assert.strictEqual(pkg.name, "dao-windows-desktop", "扩展 ID 应独立于旧 dao.dao-windows-agent");
 });
 
-test("package.json 不再贡献自建 dao.unified / dao.proxyPro 视图（归一宿主唯一 = dao-one）", () => {
-  const views = (pkg.contributes.views || {})["daoWin-cascade"] || [];
-  for (const id of ["dao.unified", "dao.proxyPro"]) {
-    assert.ok(!views.some((x) => x.id === id), id + " 不应再作为本仓侧栏视图（错位宿主）");
-  }
+test("package.json 贡献内置归一面板视图（同一底层 · 🪟 Windows 为其中板块）", () => {
+  const views = (pkg.contributes.views || {})["dao-unified"] || [];
+  assert.ok(views.some((x) => x.id === "dao.unified"), "应贡献 dao.unified 侧栏视图（归一本体前端）");
   assert.ok(
-    !(pkg.contributes.commands || []).some((c) => c.command === "dao.unified.open"),
-    "不应再贡献 dao.unified.open（自建面板入口）"
+    (pkg.contributes.commands || []).some((c) => c.command === "dao.unified.open"),
+    "应贡献 dao.unified.open（归一面板入口）"
   );
 });
 
-test("激活链停用自建归一面板（unified:false），主页默认独立宿主（真隔离）", () => {
+test("激活链启用内置归一面板（unified:true），主页默认归一，旧独立页仅作兜底", () => {
   const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
-  assert.ok(ext.includes("unified: false"), "activateDaoAiBase 应传 unified:false");
-  assert.ok(ext.includes('createWebviewPanel("daoWinHome"'), "主页应为本插件独立总控 webview");
-  assert.ok(ext.includes('homeMode === "dao-one"'), "dao-one 委派只允许显式 homeMode=dao-one");
-  assert.ok(!ext.includes('executeCommand("dao.unified.open")'), "不应再回退自建 dao.unified 面板");
+  assert.ok(ext.includes("unified: true"), "activateDaoAiBase 应传 unified:true（归一本体化）");
+  assert.ok(ext.includes('executeCommand("dao.unified.focus")'), "默认主页应聚焦内置归一面板");
+  assert.ok(ext.includes('createWebviewPanel("daoWinHome"'), "旧独立页应保留为兜底 webview");
+  assert.ok(ext.includes(String.raw`mode === "dao-one"`), "dao-one 委派只允许显式 homeMode=dao-one");
 });
 
-test("主页/桥口配置真隔离（standalone 默认 + 自有桥口 9930）", () => {
+test("主页默认归一 + 自有桥口 9930（与 Devin Desktop 的 dao-one 靠 IDE/端口隔离）", () => {
   const props = pkg.contributes.configuration.properties;
-  assert.strictEqual(props["daoWin.homeMode"].default, "standalone", "默认主页应为独立宿主");
+  assert.strictEqual(props["daoWin.homeMode"].default, "unified", "默认主页应为内置归一面板");
+  assert.ok(props["daoWin.homeMode"].enum.includes("standalone"), "应保留 standalone 兜底模式");
   assert.ok(props["daoWin.bridgeUrl"].default.includes(":9930"), "桥口应与 dao-one/dao-vsix 的 9920/9921 分离");
 });
 
-test("Windows 总控原语默认不外泄进程全局（道并行而不相悖·同进程 dao-one 不拾取本板块）", () => {
+test("Windows 总控原语默认上交供内置归一面板渲染（同一底层·融为一体）", () => {
   const ext = fs.readFileSync(path.join(ROOT, "extension.js"), "utf8");
-  // 原语构建应落在模块内自持变量，而非无条件挂进程全局。
   assert.ok(ext.includes("winHomeApi = {"), "installWinHomeHook 应把原语存入模块内 winHomeApi");
-  assert.ok(
-    !/installWinHomeHook\(\)\s*\{[\s\S]*?globalThis\.__DAO_WIN_HOME__\s*=\s*\{/.test(ext),
-    "installWinHomeHook 不应再无条件把原语对象直接挂到 globalThis.__DAO_WIN_HOME__"
-  );
-  // 唯一上交点：publishWinHomeHook，且只在显式 dao-one 委派时调用。
   assert.ok(ext.includes("function publishWinHomeHook()"), "应存在唯一上交函数 publishWinHomeHook");
   assert.ok(
-    /homeMode === "dao-one"\)\s*publishWinHomeHook\(\)/.test(ext),
-    "installWinHomeHook 内只在 homeMode=dao-one 时才上交全局"
+    /publishWinHomeHook\(\);\s*\}\s*\n\s*\/\/ 上交/.test(ext) || /\n  publishWinHomeHook\(\);\n\}/.test(ext),
+    "installWinHomeHook 尾部应默认调用 publishWinHomeHook（内置归一面板即消费方）"
   );
-  // 本插件自身读取原语走模块内自持（含全局兜底），保证 standalone 下独立总控仍可用。
   assert.ok(ext.includes("winHomeApi || globalThis.__DAO_WIN_HOME__"), "自读原语应优先模块内 winHomeApi");
 });
 
-test("dao-ai-base 保留 unified 开关且默认可被宿主关闭", () => {
+test("🪟 板块 RDP 配置表单带顶部返回键（配置流不断路）", () => {
+  const up = fs.readFileSync(path.join(ROOT, "dao-ai-base", "dao-cascade", "unified-panel.js"), "utf8");
+  assert.ok(up.includes('id="winRdpBack"'), "归一面板 RDP 表单应有顶部返回键");
+  assert.ok(/winRdpBack'\); if\(wrb\)wrb\.onclick/.test(up), "返回键应绑回连接列表");
+  const wh = fs.readFileSync(path.join(ROOT, "win-home.js"), "utf8");
+  assert.ok(wh.includes("\\u2190 \\u8fd4\\u56de\\u8fde\\u63a5\\u5217\\u8868"), "兜底页 mstsc 表单也应有顶部返回键");
+});
+
+test("dao-ai-base 保留 unified 开关（默认开启，宿主可显式关闭）", () => {
   const idx = fs.readFileSync(path.join(ROOT, "dao-ai-base", "index.js"), "utf8");
-  assert.ok(idx.includes("o.unified !== false"), "index.js 应支持 unified:false 停用自建面板");
+  assert.ok(idx.includes("o.unified !== false"), "index.js 应支持 unified 开关");
 });
 
 test("机控桥自启与健康指纹（embedded Python 兼容 + apps 数组校验）", () => {

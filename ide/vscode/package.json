@@ -2,7 +2,7 @@
   "name": "dao-windows-desktop",
   "displayName": "DAO Windows · 桌面级路由",
   "description": "IDE 装上本插件 → 面板里直接就是整台 Windows 桌面本体（类多 RDP）。每个 IDE 窗口 = 一路独立完整的 RDP 会话，canvas 渲染进 Webview，鼠键直操。",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "publisher": "daowin",
   "license": "MIT",
   "icon": "media/dao.png",
@@ -27,7 +27,11 @@
     "commands": [
       {
         "command": "daoWin.home",
-        "title": "DAO: Windows 总控主页（独立宿主 · 官方配置台 + 账号池）"
+        "title": "DAO: 归一主页（Windows 总控 · 官方配置台 + 账号池）"
+      },
+      {
+        "command": "dao.unified.open",
+        "title": "DAO: 聚焦归一面板（含 🪟 Windows 板块）"
       },
       {
         "command": "daoWin.openDesktop",
@@ -110,9 +114,9 @@
         },
         "daoWin.homeMode": {
           "type": "string",
-          "enum": ["standalone", "dao-one"],
-          "default": "standalone",
-          "description": "主页宿主：standalone=本插件独立总控（真隔离，不依赖归一插件）；dao-one=显式委派归一全能板（需另装 dao-one）"
+          "enum": ["unified", "standalone", "dao-one"],
+          "default": "unified",
+          "description": "主页宿主：unified=本插件内置归一面板（同一底层，🪟 Windows 为其中板块·默认）；standalone=旧版独立页兜底；dao-one=显式委派同 IDE 内另装的 dao-one"
         },
         "daoWin.token": {
           "type": "string",
@@ -152,6 +156,11 @@
           "id": "daoWin-cascade",
           "title": "DAO · AI 交互",
           "icon": "$(comment-discussion)"
+        },
+        {
+          "id": "dao-unified",
+          "title": "☯ 归一 · Windows",
+          "icon": "$(vm)"
         }
       ]
     },
@@ -160,6 +169,13 @@
         {
           "id": "daoWin.cascade",
           "name": "Cascade · 三模式",
+          "type": "webview"
+        }
+      ],
+      "dao-unified": [
+        {
+          "id": "dao.unified",
+          "name": "☯ 归一主页 · 含 🪟 Windows",
           "type": "webview"
         }
       ]

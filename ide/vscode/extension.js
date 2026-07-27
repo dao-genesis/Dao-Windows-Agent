@@ -22,7 +22,7 @@ const desktopPanels = new Map(); // key(账号名或 ide_<hash>) → 桌面路�
 let spawnedBridge = null;
 let activeBridgeUrl = null;
 let _ideTools = null;  // vscode_* IDE 对等面子插件宿主
-let homePanel = null;  // 独立总控主页（VS Code 独立宿主 · 不依赖归一插件）
+let homePanel = null;  // 旧版独立主页 webview（归一面板不可用时的兜底宿主）
 let winHomeApi = null; // Windows 总控原语（模块内自持 · 隔离核心：默认不外泄到进程全局）
 
 function cfg() {
@@ -36,7 +36,7 @@ function cfg() {
     tunnelHttpUrl: (c.get("tunnelHttpUrl") || "http://127.0.0.1:4824").replace(/\/$/, ""),
     tunnelWsPort: parseInt(c.get("tunnelWsPort") || "4823", 10),
     tunnelToken: c.get("tunnelToken") || "",
-    homeMode: c.get("homeMode") || "standalone",
+    homeMode: c.get("homeMode") || "unified",
   };
 }
 
@@ -1053,8 +1053,8 @@ function openAsk(context) {
 }
 
 // —— Windows 总控原语（官方 mstsc 五页配置收编 + 子板块管理）——
-// 默认 standalone：原语自持在 winHomeApi，供本插件独立总控主页直用（真隔离，不注入 dao-one）。
-// 仅显式 daoWin.homeMode=dao-one 时经 publishWinHomeHook 上交归一面板(dao.unified)的 🪟 Windows 子板块。
+// 原语自持在 winHomeApi 并默认经 publishWinHomeHook 上交，供本插件内置的归一面板(dao.unified)
+// 🪟 Windows 板块渲染（同一底层·融为一体）；旧版独立页仅作 homeMode=standalone 兜底。
 
 function daoDir() { return path.join(require("os").homedir(), ".dao"); }
 function rdpDir() { return path.join(daoDir(), "rdp"); }
@@ -1163,10 +1163,8 @@ function listSubplugins() {
   return rows;
 }
 
-// Windows 总控原语：构建自持 API(winHomeApi)供本插件独立总控使用。
-// 隔离本源(道并行而不相悖)：默认 standalone **不**把原语挂到进程全局 __DAO_WIN_HOME__，
-// 因此与 Windows Agent 同进程共存的 Devin Desktop 归一插件(dao-one)不会拾取本板块、
-// 不会在归一面板冒出 🪟 Windows 子板块；仅当显式 daoWin.homeMode=dao-one 才上交(见 publishWinHomeHook)。
+// Windows 总控原语：构建自持 API(winHomeApi)。归一面板本体就在本插件内(dao.unified)，
+// 故默认即上交 __DAO_WIN_HOME__ 供其 🪟 板块渲染；与 Devin Desktop 的 dao-one 靠宿主 IDE 隔离。
 function installWinHomeHook() {
   winHomeApi = {
     info() { return { platform: process.platform, rdp: listRdpProfiles(), subplugins: listSubplugins() }; },
@@ -1215,12 +1213,11 @@ function installWinHomeHook() {
       return { ok: true };
     },
   };
-  // 仅在显式委派归一时上交全局钩子（否则保持隔离，进程全局零污染）。
-  if (cfg().homeMode === "dao-one") publishWinHomeHook();
+  // 默认上交：消费方就是本插件内置的归一面板（同一底层，不存在跨插件注入）。
+  publishWinHomeHook();
 }
 
-// 显式上交：把自持原语挂到进程全局，供归一面板(dao-one)拾取渲染 🪟 Windows 板块。
-// 只有 daoWin.homeMode=dao-one 才调用——这是 Windows Agent 主动、可撤销的越界，而非默认注入。
+// 上交：把自持原语挂到进程全局，供归一面板(dao.unified/dao-one)拾取渲染 🪟 Windows 板块。
 function publishWinHomeHook() { if (winHomeApi) globalThis.__DAO_WIN_HOME__ = winHomeApi; }
 
 // .rdp 档案键 → 官方 token 会话选项（五页配置全量直通面板内 Guacamole 桌面，
@@ -1290,10 +1287,10 @@ async function handleHomeMessage(context, msg) {
   }
 }
 
-// 独立总控主页（daoWinHome）：Windows Agent 在 VS Code 内自己的前端宿主。
+// 旧版独立主页（daoWinHome）：归一面板不可用时的兜底 webview 宿主。
 async function openStandaloneHome(context) {
   if (homePanel) { homePanel.reveal(); return homeRefresh(context); }
-  const p = vscode.window.createWebviewPanel("daoWinHome", "\u262f DAO Windows \u00b7 \u72ec\u7acb\u603b\u63a7",
+  const p = vscode.window.createWebviewPanel("daoWinHome", "\u262f \u5f52\u4e00 \u00b7 Windows \u603b\u63a7",
     vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
   homePanel = p;
   p.webview.html = winHomeHtml(await homeState(context));
@@ -1301,16 +1298,19 @@ async function openStandaloneHome(context) {
   p.webview.onDidReceiveMessage((msg) => { handleHomeMessage(context, msg); });
 }
 
-// 主页宿主取舍：默认 standalone = 本插件自己的独立总控（真隔离，不注入/不依赖 dao-one）；
-// 显式设 daoWin.homeMode=dao-one 才委派归一全能板（Devin Desktop 归一插件保持自身边界）。
+// 主页宿主取舍：默认 unified = 本插件内置归一面板(dao.unified·同一底层，🪟 Windows 为其中板块)；
+// homeMode=standalone 用旧版独立页兜底；homeMode=dao-one 显式委派同 IDE 内另装的 dao-one。
 function openHome(context) {
-  if (cfg().homeMode === "dao-one") {
-    publishWinHomeHook(); // 显式委派归一时才上交原语，让归一面板能渲染 🪟 Windows 板块
+  const mode = cfg().homeMode;
+  if (mode === "dao-one") {
+    publishWinHomeHook();
     return vscode.commands.executeCommand("dao.openCloudPanel").then(null, () =>
       vscode.window.showWarningMessage(
-        "DAO: 未找到归一宿主(dao-one)。可将 daoWin.homeMode 设回 standalone 使用独立总控"));
+        "DAO: 未找到归一宿主(dao-one)。可将 daoWin.homeMode 设回 unified 使用内置归一面板"));
   }
-  return openStandaloneHome(context);
+  if (mode === "standalone") return openStandaloneHome(context);
+  publishWinHomeHook();
+  return vscode.commands.executeCommand("dao.unified.focus").then(null, () => openStandaloneHome(context));
 }
 
 // 二合一统领(参照 devin-remote/dao-one): 子引擎 vendored 在 vendor/<名>/extension.js,
@@ -1411,8 +1411,9 @@ async function activate(context) {
   installWinHomeHook();
   try {
     const daoAiBase = require("./dao-ai-base");
-    // unified:false — 不再自建 dao.unified/dao.proxyPro 侧栏(归一宿主唯一 = 原 dao-one 全能板)。
-    daoAiBase.activateDaoAiBase(context, { ns: "daoWin", unified: false, log: (m) => log("[dao-ai-base] " + m) });
+    // unified:true — 本插件本体前端 = 归一面板(dao.unified·同一底层), 🪟 Windows 是其中板块;
+    // 与 Devin Desktop 的 dao-one 仅靠扩展名/宿主 IDE 隔离(互不干扰), 不是另一套架构。
+    daoAiBase.activateDaoAiBase(context, { ns: "daoWin", unified: true, log: (m) => log("[dao-ai-base] " + m) });
     installUnifiedShaperDispatcher(daoAiBase, log);
   } catch (e) { log("[dao-ai-base] 基底激活失败: " + (e && e.stack ? e.stack : e)); }
   // 提示词隔离替换引擎(dao-proxy-pro · Proxy Pro 同源薄片): 读 ~/.dao/mode.json 契约道化 SP。
