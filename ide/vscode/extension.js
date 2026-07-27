@@ -23,6 +23,7 @@ let spawnedBridge = null;
 let activeBridgeUrl = null;
 let _ideTools = null;  // vscode_* IDE 对等面子插件宿主
 let homePanel = null;  // 独立总控主页（VS Code 独立宿主 · 不依赖归一插件）
+let winHomeApi = null; // Windows 总控原语（模块内自持 · 隔离核心：默认不外泄到进程全局）
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("daoWin");
@@ -1052,7 +1053,8 @@ function openAsk(context) {
 }
 
 // —— Windows 总控原语（官方 mstsc 五页配置收编 + 子板块管理）——
-// 单页统管：不另起独立主页，原语经 __DAO_WIN_HOME__ 上交归一面板(dao.unified)的 🪟 Windows 子板块。
+// 默认 standalone：原语自持在 winHomeApi，供本插件独立总控主页直用（真隔离，不注入 dao-one）。
+// 仅显式 daoWin.homeMode=dao-one 时经 publishWinHomeHook 上交归一面板(dao.unified)的 🪟 Windows 子板块。
 
 function daoDir() { return path.join(require("os").homedir(), ".dao"); }
 function rdpDir() { return path.join(daoDir(), "rdp"); }
@@ -1161,9 +1163,12 @@ function listSubplugins() {
   return rows;
 }
 
-// Windows 总控原语上交(单页统管): 归一面板 🪟 Windows 板块经此钩子做 RDP 收编/子板块/目录管理。
+// Windows 总控原语：构建自持 API(winHomeApi)供本插件独立总控使用。
+// 隔离本源(道并行而不相悖)：默认 standalone **不**把原语挂到进程全局 __DAO_WIN_HOME__，
+// 因此与 Windows Agent 同进程共存的 Devin Desktop 归一插件(dao-one)不会拾取本板块、
+// 不会在归一面板冒出 🪟 Windows 子板块；仅当显式 daoWin.homeMode=dao-one 才上交(见 publishWinHomeHook)。
 function installWinHomeHook() {
-  globalThis.__DAO_WIN_HOME__ = {
+  winHomeApi = {
     info() { return { platform: process.platform, rdp: listRdpProfiles(), subplugins: listSubplugins() }; },
     rdpSave(profile) {
       const nm = rdpSafeName(profile && profile.name);
@@ -1210,7 +1215,13 @@ function installWinHomeHook() {
       return { ok: true };
     },
   };
+  // 仅在显式委派归一时上交全局钩子（否则保持隔离，进程全局零污染）。
+  if (cfg().homeMode === "dao-one") publishWinHomeHook();
 }
+
+// 显式上交：把自持原语挂到进程全局，供归一面板(dao-one)拾取渲染 🪟 Windows 板块。
+// 只有 daoWin.homeMode=dao-one 才调用——这是 Windows Agent 主动、可撤销的越界，而非默认注入。
+function publishWinHomeHook() { if (winHomeApi) globalThis.__DAO_WIN_HOME__ = winHomeApi; }
 
 // .rdp 档案键 → 官方 token 会话选项（五页配置全量直通面板内 Guacamole 桌面，
 // 与 desktop/tunnel/server.js experienceOptsFromQuery 的查询键一一对应；只搬运不生产）。
@@ -1242,7 +1253,7 @@ function rdpProfileTokenQuery(p) {
 async function homeState(context) {
   const c = cfg();
   const accounts = await fetchAccounts(c.tunnelHttpUrl, c.tunnelToken);
-  const h = globalThis.__DAO_WIN_HOME__ || {};
+  const h = winHomeApi || globalThis.__DAO_WIN_HOME__ || {};
   let info = { rdp: [], subplugins: [], platform: process.platform };
   try { if (typeof h.info === "function") info = h.info(); } catch (_) {}
   return Object.assign({ sessionId: windowSessionId(), accounts }, info);
@@ -1255,7 +1266,7 @@ async function homeRefresh(context) {
 }
 
 async function handleHomeMessage(context, msg) {
-  const h = globalThis.__DAO_WIN_HOME__ || {};
+  const h = winHomeApi || globalThis.__DAO_WIN_HOME__ || {};
   if (msg.type === "refresh") return homeRefresh(context);
   if (msg.type === "rdpSave" && msg.profile) { try { h.rdpSave(msg.profile); } catch (e) { vscode.window.showErrorMessage("DAO: 存档失败 " + e.message); } return homeRefresh(context); }
   if (msg.type === "rdpDelete" && msg.name) { try { h.rdpDelete(msg.name); } catch (_) {} return homeRefresh(context); }
@@ -1294,6 +1305,7 @@ async function openStandaloneHome(context) {
 // 显式设 daoWin.homeMode=dao-one 才委派归一全能板（Devin Desktop 归一插件保持自身边界）。
 function openHome(context) {
   if (cfg().homeMode === "dao-one") {
+    publishWinHomeHook(); // 显式委派归一时才上交原语，让归一面板能渲染 🪟 Windows 板块
     return vscode.commands.executeCommand("dao.openCloudPanel").then(null, () =>
       vscode.window.showWarningMessage(
         "DAO: 未找到归一宿主(dao-one)。可将 daoWin.homeMode 设回 standalone 使用独立总控"));
