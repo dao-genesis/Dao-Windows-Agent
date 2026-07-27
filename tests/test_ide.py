@@ -1,53 +1,33 @@
 """IDE 前端（ide/vscode）契约测试：manifest 合法、动作面与桥 API 对齐、冷启动脚本存在。"""
-import json
 import os
-import re
 
 HERE = os.path.dirname(__file__)
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 IDE = os.path.join(REPO, "ide", "vscode")
 
 
-def test_manifest_valid_and_entrypoints():
-    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
-        m = json.load(fh)
-    assert m["main"] == "./extension.js"
-    cmds = {c["command"] for c in m["contributes"]["commands"]}
-    assert {"daoWin.openPanel", "daoWin.health", "daoWin.ensureBridge"} <= cmds
-    props = m["contributes"]["configuration"]["properties"]
-    assert props["daoWin.bridgeUrl"]["default"] == "http://127.0.0.1:9930"
-    assert props["daoWin.homeMode"]["default"] == "unified"
-    assert props["daoWin.autostart"]["default"] is True
+def test_ide_is_dao_one_derivation_only():
+    """本源唯一：ide/vscode 不再自建插件前端，唯一交付 = dao-one(devin-remote 真源)
+    经 dao-one-windows 注入 🪟 Windows 板块后打包。漂移产物(独立插件本体/独立主页/
+    dao-cascade 另一支归一系面板)必须保持退役。"""
+    for drift in ("extension.js", "win-home.js", "package.json", "dao-ai-base", "unify.js"):
+        assert not os.path.exists(os.path.join(IDE, drift)), f"漂移产物未清理: ide/vscode/{drift}"
+    with open(os.path.join(IDE, "build.sh"), encoding="utf-8") as fh:
+        sh = fh.read()
+    assert "devin-remote" in sh          # 从归一插件真源构建
+    assert "dao-one-windows/inject.js" in sh  # 🪟 板块折入而非自建面板
+    assert "pack_vsix.py" in sh
 
 
-def test_extension_covers_bridge_api_surface():
-    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
+def test_injector_contract_files_present():
+    d = os.path.join(IDE, "dao-one-windows")
+    for name in ("inject.js", "payloads.js", "reinject.js", "pack_vsix.py"):
+        assert os.path.isfile(os.path.join(d, name)), f"缺 dao-one-windows/{name}"
+    with open(os.path.join(d, "payloads.js"), encoding="utf-8") as fh:
         src = fh.read()
-    for endpoint in (
-        "/api/health", "/api/apps", "/api/session.create", "/api/session.list",
-        "/api/session.open_app", "/api/session.invoke", "/api/search_verbs",
-    ):
-        assert endpoint in src, f"extension.js 缺桥端点 {endpoint}"
-    # 自启桥必须用打包捆入的 runtime（零配置冷启动本源）
-    assert re.search(r'join\(context\.extensionPath,\s*"runtime"\)', src)
-    # embedded Python(._pth) 兼容：-c 注入 sys.path 起桥，而非 -m bridge.server
-    assert "sys.path.insert(0," in src and "from bridge.server import main" in src
-    assert '"-m", "bridge.server"' not in src
-
-
-def test_extension_multi_account_surface():
-    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
-        m = json.load(fh)
-    cmds = {c["command"] for c in m["contributes"]["commands"]}
-    assert {"daoWin.openAccountDesktop", "daoWin.accountCreate",
-            "daoWin.accountList", "daoWin.accountDestroy"} <= cmds
-    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
-        src = fh.read()
-    # 多账号桌面：面板按 key（账号名/ide）多开、按账号铸令牌、账号管理走桥 /api/account.*
-    assert "desktopPanels" in src and "fetchAccounts" in src
-    assert "account=" in src  # 按账号取 token
-    for endpoint in ("/api/account.create", "/api/account.list", "/api/account.destroy"):
-        assert endpoint in src, f"extension.js 缺账号端点 {endpoint}"
+    # 官方 mstsc 五页收编 + 账号池 + 同源桌面路由(/wdesk → guacamole-lite 4824/4823)
+    for token in ("daoWinRdpFileContent", "winRdpList", "/wdesk", "4823", "4824"):
+        assert token in src, f"payloads 缺 {token}"
 
 
 def test_tunnel_server_multi_account():
@@ -69,7 +49,7 @@ def test_coldstart_orchestrator_present():
 def test_build_image_bundles_vsix():
     with open(os.path.join(REPO, "coldstart", "windows-sim", "build_image.sh"), encoding="utf-8") as fh:
         src = fh.read()
-    assert "dao-windows-agent-" in src and "vsix" in src
+    assert "dao-one-windows-" in src and "vsix" in src
 
 
 def test_run_vm_uses_fresh_kvm_group_without_relogin():
@@ -249,63 +229,16 @@ def test_unified_freecad_activation_is_lazy():
     assert "if (!unifiedHost) {\n    ensureShell()" in activate
 
 
-def test_home_windows_master_control():
-    """Windows 总控：独立宿主主页（daoWinHome）+ RDP 五页配置收编 + 原语面。"""
-    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
-        m = json.load(fh)
-    cmds = {c["command"] for c in m["contributes"]["commands"]}
-    assert "daoWin.home" in cmds
-    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
-        src = fh.read()
-    # 归一本体化: 默认内置归一面板(dao.unified), 旧独立页仅作兜底; dao-one 委派仅限显式 homeMode=dao-one
-    assert "globalThis.__DAO_WIN_HOME__" in src
-    assert 'createWebviewPanel("daoWinHome"' in src
-    assert 'mode === "dao-one"' in src
-    assert 'executeCommand("dao.unified.focus")' in src
-    assert 'executeCommand("dao.unified.open")' not in src
-    for op in ("rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
-        assert f"{op}(" in src, f"缺原语 {op}"
-    # 归一面板 🪟 子板块消费该原语面(win-rdp-*/win-sub-toggle/win-reveal-dir)
-    with open(os.path.join(IDE, "dao-ai-base", "dao-cascade", "unified-panel.js"), encoding="utf-8") as fh:
-        uni = fh.read()
-    for t in ("win-rdp-save", "win-rdp-del", "win-rdp-launch", "win-sub-toggle", "win-reveal-dir", "__DAO_WIN_HOME__"):
-        assert t in uni, f"归一面板缺 {t}"
-    # 官方 mstsc .rdp 关键字段（常规/显示/本地资源/体验/高级 五页收编）
-    for field in ("full address:s:", "desktopwidth:i:", "redirectclipboard:i:",
-                  "connection type:i:", "authentication level:i:", "gatewayhostname:s:"):
-        assert field in src, f".rdp 缺字段 {field}"
-    # 非 Windows 优雅降级：仅 win32 起 mstsc
-    assert "mstsc.exe" in src and 'process.platform === "win32"' in src
-    # 子板块 catalog 四大领域
-    for sp in ("freecad", "kicad", "jlceda", "homeassistant"):
-        assert sp in src, f"子板块 catalog 缺 {sp}"
-
-
-def test_mcp_tool_layer_registration():
-    """底层工具融合: MCP 外壳注册进官方 mcp_config.json, 四领域动词并列官方工具。"""
-    with open(os.path.join(IDE, "package.json"), encoding="utf-8") as fh:
-        m = json.load(fh)
-    cmds = {c["command"] for c in m["contributes"]["commands"]}
-    assert "daoWin.mcpRegister" in cmds
-    with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
-        src = fh.read()
-    assert 'require("./dao-mcp")' in src
-    with open(os.path.join(IDE, "dao-mcp.js"), encoding="utf-8") as fh:
-        mcp = fh.read()
-    assert '"-m", "bridge.mcp"' in mcp and "mcp_config.json" in mcp
-    assert "RefreshMcpServers" in mcp  # 官方 LS 热刷新
-
-
-def test_mcp_node_selftest():
-    """dao-mcp 纯逻辑 node 自检(merge/entry/落盘幂等)。"""
+def test_injector_node_selftest():
+    """dao-one-windows 注入器护栏 node 自检(锚点/负载/.rdp 键/幂等/签名)。"""
     import shutil
     import subprocess
     node = shutil.which("node")
     if not node:
         import pytest
         pytest.skip("node 不可用")
-    r = subprocess.run([node, os.path.join(IDE, "test", "dao-mcp.test.js")],
-                       capture_output=True, text=True, encoding="utf-8", timeout=60)
+    r = subprocess.run([node, "--test", os.path.join(IDE, "test")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
 
 

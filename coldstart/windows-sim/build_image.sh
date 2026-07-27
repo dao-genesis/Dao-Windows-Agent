@@ -66,10 +66,10 @@ if [ -d "$MEDIA/payloads" ] && [ -n "$(ls -A "$MEDIA/payloads" 2>/dev/null)" ]; 
   echo "已捆入置备载荷缓存: $(ls "$tmp/payloads" | tr '\n' ' ')"
 fi
 # IDE 前端 .vsix 一并带入（firstlogon 装 VSCode 后离线安装；缺则现打，打不出不阻断）
-VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
+VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-one-windows-*.vsix 2>/dev/null | head -1 || true)"
 if [ -z "$VSIX" ] && command -v node >/dev/null 2>&1; then
   bash "$REPO_ROOT/ide/vscode/build.sh" >/dev/null 2>&1 || true
-  VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-windows-agent-*.vsix 2>/dev/null | head -1 || true)"
+  VSIX="$(ls -t "$REPO_ROOT"/ide/vscode/dao-one-windows-*.vsix 2>/dev/null | head -1 || true)"
 fi
 [ -n "$VSIX" ] && cp "$VSIX" "$tmp/" && echo "已捆入 IDE 插件: $(basename "$VSIX")"
 genisoimage -quiet -J -r -o "$AUTO_ISO" "$tmp"; rm -rf "$tmp"

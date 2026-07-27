@@ -209,26 +209,30 @@ test("前端负载不得破坏模板字面量(禁反引号/禁 ${ 序列)且自�
   new Function(FRONTEND_JS + "\n;function esc(s){return s}function cmd(){}function toast(){}var S={tab:''};");
 });
 
-test("宿主 .rdp 键映射与本仓 rdpFileContent 完全一致(官方语义单一真源)", () => {
-  // 从注入负载中取出 daoWinRdpFileContent 并实例化
+test("宿主 .rdp 键映射覆盖官方 mstsc 五页标准键(单一真源在注入负载)", () => {
+  // 从注入负载中取出 daoWinRdpFileContent 并实例化(负载即 .rdp 语义唯一真源)
   const fn = new Function(
     "path", "os", "fs",
     HOST_HELPERS + "\nreturn daoWinRdpFileContent;"
   )(path, require("os"), fs);
-  const ext = fs.readFileSync(path.join(__dirname, "..", "extension.js"), "utf8");
-  const m = ext.match(/function rdpFileContent\(p\) \{[\s\S]*?\n\}/);
-  assert.ok(m, "extension.js 缺 rdpFileContent");
-  const ref = new Function(m[0] + "\nreturn rdpFileContent;")();
-  const samples = [
-    {},
-    { host: "pc.example.com", port: "3390", username: "u", savecred: true },
-    { fullscreen: false, width: 1280, height: 720, bpp: 16, multimon: true, connbar: false },
-    { audiomode: 2, audiocapture: 1, keyboardhook: 0, clipboard: false, printers: true, smartcards: false, ports: true, drives: true, pnp: true },
-    { conntype: 4, wallpaper: false, fontsmoothing: true, composition: true, fullwindowdrag: true, menuanims: true, themes: false, bitmapcache: false, autoreconnect: false },
-    { authlevel: 0, gwmethod: "manual", gateway: "gw.example.com", gwbypass: false, gwcreds: false },
-    { gwmethod: "none" },
-  ];
-  for (const s of samples) assert.strictEqual(fn(s), ref(s), JSON.stringify(s));
+  const out = fn({ host: "pc.example.com", port: "3390", username: "u" });
+  // 常规/显示/本地资源/体验/高级 五页对应的官方标准键
+  for (const key of [
+    "full address:s:pc.example.com:3390", "username:s:u",
+    "screen mode id:i:", "desktopwidth:i:", "desktopheight:i:", "session bpp:i:",
+    "use multimon:i:", "displayconnectionbar:i:",
+    "audiomode:i:", "audiocapturemode:i:", "keyboardhook:i:", "redirectclipboard:i:",
+    "redirectprinters:i:", "redirectsmartcards:i:", "redirectcomports:i:", "drivestoredirect:s:",
+    "connection type:i:", "disable wallpaper:i:", "allow font smoothing:i:",
+    "allow desktop composition:i:", "disable full window drag:i:", "disable menu anims:i:",
+    "disable themes:i:", "bitmapcachepersistenable:i:", "autoreconnection enabled:i:",
+    "authentication level:i:", "gatewayhostname:s:", "gatewayusagemethod:i:",
+  ]) assert.ok(out.includes(key), ".rdp 缺官方键 " + key);
+  // 官方 mstsc 出厂默认对齐(空档案=官方空白对话框语义)
+  const dflt = fn({});
+  assert.ok(dflt.startsWith("full address:s:\r\n"), "默认地址应为空(官方空白对话框)");
+  assert.ok(dflt.includes("screen mode id:i:2"), "默认全屏 screen mode id 2");
+  assert.ok(dflt.includes("authentication level:i:2"), "默认认证级别 2");
 });
 
 test("账号池注册表专用文件, 绝不复用/覆盖 Devin ~/.dao/accounts.json(登录态)", () => {
@@ -252,14 +256,15 @@ test("补丁表锚点在真源快照上唯一(有快照时)", () => {
   }
 });
 
-test("架构护栏: 归一本体化 — 本插件内置归一面板(dao.unified), 🪟 Windows 为其中板块", () => {
-  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-  const views = JSON.stringify(pkg.contributes.views || {});
-  assert.ok(views.includes("dao.unified"), "package.json 应贡献 dao.unified 视图（归一本体前端）");
-  assert.ok(!views.includes("dao.proxyPro"), "package.json 不应贡献 dao.proxyPro 视图");
-  const cmds = (pkg.contributes.commands || []).map((c) => c.command);
-  assert.ok(cmds.includes("dao.unified.open"), "package.json 应贡献 dao.unified.open 命令");
-  const ext = fs.readFileSync(path.join(__dirname, "..", "extension.js"), "utf8");
-  assert.ok(ext.includes('executeCommand("dao.openCloudPanel")'), "homeMode=dao-one 显式委派入口应保留");
-  assert.ok(ext.includes("unified: true"), "dao-ai-base 应默认启用内置归一面板");
+test("架构护栏: 本源唯一 — dao-one(devin-remote) 是唯一基底, 本仓不再自建任何插件前端", () => {
+  const IDE = path.join(__dirname, "..");
+  // 漂移产物必须退役: 独立插件本体/独立主页/另一支归一系(dao-cascade)面板
+  for (const drift of ["extension.js", "win-home.js", "package.json", "dao-ai-base", "unify.js"]) {
+    assert.ok(!fs.existsSync(path.join(IDE, drift)), "漂移产物未清理: ide/vscode/" + drift);
+  }
+  // 唯一交付 = 上游 dao-one 构建 + dao-one-windows 注入 + 打包
+  const sh = fs.readFileSync(path.join(IDE, "build.sh"), "utf8");
+  assert.ok(sh.includes("devin-remote"), "build.sh 应从 devin-remote 真源构建 dao-one");
+  assert.ok(sh.includes("dao-one-windows/inject.js"), "build.sh 应经 dao-one-windows 注入 🪟 板块");
+  assert.ok(sh.includes("pack_vsix.py"), "build.sh 应用 pack_vsix.py 打 VSIX");
 });
