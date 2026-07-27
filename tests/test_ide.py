@@ -16,7 +16,7 @@ def test_manifest_valid_and_entrypoints():
     assert {"daoWin.openPanel", "daoWin.health", "daoWin.ensureBridge"} <= cmds
     props = m["contributes"]["configuration"]["properties"]
     assert props["daoWin.bridgeUrl"]["default"] == "http://127.0.0.1:9930"
-    assert props["daoWin.homeMode"]["default"] == "standalone"
+    assert props["daoWin.homeMode"]["default"] == "unified"
     assert props["daoWin.autostart"]["default"] is True
 
 
@@ -257,10 +257,11 @@ def test_home_windows_master_control():
     assert "daoWin.home" in cmds
     with open(os.path.join(IDE, "extension.js"), encoding="utf-8") as fh:
         src = fh.read()
-    # 真隔离: 默认独立主页 webview(daoWinHome), dao-one 委派仅限显式 homeMode=dao-one
+    # 归一本体化: 默认内置归一面板(dao.unified), 旧独立页仅作兜底; dao-one 委派仅限显式 homeMode=dao-one
     assert "globalThis.__DAO_WIN_HOME__" in src
     assert 'createWebviewPanel("daoWinHome"' in src
-    assert 'homeMode === "dao-one"' in src
+    assert 'mode === "dao-one"' in src
+    assert 'executeCommand("dao.unified.focus")' in src
     assert 'executeCommand("dao.unified.open")' not in src
     for op in ("rdpSave", "rdpDelete", "rdpLaunch", "subToggle", "revealDir"):
         assert f"{op}(" in src, f"缺原语 {op}"

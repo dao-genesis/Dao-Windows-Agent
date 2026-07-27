@@ -252,14 +252,14 @@ test("补丁表锚点在真源快照上唯一(有快照时)", () => {
   }
 });
 
-test("架构护栏: 本仓不再贡献自建 dao.unified/dao.proxyPro 视图, 归一主页指向 dao-one 本源", () => {
+test("架构护栏: 归一本体化 — 本插件内置归一面板(dao.unified), 🪟 Windows 为其中板块", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
   const views = JSON.stringify(pkg.contributes.views || {});
-  assert.ok(!views.includes("dao.unified"), "package.json 仍贡献 dao.unified 视图");
-  assert.ok(!views.includes("dao.proxyPro"), "package.json 仍贡献 dao.proxyPro 视图");
+  assert.ok(views.includes("dao.unified"), "package.json 应贡献 dao.unified 视图（归一本体前端）");
+  assert.ok(!views.includes("dao.proxyPro"), "package.json 不应贡献 dao.proxyPro 视图");
   const cmds = (pkg.contributes.commands || []).map((c) => c.command);
-  assert.ok(!cmds.includes("dao.unified.open"), "package.json 仍贡献 dao.unified.open 命令");
+  assert.ok(cmds.includes("dao.unified.open"), "package.json 应贡献 dao.unified.open 命令");
   const ext = fs.readFileSync(path.join(__dirname, "..", "extension.js"), "utf8");
-  assert.ok(ext.includes('executeCommand("dao.openCloudPanel")'), "openHome 未指向 dao-one 全能板");
-  assert.ok(ext.includes("unified: false"), "dao-ai-base 仍默认自建归一面板");
+  assert.ok(ext.includes('executeCommand("dao.openCloudPanel")'), "homeMode=dao-one 显式委派入口应保留");
+  assert.ok(ext.includes("unified: true"), "dao-ai-base 应默认启用内置归一面板");
 });
