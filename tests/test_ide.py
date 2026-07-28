@@ -233,11 +233,16 @@ def test_injector_node_selftest():
     """dao-one-windows 注入器护栏 node 自检(锚点/负载/.rdp 键/幂等/签名)。"""
     import shutil
     import subprocess
+    import glob
     node = shutil.which("node")
     if not node:
         import pytest
         pytest.skip("node 不可用")
-    r = subprocess.run([node, "--test", os.path.join(IDE, "test")],
+    # 显式枚举测试文件: Node 22 起 `--test <目录>` 不再自动发现, 会把目录当模块解析而报错;
+    # 传入具体文件列表在 Node 20/22 上均稳定。
+    test_files = sorted(glob.glob(os.path.join(IDE, "test", "*.test.js")))
+    assert test_files, "ide/vscode/test 下无 *.test.js 用例"
+    r = subprocess.run([node, "--test", *test_files],
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
 
