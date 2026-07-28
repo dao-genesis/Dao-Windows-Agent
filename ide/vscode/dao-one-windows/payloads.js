@@ -481,10 +481,12 @@ function daoWinAcctRegSave(reg) {
 }
 function daoWinAcctNameOk(n) { return /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(n || ''); }
 function daoPSQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+// 中文 Windows 控制台默认 GBK, node 以 utf8 读回会乱码(如 quser 会话态) —— 先把本进程控制台编码定到 UTF-8。
+const DAO_PS_U8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; ";
 function daoPS(script) {
     try {
         const cp = require('child_process');
-        const r = cp.spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+        const r = cp.spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', DAO_PS_U8 + script], { encoding: 'utf8', timeout: 20000, windowsHide: true });
         return { rc: (r.status === null || r.status === undefined) ? 1 : r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
     } catch (e) { return { rc: 127, out: '', err: String(e && e.message || e) }; }
 }
@@ -493,7 +495,7 @@ function daoPSAsync(script, timeoutMs) {
     return new Promise((resolve) => {
         try {
             const cp = require('child_process');
-            cp.execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+            cp.execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', DAO_PS_U8 + script],
                 { encoding: 'utf8', timeout: timeoutMs || 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
                 (err, stdout, stderr) => resolve({ rc: err ? 1 : 0, out: String(stdout || '').trim(), err: String(stderr || (err && err.message) || '').trim() }));
         } catch (e) { resolve({ rc: 127, out: '', err: String(e && e.message || e) }); }
