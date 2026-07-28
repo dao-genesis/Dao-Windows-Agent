@@ -96,7 +96,20 @@ function ideKey(it){ return IDE_SESSION + '.' + it.slot; }
 const PFX = WRAP ? WRAP.pfx : (function(){ var m = location.pathname.match(/^(.*)\/desktop\/?$/); return (m && m[1]) || ''; })();
 const API_BASE = WRAP ? (WRAP.origin + WRAP.pfx) : PFX;
 function hostFetch(pathq, method){
-  return fetch(API_BASE + pathq, { method: method || 'GET' }).then(function(r){ return r.json(); });
+  return fetch(API_BASE + pathq, { method: method || 'GET' }).then(function(r){
+    var ct = String(r.headers.get('content-type') || '');
+    if (ct.indexOf('json') < 0) throw new Error('宿主回包非 JSON(HTTP ' + r.status + ' · 隧道未就绪或路由未达)');
+    return r.json();
+  });
+}
+// 冷启动守柔: 隧道/guacd 刚拉起的短窗内回包可能非 JSON —— 小步退避重试而非一击即溃。
+async function hostFetchRetry(pathq, tries){
+  var lastErr = null;
+  for (var a = 0; a < (tries || 3); a++) {
+    try { return await hostFetch(pathq); }
+    catch (e) { lastErr = e; await new Promise(function(res){ setTimeout(res, 1200 * (a + 1)); }); }
+  }
+  throw lastErr;
 }
 // 同源包装(/__web?u=)下相对 <script src> 会落到主口根路径而 404 —— 缺库时按 API_BASE 补载一次。
 let guacLoading = null;
@@ -296,7 +309,7 @@ async function connectInstance(it) {
       var v = Q.get(k); if (v) q += '&' + k + '=' + encodeURIComponent(v);
     });
     if (!Q.get('dpi')) q += '&dpi=' + hs.dpi;
-    tokenData = await hostFetch('/token?' + q + '&width=' + w + '&height=' + h);
+    tokenData = await hostFetchRetry('/token?' + q + '&width=' + w + '&height=' + h, 3);
     if (tokenData && tokenData.leaseId) { it.leaseId = tokenData.leaseId; it.reconnect = !!tokenData.reconnect; }
     if (tokenData.error) { setStatus(it.label + ' · 令牌: ' + tokenData.error, '#ff4444'); it.connecting = false; return; }
   } catch (e) { setStatus(it.label + ' · 令牌获取失败: ' + e.message, '#ff4444'); it.connecting = false; return; }
