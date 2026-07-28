@@ -1,75 +1,38 @@
 #!/usr/bin/env bash
-# 打包 VSIX：把 bridge/ + core/（纯 stdlib）捆进 runtime/，再 vsce package。
-# 这样插件自带一份可自启的机控桥，达成零配置冷启动（连不上外部桥就用自带 runtime 起本地桥）。
+# ☯ 归一本源构建 — 本仓不自建插件前端, 唯一交付 = dao-one(devin-remote 真源) + 🪟 Windows 板块注入:
+#   ① 取 devin-remote 真源(DAO_UPSTREAM 指向本地检出, 否则浅克隆到 .upstream/) 并构建 core/dao-one;
+#   ② 经 dao-one-windows/inject.js 把 🪟 Windows 板块(官方 mstsc 五页/账号池/同源桌面路由)折入其全能板;
+#   ③ pack_vsix.py 打成 dao-one-windows-<版本>.vsix。
+# 隔离只在安装态: 与 Devin Desktop 内在研 dao-one 分宿主并存(鸡犬相闻·互不干扰), 底层同一, 绝非新架构。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
 
-echo "== 捆入 Python runtime（bridge/ + core/）=="
-rm -rf "$HERE/runtime"
-mkdir -p "$HERE/runtime"
-cp -r "$REPO/bridge" "$HERE/runtime/bridge"
-cp -r "$REPO/core" "$HERE/runtime/core"
-find "$HERE/runtime" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+UPSTREAM="${DAO_UPSTREAM:-$HERE/.upstream/devin-remote}"
+UPSTREAM_URL="${DAO_UPSTREAM_URL:-https://github.com/dao-genesis/devin-remote.git}"
 
-echo "== 归一装配（默认折入 subplugins/ 内已收编的领域插件；DAO_UNIFY_SRCS 可覆盖；DAO_UNIFY=0 关闭）=="
-if [ -z "${DAO_UNIFY_SRCS:-}" ] && [ "${DAO_UNIFY:-1}" != "0" ] && [ -d "$HERE/subplugins" ]; then
-  DAO_UNIFY_SRCS="$(find "$HERE/subplugins" -mindepth 1 -maxdepth 1 -type d | sort | tr '\n' ' ')"
-fi
-if [ -n "${DAO_UNIFY_SRCS:-}" ]; then
-  # 例: DAO_UNIFY_SRCS="$HOME/repos/Dao-3D-Modeling-Agent/90-归一_IDE/vscode-dao-freecad $HOME/repos/Dao-PCB-Design-Agent/vscode-dao-kicad"
-  # 合并 contributes 只服务于本次打包：先备份 package.json，打完包还原（不脏工作区）。
-  cp "$HERE/package.json" "$HERE/package.json.pre-unify"
-  trap 'mv -f "$HERE/package.json.pre-unify" "$HERE/package.json" 2>/dev/null || true' EXIT
-  # shellcheck disable=SC2086
-  node "$HERE/unify.js" $DAO_UNIFY_SRCS
-else
-  echo "跳过（DAO_UNIFY=0 或无 subplugins/；纯主体 + AI 基底打包）"
+echo "== ① dao-one 真源（devin-remote）=="
+if [ ! -e "$UPSTREAM/core/dao-one/build.js" ]; then
+  rm -rf "$UPSTREAM"
+  git clone --depth 1 "$UPSTREAM_URL" "$UPSTREAM"
+elif [ -d "$UPSTREAM/.git" ] && [ "${DAO_UPSTREAM_PULL:-1}" != "0" ]; then
+  git -C "$UPSTREAM" pull --ff-only || echo "上游 pull 失败, 用现有检出继续"
 fi
 
-echo "== 生成 PNG 图标（若缺）=="
-if [ ! -f "$HERE/media/dao.png" ]; then
-  python3 - "$HERE/media/dao.png" <<'PY' 2>/dev/null || echo "跳过图标生成（无 PIL）"
-import sys
-try:
-    from PIL import Image, ImageDraw
-    s=256; img=Image.new("RGBA",(s,s),(24,24,28,255)); d=ImageDraw.Draw(img)
-    d.ellipse((28,28,s-28,s-28),outline=(240,240,240,255),width=6)
-    d.text((s//2-8,s//2-16),"☯",fill=(240,240,240,255))
-    img.save(sys.argv[1])
-except Exception as e:
-    raise SystemExit(1)
-PY
-fi
+echo "== ② 构建 dao-one（真源 build.js 装配 vendor-*）=="
+( cd "$UPSTREAM/core/dao-one" && npm install --no-audit --no-fund && node build.js )
 
-echo "== webview 脚本编译自检（模板字面量转义陷阱：\\/ 会被吞成 /，node --check 直查源码测不出）=="
-node - "$HERE/extension.js" <<'JS'
-const fs = require('fs'), vm = require('vm');
-const src = fs.readFileSync(process.argv[2], 'utf8');
-// 提取 desktopHtml 的模板字面量并按模板语义渲染（占位符以哑值代入），再编译内联 <script>。
-const vscode = { Uri: { joinPath: () => ({}) } };
-const sandbox = { require: (n) => n === 'vscode' ? vscode : require(n), module: { exports: {} }, exports: {}, console };
-vm.runInContext(src + '\nglobalThis.__dh = desktopHtml;', vm.createContext(sandbox));
-const html = sandbox.__dh({ asWebviewUri: () => 'x', cspSource: 'x' }, { extensionUri: {} },
-  'ide_x', null, 'http://127.0.0.1:4824', 4823, [{ name: 'x' }]);
-const m = html.match(/<script>([\s\S]*?)<\/script>/);
-if (!m) { console.error('未找到内联脚本'); process.exit(1); }
-try { new vm.Script(m[1]); console.log('webview 脚本编译通过'); }
-catch (e) { console.error('webview 脚本编译失败:', e.message); process.exit(1); }
-JS
+echo "== ③ 注入 🪟 Windows 板块（dao-one-windows 衍生）=="
+STAGE="$HERE/.stage/dao-one-win"
+rm -rf "$STAGE"
+node "$HERE/dao-one-windows/inject.js" "$UPSTREAM/core/dao-one" "$STAGE"
 
-echo "== vsce package =="
-cd "$HERE"   # vsce 以 cwd 找 manifest：从仓库根目录调本脚本也能打包
-VER="$(node -p "require('$HERE/package.json').version" 2>/dev/null || echo 0.1.0)"
-NAME="$(node -p "require('$HERE/package.json').name" 2>/dev/null || echo dao-windows-desktop)"
-OUT="$HERE/${NAME}-${VER}.vsix"
-# --base*Url 必给：README 内有相对链接（../../docs/*），缺则 vsce 报错中断（真机踩坑）。
-VSCE_ARGS=(package --no-dependencies --allow-missing-repository \
-  --baseContentUrl https://example.invalid --baseImagesUrl https://example.invalid -o "$OUT")
-if command -v vsce >/dev/null 2>&1; then
-  vsce "${VSCE_ARGS[@]}"
-else
-  echo "vsce 未装：改用 npx @vscode/vsce"
-  npx --yes @vscode/vsce "${VSCE_ARGS[@]}"
-fi
+echo "== ④ 收敛为运行时形态（剔除构建器/开发依赖, 只留 ws 运行时依赖）=="
+( cd "$STAGE" \
+  && rm -rf node_modules build.js gen-manifest.js apply-overlay.js proxy-fold.patch package-lock.json .gitignore \
+  && npm install --omit=dev --no-audit --no-fund )
+
+echo "== ⑤ 打包 VSIX =="
+VER="$(node -p "require('$STAGE/package.json').version")"
+OUT="$HERE/dao-one-windows-${VER}.vsix"
+python3 "$HERE/dao-one-windows/pack_vsix.py" "$STAGE" "$OUT"
 echo "== 完成：$OUT =="

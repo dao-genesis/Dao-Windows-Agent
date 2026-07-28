@@ -1,33 +1,40 @@
-# DAO Windows Agent · VSCode 前端
+# DAO Windows Agent · IDE 前端 = 归一插件(dao-one)衍生
 
-> **⚠️ 形态已正本清源——先读 [`../../docs/正本清源-桌面级路由本源.md`](../../docs/正本清源-桌面级路由本源.md)。**
-> **最终前端形态**：面板内**直接呈现整块 Windows 桌面本体**（走 RDP/RemoteApp 原生远程桌面协议级、类多 RDP，`guacamole-common-js` canvas 渲染进 Webview），所见即所得、直接鼠键操作真实桌面。
-> **当前本目录的按钮面板 = `legacy-control-panel`（控制面/调试形态，非最终前端）**：经机控桥 `/api/*` 触发级别①②③ 的 headless/UIA 动词，降级为"给 Agent 脚本化编排/校验用的后端控制面"。桌面路由主前端（路线 A）留待后续 Agent 按正本清源文档第五节实现。
+> **本源唯一**：本目录**不自建任何插件前端**。IDE 交付 = **dao-one(devin-remote 真源·归一插件)**
+> 经 [`dao-one-windows/`](dao-one-windows/) 衍生注入器折入 **🪟 Windows 板块** 后打包的 VSIX。
+> Windows 是 dao-one 全能板(9920)中与 切号/穿透/Proxy/备份/GitHub 同级的一个 tab，
+> 不是独立产品、不是第二套面板、不是新架构。
 
-把整台 Windows 做进 IDE：**每个 IDE 窗口 = 一路独立完整的 Windows 桌面会话**（≈ 多 RDP 的一路，与用户真实桌面并行、互不干扰）。下述内容描述的是**当前控制面（legacy）**能力。
+## 隔离的唯一含义
 
-## 本源
-- 打开一个 VSCode 窗口，插件即为其分配一个稳定的隔离会话（`ide_<hash>`，绑定工作区路径）。
-- 面板里的动作全部落到机控桥的 `/api/*`：级别①（system profile 无头 exec/file/proc）、级别②（notepad 隔离桌面 round-trip）、级别③（PrintWindow 截图取证）。
-- N 个 IDE 窗口 = N 个互不干扰实例，无需建账号、无需 RDPWrap、零配置。
+与 Devin Desktop 内**在研**的 dao-one 只做**开发流与安装态**分离（分宿主并存、互不干扰·
+鸡犬相闻，民至老死不相往来）；**底层同一**（道并行而不相悖），绝不另建产品架构。
 
-## 冷启动（零配置）
-1. 插件激活即尝试连 `daoWin.bridgeUrl`（默认 `http://127.0.0.1:9920`）。
-2. 连不上且 `daoWin.autostart=true` 时，用插件**自带的 `runtime/`（打包时捆入的 `bridge/`+`core/`）**以 `daoWin.pythonPath` 起一个本地桥（端口 9930），无需任何手工部署。
+## 构建
 
-## 打包
 ```bash
-bash build.sh   # 捆入 runtime + vsce package → dao-windows-agent-0.1.0.vsix
+bash build.sh
+# ① 取/更新 devin-remote 真源(DAO_UPSTREAM 可指向本地检出, 缺省浅克隆到 .upstream/)
+# ② cd core/dao-one && npm install && node build.js  —— 真源自己的装配(vendor-*)
+# ③ node dao-one-windows/inject.js <dao-one> .stage/dao-one-win  —— 锚点折入 🪟 板块
+# ④ 收敛运行时形态(剔除构建器/开发依赖) → pack_vsix.py → dao-one-windows-<版本>.vsix
 ```
 
-## 安装
-在 VSCode 里：扩展面板 → `...` → 从 VSIX 安装 → 选 `dao-windows-agent-0.1.0.vsix`。
-或命令行：`code --install-extension dao-windows-agent-0.1.0.vsix`。
+## 🪟 Windows 板块内容（全部在注入负载 [`dao-one-windows/payloads.js`](dao-one-windows/payloads.js)）
 
-## 配置项
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `daoWin.bridgeUrl` | `http://127.0.0.1:9920` | 机控桥地址 |
-| `daoWin.token` | `dao-win-lab` | Bearer token（与桥 `--token`/`DAO_WIN_TOKEN` 一致） |
-| `daoWin.autostart` | `true` | 连不上时用自带 runtime 起本地桥 |
-| `daoWin.pythonPath` | `python` | 自启桥所用 Python |
+- **官方 mstsc 五页配置台**：常规/显示/本地资源/体验/高级，逐键映射官方 `.rdp` 语义，`.json`+`.rdp` 落盘；
+- **Windows 账号池**：多账号创建/开桌面/销毁（注册表专用 `win-guac-accounts.json`，绝不碰 Devin 登录态）；
+- **同源桌面路由**：主口 `/wdesk/*` → guacamole-lite 隧道(HTTP 4824 / WS 4823) → guacd → RDP 3389，
+  一账号一页、并行多桌面会话。
+
+## 长驻
+
+`dao-one-windows/reinject.js`（计划任务）：dao-vsix 自更新覆盖 vendor 后自动检测「未注入/已注入/过时」，
+从 `.prewin` 真源幂等重折入，重启/自更新不丢板块。
+
+## 自检
+
+```bash
+node --test test/            # 注入器护栏(锚点契约/负载/.rdp 键/幂等/架构护栏)
+python3 -m pytest ../../tests -q
+```

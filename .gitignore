@@ -26,3 +26,5 @@ desktop/sessions-state.json.tmp
 
 # pip install -e . build metadata
 *.egg-info/
+ide/vscode/.upstream/
+ide/vscode/.stage/
